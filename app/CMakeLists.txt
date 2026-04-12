@@ -2,6 +2,65 @@ project(melonDS-android-frontend)
 
 cmake_minimum_required(VERSION 3.4.1)
 
+# liteDS optimization feature flags — all OFF by default so the build is
+# identical to upstream melonDS-android-lib out of the box.
+option(LITEV_NEON_RENDERER    "Enable NEON SIMD 2D renderer"           OFF)
+option(LITEV_SCANLINE_BATCH   "Enable scanline batching"              OFF)
+option(LITEV_THREADED_RENDER  "Enable threaded renderer"              OFF)
+option(LITEV_ARM7_HLE_AUDIO   "Enable ARM7 audio/SPI HLE"             OFF)
+option(LITEV_ARM7_HLE_WIFI    "Enable ARM7 WiFi firmware HLE (Ph. 3)" OFF)
+option(LITEV_AGGRESSIVE_SKIP  "Enable aggressive frameskip mode"      OFF)
+option(LITEV_SPU_FAST_INTERP  "Enable linear SPU interpolation"       OFF)
+option(LITEV_HEADLESS         "Build headless benchmark mode"         OFF)
+option(LITEV_PGO              "PGO mode: OFF | instrument | use"      OFF)
+option(LITEV_ARM7_PROFILE     "Enable ARM7 cycle profiler"            OFF)
+
+# LITEV_ARM7_HLE_WIFI depends on LITEV_ARM7_HLE_AUDIO (provides ARM7HLECore).
+if(LITEV_ARM7_HLE_WIFI AND NOT LITEV_ARM7_HLE_AUDIO)
+    message(FATAL_ERROR
+        "LITEV_ARM7_HLE_WIFI requires LITEV_ARM7_HLE_AUDIO=ON "
+        "(ARM7HLECore dispatch table)")
+endif()
+
+# Propagate flags into the core library build.
+# The core library's CMakeLists.txt checks these via if(LITEV_*).
+if(LITEV_NEON_RENDERER)
+    add_compile_definitions(LITEV_NEON_RENDERER)
+endif()
+if(LITEV_SCANLINE_BATCH)
+    add_compile_definitions(LITEV_SCANLINE_BATCH)
+endif()
+if(LITEV_THREADED_RENDER)
+    add_compile_definitions(LITEV_THREADED_RENDER)
+endif()
+if(LITEV_ARM7_HLE_AUDIO)
+    add_compile_definitions(LITEV_ARM7_HLE_AUDIO)
+endif()
+if(LITEV_ARM7_HLE_WIFI)
+    add_compile_definitions(LITEV_ARM7_HLE_WIFI)
+endif()
+if(LITEV_AGGRESSIVE_SKIP)
+    add_compile_definitions(LITEV_AGGRESSIVE_SKIP)
+endif()
+if(LITEV_SPU_FAST_INTERP)
+    add_compile_definitions(LITEV_SPU_FAST_INTERP)
+endif()
+if(LITEV_HEADLESS)
+    add_compile_definitions(LITEV_HEADLESS)
+endif()
+if(LITEV_ARM7_PROFILE)
+    add_compile_definitions(LITEV_ARM7_PROFILE)
+endif()
+
+# PGO support: pass -fprofile-generate / -fprofile-use to the whole build.
+if(LITEV_PGO STREQUAL "instrument")
+    add_compile_options(-fprofile-generate)
+    add_link_options(-fprofile-generate)
+elseif(LITEV_PGO STREQUAL "use")
+    add_compile_options(-fprofile-use -fprofile-correction)
+    add_link_options(-fprofile-use)
+endif()
+
 add_compile_definitions(MELONDS_GL_HEADER=<GLES3/gl32.h>)
 add_compile_definitions(EGL_EGLEXT_PROTOTYPES)
 

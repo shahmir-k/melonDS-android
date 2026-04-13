@@ -112,13 +112,24 @@ Accuracy must remain strict in:
 
 ## Measurement Policy
 
-Performance work must be evaluated primarily by FPS on device.
+Performance work must be evaluated on device, but the primary metric depends on
+whether the benchmark is already at full speed.
 
 Rules:
-- FPS is the primary metric.
+- If the workload is below real-time, FPS is the primary metric.
+- If the workload is already saturating real-time or hovering near `60 FPS`,
+  fast-forward throughput becomes the primary metric.
+- Once a benchmark is effectively capped at `60 FPS`, do not treat tiny
+  real-time FPS movement as the main result. Measure how much uncapped speed or
+  fast-forward speed the build can actually sustain.
 - CPU instructions and profiles are secondary diagnostics.
-- Every optimization pass should be measured with FPS, not just CPU
-  instructions.
+- Every optimization pass should be measured with the right top-line metric for
+  that benchmark state:
+  - normal FPS when below full speed,
+  - fast-forward throughput when already at or near full speed.
+- CPU instructions alone are never enough to justify keeping a change.
+- When reporting a kept or rejected pass near the `60 FPS` ceiling, report
+  fast-forward performance first and real-time FPS as a guardrail.
 - Rejected experiments should be recorded when they are architectural enough to
   avoid repeating the same dead end.
 - No optimization should be kept just because it looks clever in code.
@@ -128,6 +139,9 @@ Rules:
 These instructions are mandatory for work in this repo:
 
 - Focus on big wins first. Prefer architectural shifts over local polish.
+- Do not spend turns on changes that do not have a plausible path to a real
+  throughput win. As a working bar, prefer ideas that could credibly move the
+  current benchmark by roughly `>= 5%`, not `1-2%` noise.
 - Be ambitious about performance changes where WiFi multiplayer is not put at
   risk.
 - Do not report CPU instruction deltas alone as the main result of an
@@ -142,6 +156,31 @@ These instructions are mandatory for work in this repo:
   N/A`.
 - Do not bundle multiple unrelated functional changes into one commit when they
   can be separated and measured independently.
+
+## Big-Win Triage
+
+Before implementing an optimization, ask whether it attacks one of the current
+large structural costs:
+- top-screen 2D composition / `DrawScanline_BGOBJ()` architecture,
+- frame-stable renderer caching,
+- JIT dispatch / block-boundary overhead,
+- fastmem / fallback collapse for common ARM9 memory traffic,
+- multithreaded staging that removes work from the emulator thread.
+
+If it does not clearly target one of those, it is probably not worth a turn.
+
+## Dead-End Avoidance
+
+Do not keep probing the same low-yield area once it has already failed in
+multiple structural forms on the current benchmark.
+
+Current explicit dead-end warning:
+- selective HLE at the traced Shrek service-helper/service-init boundary has
+  already failed in multiple forms and should not get more speculative passes
+  unless new evidence shows a materially different, higher-level subsystem cut.
+
+When an area is showing repeated rejects, pivot to another architectural lever
+instead of refining the same idea.
 
 ## What Counts as a Good Change
 

@@ -2,6 +2,16 @@ project(melonDS-android-frontend)
 
 cmake_minimum_required(VERSION 3.4.1)
 
+option(LITEV_SPU_FAST_INTERP "Enable linear SPU interpolation" OFF)
+option(LITEV_NEON_RENDERER "Enable NEON SIMD 2D renderer" OFF)
+
+if(LITEV_SPU_FAST_INTERP)
+    add_compile_definitions(LITEV_SPU_FAST_INTERP)
+endif()
+if(LITEV_NEON_RENDERER)
+    add_compile_definitions(LITEV_NEON_RENDERER)
+endif()
+
 add_compile_definitions(MELONDS_GL_HEADER=<GLES3/gl32.h>)
 add_compile_definitions(EGL_EGLEXT_PROTOTYPES)
 

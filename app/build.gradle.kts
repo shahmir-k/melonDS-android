@@ -37,6 +37,10 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags("-std=c++17 -Wno-write-strings -O2 -DNDEBUG")
+                arguments(
+                    "-DLITEV_SPU_FAST_INTERP=ON",
+                    "-DLITEV_NEON_RENDERER=ON",
+                )
             }
         }
         vectorDrawables.useSupportLibrary = true

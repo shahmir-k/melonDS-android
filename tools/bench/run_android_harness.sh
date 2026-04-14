@@ -34,10 +34,11 @@ FPS_INTERVAL_MS=1000
 PERF_DURATION_SEC=""
 PERF_EVENT="instructions"
 BOTTOM_SCREENSHOT_OUT=""
+CAPTURE_ONLY=0
 
 usage() {
     cat <<EOF
-Usage: $0 --uri ROM_CONTENT_URI [sequence options] [options]
+Usage: $0 [--uri ROM_CONTENT_URI] [sequence options] [options]
 
 Sequence options:
   --sequence CSV       Direct harness sequence, e.g. 'A,A,DOWN,A,SLEEP:2000'
@@ -63,6 +64,7 @@ Other options:
   --top-display-id ID  Physical display ID for the DS top screen. Default: $TOP_DISPLAY_ID
   --bottom-display-id ID
                       Physical display ID for the DS bottom screen. Default: $BOTTOM_DISPLAY_ID
+  --capture-only       Do not launch or inject inputs. Capture/measure the current app state only
   --package NAME       App package. Default: $PACKAGE
   --activity NAME      Activity class. Default: $ACTIVITY
   -h, --help           Show this help
@@ -79,6 +81,7 @@ Examples:
   $0 --uri 'content://...' --press-a 30
   $0 --uri 'content://...' --sequence 'A,A,DOWN,A,SLEEP:3000,A'
   $0 --uri 'content://...' --press-a 60 --expect-scene gameplay_loaded
+  $0 --capture-only --screenshot /tmp/current-top.png --bottom-screenshot /tmp/current-bottom.png
 EOF
     exit 2
 }
@@ -105,6 +108,7 @@ while [[ $# -gt 0 ]]; do
         --perf-duration) PERF_DURATION_SEC="$2"; shift 2 ;;
         --top-display-id) TOP_DISPLAY_ID="$2"; shift 2 ;;
         --bottom-display-id) BOTTOM_DISPLAY_ID="$2"; shift 2 ;;
+        --capture-only) CAPTURE_ONLY=1; shift 1 ;;
         --package) PACKAGE="$2"; shift 2 ;;
         --activity) ACTIVITY="$2"; shift 2 ;;
         -h|--help) usage ;;
@@ -112,7 +116,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$URI" ]]; then
+if [[ "$CAPTURE_ONLY" -eq 0 && -z "$URI" ]]; then
     echo "Error: --uri is required." >&2
     usage
 fi
@@ -133,7 +137,7 @@ if [[ -n "$PRESS_BUTTON" ]]; then
     SEQUENCE="$generated"
 fi
 
-if [[ -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
+if [[ "$CAPTURE_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
     echo "Error: specify at least one of --sequence, --press-a/--press, --load-state-uri, or --fast-forward." >&2
     exit 1
 fi
@@ -160,35 +164,39 @@ if ! "$ADB" get-state >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "Launching ROM..."
-"$ADB" shell am start -S \
-    -n "${PACKAGE}/${ACTIVITY}" \
-    --es uri "$URI" >/dev/null
+if [[ "$CAPTURE_ONLY" -eq 0 ]]; then
+    echo "Launching ROM..."
+    "$ADB" shell am start -S \
+        -n "${PACKAGE}/${ACTIVITY}" \
+        --es uri "$URI" >/dev/null
 
-sleep "$LAUNCH_WAIT"
+    sleep "$LAUNCH_WAIT"
 
-BROADCAST_ARGS=(
-    shell am broadcast
-    -a me.magnum.melonds.DEBUG_EMULATOR
-    -n "${PACKAGE}/${RECEIVER_CLASS}"
-)
+    BROADCAST_ARGS=(
+        shell am broadcast
+        -a me.magnum.melonds.DEBUG_EMULATOR
+        -n "${PACKAGE}/${RECEIVER_CLASS}"
+    )
 
-if [[ -n "$LOAD_STATE_URI" ]]; then
-    BROADCAST_ARGS+=(--es load_state_uri "$LOAD_STATE_URI")
+    if [[ -n "$LOAD_STATE_URI" ]]; then
+        BROADCAST_ARGS+=(--es load_state_uri "$LOAD_STATE_URI")
+    fi
+
+    if [[ -n "$FAST_FORWARD" ]]; then
+        BROADCAST_ARGS+=(--ez fast_forward "$FAST_FORWARD")
+    fi
+
+    if [[ -n "$SEQUENCE" ]]; then
+        BROADCAST_ARGS+=(--es sequence "$SEQUENCE" --el press_ms "$PRESS_MS" --el gap_ms "$GAP_MS")
+    fi
+
+    echo "Injecting harness sequence..."
+    "$ADB" "${BROADCAST_ARGS[@]}" >/dev/null
+
+    sleep "$POST_WAIT"
+else
+    echo "Capture-only mode: using current app state"
 fi
-
-if [[ -n "$FAST_FORWARD" ]]; then
-    BROADCAST_ARGS+=(--ez fast_forward "$FAST_FORWARD")
-fi
-
-if [[ -n "$SEQUENCE" ]]; then
-    BROADCAST_ARGS+=(--es sequence "$SEQUENCE" --el press_ms "$PRESS_MS" --el gap_ms "$GAP_MS")
-fi
-
-echo "Injecting harness sequence..."
-"$ADB" "${BROADCAST_ARGS[@]}" >/dev/null
-
-sleep "$POST_WAIT"
 
 echo "Capturing screenshot..."
 "$ADB" shell screencap -d "$TOP_DISPLAY_ID" -p "$REMOTE_SCREENSHOT" >/dev/null 2>&1

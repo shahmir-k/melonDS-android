@@ -157,6 +157,37 @@ These instructions are mandatory for work in this repo:
 - Do not bundle multiple unrelated functional changes into one commit when they
   can be separated and measured independently.
 
+## Android Harness
+
+Do not rely on ad hoc Android UI automation when validating gameplay scenes on
+device if the debug harness is available.
+
+The debug build now exposes a direct emulator input harness through:
+- receiver action: `me.magnum.melonds.DEBUG_EMULATOR`
+- receiver class: `me.magnum.melonds.debug.EmulatorDebugReceiver`
+- wrapper script: `tools/bench/run_android_harness.sh`
+
+The harness can:
+- launch a ROM through `EmulatorActivity`,
+- inject emulator button sequences directly,
+- inject DS touchscreen presses,
+- toggle fast-forward,
+- load a savestate,
+- and pull a screenshot after the sequence.
+
+Preferred workflow:
+- use `tools/bench/run_android_harness.sh` for scene entry and screenshot capture
+  instead of `adb input keyevent`, UI tapping guesses, or temporary controller
+  remaps;
+- for Shrek specifically, menu-only validation is not enough;
+- use a sequence that reaches a non-menu gameplay-relevant scene before judging
+  correctness or performance;
+- if a title needs repeated confirmation presses, encode that in the harness
+  sequence instead of manually repeating shell commands.
+
+Example:
+- `tools/bench/run_android_harness.sh --uri 'content://...' --press-a 30`
+
 ## Big-Win Triage
 
 Before implementing an optimization, ask whether it attacks one of the current

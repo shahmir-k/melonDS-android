@@ -46,6 +46,10 @@ int targetFps;
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
+u32* globalScreenshotBufferPointer = nullptr;
+constexpr jint kScreenshotWidth = 256;
+constexpr jint kScreenshotHeight = 384;
+constexpr jint kScreenshotBufferSize = kScreenshotWidth * kScreenshotHeight * 4;
 
 jobject globalCameraManager;
 MelonDSAndroidCameraHandler* androidCameraHandler;
@@ -63,6 +67,7 @@ Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jo
     auto androidEventMessenger = std::make_shared<AndroidMelonEventMessenger>();
     androidCameraHandler = new MelonDSAndroidCameraHandler(jniEnvHandler, globalCameraManager);
     u32* screenshotBufferPointer = (u32*) env->GetDirectBufferAddress(screenshotBuffer);
+    globalScreenshotBufferPointer = screenshotBufferPointer;
 
     MelonDSAndroid::setConfiguration(std::move(finalEmulatorConfiguration));
     MelonDSAndroid::setup(androidCameraHandler, std::move(androidEventMessenger), screenshotBufferPointer, 0);
@@ -291,6 +296,15 @@ JNIEXPORT jfloat JNICALL
 Java_me_magnum_melonds_MelonEmulator_getFPS(JNIEnv* env, jobject thiz)
 {
     return fps;
+}
+
+JNIEXPORT jobject JNICALL
+Java_me_magnum_melonds_MelonEmulator_getScreenshotBuffer(JNIEnv* env, jobject thiz)
+{
+    if (!globalScreenshotBufferPointer)
+        return nullptr;
+
+    return env->NewDirectByteBuffer(globalScreenshotBufferPointer, kScreenshotBufferSize);
 }
 
 JNIEXPORT void JNICALL

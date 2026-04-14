@@ -85,7 +85,9 @@ object MelonEmulator {
 
     external fun presentFrame(deadlineNs: Long, frameRenderCallback: FrameRenderCallback)
 
-	external fun getFPS(): Float
+    external fun getFPS(): Float
+
+    external fun getScreenshotBuffer(): ByteBuffer?
 
 	external fun pauseEmulation()
 

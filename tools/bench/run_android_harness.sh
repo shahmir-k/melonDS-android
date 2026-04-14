@@ -10,6 +10,9 @@ ADB="${ADB:-adb}"
 PACKAGE="${MELONDS_PACKAGE:-me.magnum.melonds.nightly.dev}"
 ACTIVITY="${MELONDS_ACTIVITY:-me.magnum.melonds.ui.emulator.EmulatorActivity}"
 RECEIVER_CLASS="${MELONDS_DEBUG_RECEIVER:-me.magnum.melonds.debug.EmulatorDebugReceiver}"
+SCENE_ANALYZER="$SCRIPT_DIR/analyze_harness_scene.py"
+TOP_DISPLAY_ID="${MELONDS_TOP_DISPLAY_ID:-1}"
+BOTTOM_DISPLAY_ID="${MELONDS_BOTTOM_DISPLAY_ID:-0}"
 
 URI=""
 SEQUENCE=""
@@ -23,6 +26,14 @@ POST_WAIT=8
 FAST_FORWARD=""
 SCREENSHOT_OUT=""
 REMOTE_SCREENSHOT=""
+EXPECT_SCENE=""
+SKIP_SCENE_CHECK=0
+SKIP_METRICS=0
+FPS_SAMPLE_COUNT=6
+FPS_INTERVAL_MS=1000
+PERF_DURATION_SEC=""
+PERF_EVENT="instructions"
+BOTTOM_SCREENSHOT_OUT=""
 
 usage() {
     cat <<EOF
@@ -40,7 +51,18 @@ Other options:
   --launch-wait SEC    Seconds to wait after ROM launch. Default: $LAUNCH_WAIT
   --post-wait SEC      Seconds to wait after harness injection. Default: $POST_WAIT
   --fast-forward BOOL  true/false. Toggle fast-forward before the input sequence
-  --screenshot PATH    Local screenshot output path. Default: /tmp/<timestamp>-harness.png
+  --screenshot PATH    Local top-screen screenshot output path. Default: /tmp/<timestamp>-top.png
+  --bottom-screenshot PATH
+                      Optional local bottom-screen screenshot output path
+  --expect-scene NAME  Expected final scene: menu | gameplay_loaded | blackscreen | whiteframe
+  --skip-scene-check   Skip baseline scene analysis after the screenshot
+  --skip-metrics       Skip FPS sampling and simpleperf instruction counting
+  --fps-samples N      Number of FPS samples to average. Default: $FPS_SAMPLE_COUNT
+  --fps-interval-ms MS Delay between FPS samples. Default: $FPS_INTERVAL_MS
+  --perf-duration SEC  simpleperf duration in seconds. Default: ceil(samples * interval)
+  --top-display-id ID  Physical display ID for the DS top screen. Default: $TOP_DISPLAY_ID
+  --bottom-display-id ID
+                      Physical display ID for the DS bottom screen. Default: $BOTTOM_DISPLAY_ID
   --package NAME       App package. Default: $PACKAGE
   --activity NAME      Activity class. Default: $ACTIVITY
   -h, --help           Show this help
@@ -50,10 +72,13 @@ Environment:
   MELONDS_PACKAGE      Overrides default package
   MELONDS_ACTIVITY     Overrides default activity
   MELONDS_DEBUG_RECEIVER Overrides default receiver class
+  MELONDS_TOP_DISPLAY_ID Overrides default top display id
+  MELONDS_BOTTOM_DISPLAY_ID Overrides default bottom display id
 
 Examples:
   $0 --uri 'content://...' --press-a 30
   $0 --uri 'content://...' --sequence 'A,A,DOWN,A,SLEEP:3000,A'
+  $0 --uri 'content://...' --press-a 60 --expect-scene gameplay_loaded
 EOF
     exit 2
 }
@@ -71,6 +96,15 @@ while [[ $# -gt 0 ]]; do
         --post-wait) POST_WAIT="$2"; shift 2 ;;
         --fast-forward) FAST_FORWARD="$2"; shift 2 ;;
         --screenshot) SCREENSHOT_OUT="$2"; shift 2 ;;
+        --bottom-screenshot) BOTTOM_SCREENSHOT_OUT="$2"; shift 2 ;;
+        --expect-scene) EXPECT_SCENE="$2"; shift 2 ;;
+        --skip-scene-check) SKIP_SCENE_CHECK=1; shift 1 ;;
+        --skip-metrics) SKIP_METRICS=1; shift 1 ;;
+        --fps-samples) FPS_SAMPLE_COUNT="$2"; shift 2 ;;
+        --fps-interval-ms) FPS_INTERVAL_MS="$2"; shift 2 ;;
+        --perf-duration) PERF_DURATION_SEC="$2"; shift 2 ;;
+        --top-display-id) TOP_DISPLAY_ID="$2"; shift 2 ;;
+        --bottom-display-id) BOTTOM_DISPLAY_ID="$2"; shift 2 ;;
         --package) PACKAGE="$2"; shift 2 ;;
         --activity) ACTIVITY="$2"; shift 2 ;;
         -h|--help) usage ;;
@@ -105,7 +139,17 @@ if [[ -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
 fi
 
 if [[ -z "$SCREENSHOT_OUT" ]]; then
-    SCREENSHOT_OUT="/tmp/$(date -u +%Y%m%dT%H%M%SZ)-harness.png"
+    SCREENSHOT_OUT="/tmp/$(date -u +%Y%m%dT%H%M%SZ)-top.png"
+fi
+
+if ! [[ "$FPS_SAMPLE_COUNT" =~ ^[0-9]+$ ]] || [[ "$FPS_SAMPLE_COUNT" -le 0 ]]; then
+    echo "Error: --fps-samples must be a positive integer." >&2
+    exit 1
+fi
+
+if ! [[ "$FPS_INTERVAL_MS" =~ ^[0-9]+$ ]] || [[ "$FPS_INTERVAL_MS" -le 0 ]]; then
+    echo "Error: --fps-interval-ms must be a positive integer." >&2
+    exit 1
 fi
 
 REMOTE_SCREENSHOT="/sdcard/Download/$(basename "$SCREENSHOT_OUT")"
@@ -147,8 +191,103 @@ echo "Injecting harness sequence..."
 sleep "$POST_WAIT"
 
 echo "Capturing screenshot..."
-"$ADB" shell screencap -p "$REMOTE_SCREENSHOT" >/dev/null 2>&1
+"$ADB" shell screencap -d "$TOP_DISPLAY_ID" -p "$REMOTE_SCREENSHOT" >/dev/null 2>&1
 mkdir -p "$(dirname "$SCREENSHOT_OUT")"
 "$ADB" pull "$REMOTE_SCREENSHOT" "$SCREENSHOT_OUT" >/dev/null
 
 echo "$SCREENSHOT_OUT"
+
+if [[ -n "$BOTTOM_SCREENSHOT_OUT" ]]; then
+    REMOTE_BOTTOM_SCREENSHOT="/sdcard/Download/$(basename "$BOTTOM_SCREENSHOT_OUT")"
+    "$ADB" shell screencap -d "$BOTTOM_DISPLAY_ID" -p "$REMOTE_BOTTOM_SCREENSHOT" >/dev/null 2>&1
+    mkdir -p "$(dirname "$BOTTOM_SCREENSHOT_OUT")"
+    "$ADB" pull "$REMOTE_BOTTOM_SCREENSHOT" "$BOTTOM_SCREENSHOT_OUT" >/dev/null
+    echo "$BOTTOM_SCREENSHOT_OUT"
+fi
+
+if [[ "$SKIP_SCENE_CHECK" -eq 0 && -n "$EXPECT_SCENE" && -f "$SCENE_ANALYZER" ]]; then
+    ANALYZER_ARGS=("$SCENE_ANALYZER" "$SCREENSHOT_OUT")
+    ANALYZER_ARGS+=(--expect-scene "$EXPECT_SCENE")
+
+    echo "Analyzing screenshot scene..."
+    python3 "${ANALYZER_ARGS[@]}"
+fi
+
+if [[ "$SKIP_METRICS" -eq 0 ]]; then
+    if ! "$ADB" shell command -v simpleperf >/dev/null 2>&1; then
+        echo "Error: simpleperf was not found on the target device." >&2
+        exit 1
+    fi
+
+    if [[ -z "$PERF_DURATION_SEC" ]]; then
+        PERF_DURATION_SEC="$(python3 - <<PY
+import math
+print(max(1, math.ceil(($FPS_SAMPLE_COUNT * $FPS_INTERVAL_MS) / 1000.0)))
+PY
+)"
+    fi
+
+    SAMPLE_TOKEN="harness-$RANDOM-$(date -u +%Y%m%d%H%M%S)"
+    FPS_LOG="/tmp/${SAMPLE_TOKEN}-fps.log"
+    PERF_LOG="/tmp/${SAMPLE_TOKEN}-simpleperf.txt"
+
+    echo "Collecting FPS and instruction metrics..."
+    "$ADB" logcat -c
+    (
+        "$ADB" shell am broadcast \
+            -a me.magnum.melonds.DEBUG_EMULATOR \
+            -n "${PACKAGE}/${RECEIVER_CLASS}" \
+            --ei fps_sample_count "$FPS_SAMPLE_COUNT" \
+            --el fps_interval_ms "$FPS_INTERVAL_MS" \
+            --es sample_token "$SAMPLE_TOKEN" >/dev/null
+    ) &
+    FPS_BROADCAST_PID=$!
+
+    "$ADB" shell simpleperf stat \
+        --app "$PACKAGE" \
+        --duration "$PERF_DURATION_SEC" \
+        -e "$PERF_EVENT" > "$PERF_LOG" 2>&1
+
+    wait "$FPS_BROADCAST_PID"
+    "$ADB" logcat -d -s EmulatorDebugReceiver:I > "$FPS_LOG"
+
+    python3 - <<PY
+import pathlib
+import re
+import sys
+
+fps_log = pathlib.Path("$FPS_LOG").read_text()
+perf_log = pathlib.Path("$PERF_LOG").read_text()
+token = "$SAMPLE_TOKEN"
+
+fps_match = None
+for line in fps_log.splitlines():
+    if token in line and "HARNESS_FPS" in line:
+        fps_match = line
+        break
+
+if fps_match is None:
+    print("Error: failed to parse HARNESS_FPS log line", file=sys.stderr)
+    sys.exit(1)
+
+avg_match = re.search(r"avg=([0-9.]+)", fps_match)
+samples_match = re.search(r"samples=(\\[[^\\]]*\\])", fps_match)
+instr_match = re.search(r"([0-9,]+)\\s+instructions\\b", perf_log)
+
+if avg_match is None or samples_match is None:
+    print("Error: failed to parse FPS samples from log line", file=sys.stderr)
+    sys.exit(1)
+
+if instr_match is None:
+    print("Error: failed to parse instruction count from simpleperf output", file=sys.stderr)
+    sys.exit(1)
+
+avg_fps = float(avg_match.group(1))
+samples = samples_match.group(1)
+instructions = int(instr_match.group(1).replace(",", ""))
+
+print(f"Average FPS: {avg_fps:.3f}")
+print(f"FPS samples: {samples}")
+print(f"CPU instructions: {instructions}")
+PY
+fi

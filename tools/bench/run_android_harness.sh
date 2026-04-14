@@ -36,6 +36,9 @@ PERF_EVENT="instructions"
 BOTTOM_SCREENSHOT_OUT=""
 CAPTURE_ONLY=0
 LAUNCH_ONLY=0
+WAIT_FOR_SCENE=""
+WAIT_TIMEOUT_SEC=60
+WAIT_INTERVAL_SEC=2
 
 usage() {
     cat <<EOF
@@ -62,6 +65,10 @@ Other options:
   --fps-samples N      Number of FPS samples to average. Default: $FPS_SAMPLE_COUNT
   --fps-interval-ms MS Delay between FPS samples. Default: $FPS_INTERVAL_MS
   --perf-duration SEC  simpleperf duration in seconds. Default: ceil(samples * interval)
+  --wait-for-scene NAME
+                      Wait until the top screen matches: menu | gameplay_loaded | blackscreen | whiteframe
+  --wait-timeout SEC   Timeout for --wait-for-scene. Default: $WAIT_TIMEOUT_SEC
+  --wait-interval SEC  Poll interval for --wait-for-scene. Default: $WAIT_INTERVAL_SEC
   --top-display-id ID  Physical display ID for the DS top screen. Default: $TOP_DISPLAY_ID
   --bottom-display-id ID
                       Physical display ID for the DS bottom screen. Default: $BOTTOM_DISPLAY_ID
@@ -85,6 +92,7 @@ Examples:
   $0 --uri 'content://...' --press-a 60 --expect-scene gameplay_loaded
   $0 --capture-only --screenshot /tmp/current-top.png --bottom-screenshot /tmp/current-bottom.png
   $0 --uri 'content://...' --launch-only
+  $0 --uri 'content://...' --launch-only --wait-for-scene menu
 EOF
     exit 2
 }
@@ -109,6 +117,9 @@ while [[ $# -gt 0 ]]; do
         --fps-samples) FPS_SAMPLE_COUNT="$2"; shift 2 ;;
         --fps-interval-ms) FPS_INTERVAL_MS="$2"; shift 2 ;;
         --perf-duration) PERF_DURATION_SEC="$2"; shift 2 ;;
+        --wait-for-scene) WAIT_FOR_SCENE="$2"; shift 2 ;;
+        --wait-timeout) WAIT_TIMEOUT_SEC="$2"; shift 2 ;;
+        --wait-interval) WAIT_INTERVAL_SEC="$2"; shift 2 ;;
         --top-display-id) TOP_DISPLAY_ID="$2"; shift 2 ;;
         --bottom-display-id) BOTTOM_DISPLAY_ID="$2"; shift 2 ;;
         --capture-only) CAPTURE_ONLY=1; shift 1 ;;
@@ -160,7 +171,54 @@ if ! [[ "$FPS_INTERVAL_MS" =~ ^[0-9]+$ ]] || [[ "$FPS_INTERVAL_MS" -le 0 ]]; the
     exit 1
 fi
 
+if ! [[ "$WAIT_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || [[ "$WAIT_TIMEOUT_SEC" -le 0 ]]; then
+    echo "Error: --wait-timeout must be a positive integer." >&2
+    exit 1
+fi
+
+if ! [[ "$WAIT_INTERVAL_SEC" =~ ^[0-9]+$ ]] || [[ "$WAIT_INTERVAL_SEC" -le 0 ]]; then
+    echo "Error: --wait-interval must be a positive integer." >&2
+    exit 1
+fi
+
 REMOTE_SCREENSHOT="/sdcard/Download/$(basename "$SCREENSHOT_OUT")"
+
+capture_top_to_file() {
+    local local_out="$1"
+    local remote_out="/sdcard/Download/$(basename "$local_out")"
+    "$ADB" shell screencap -d "$TOP_DISPLAY_ID" -p "$remote_out" >/dev/null 2>&1
+    mkdir -p "$(dirname "$local_out")"
+    "$ADB" pull "$remote_out" "$local_out" >/dev/null
+}
+
+wait_for_scene() {
+    local expected_scene="$1"
+    local timeout_sec="$2"
+    local interval_sec="$3"
+    local deadline=$((SECONDS + timeout_sec))
+    local probe="/tmp/harness-wait-$$.png"
+
+    if [[ ! -f "$SCENE_ANALYZER" ]]; then
+        echo "Error: scene analyzer not found at $SCENE_ANALYZER" >&2
+        exit 1
+    fi
+
+    echo "Waiting for scene: $expected_scene"
+    while (( SECONDS < deadline )); do
+        capture_top_to_file "$probe"
+        if python3 "$SCENE_ANALYZER" "$probe" --expect-scene "$expected_scene" >/dev/null 2>&1; then
+            echo "Reached scene: $expected_scene"
+            rm -f "$probe"
+            return 0
+        fi
+        sleep "$interval_sec"
+    done
+
+    echo "Error: timed out waiting for scene '$expected_scene'" >&2
+    python3 "$SCENE_ANALYZER" "$probe" || true
+    rm -f "$probe"
+    exit 1
+}
 
 if ! "$ADB" get-state >/dev/null 2>&1; then
     echo "Error: no Android device is connected or authorized for adb." >&2
@@ -206,10 +264,12 @@ else
     echo "Capture-only mode: using current app state"
 fi
 
+if [[ -n "$WAIT_FOR_SCENE" ]]; then
+    wait_for_scene "$WAIT_FOR_SCENE" "$WAIT_TIMEOUT_SEC" "$WAIT_INTERVAL_SEC"
+fi
+
 echo "Capturing screenshot..."
-"$ADB" shell screencap -d "$TOP_DISPLAY_ID" -p "$REMOTE_SCREENSHOT" >/dev/null 2>&1
-mkdir -p "$(dirname "$SCREENSHOT_OUT")"
-"$ADB" pull "$REMOTE_SCREENSHOT" "$SCREENSHOT_OUT" >/dev/null
+capture_top_to_file "$SCREENSHOT_OUT"
 
 echo "$SCREENSHOT_OUT"
 

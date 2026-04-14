@@ -222,6 +222,48 @@ Current explicit dead-end warning:
   already failed in multiple forms and should not get more speculative passes
   unless new evidence shows a materially different, higher-level subsystem cut.
 
+Current rejected Shrek performance experiments that should not be retried
+blindly:
+- full text BG surface cache:
+  - measured `38.397 FPS` on one pass and `36.901 FPS` on the adaptive variant,
+    versus a `39.693 FPS` baseline
+  - when mixed into the later renderer stack it also correlated with major
+    scene-dependent drops into the `20-25 FPS` range
+  - why it lost: it cached and rebuilt very large decoded text BG surfaces, so
+    invalidation events turned into heavy full-surface memory traffic and
+    rebuild spikes; the broad cache shape was too expensive relative to the
+    useful reuse
+- disabling full-line BG cache writes on top of tile-row caching:
+  - measured `35.995 FPS` versus the same `39.693 FPS` baseline
+  - why it lost: the composed-line cache was still paying for itself, and
+    turning off writes removed profitable full-line replay opportunities while
+    leaving the rest of the renderer work in place
+- GL prep-thread expansion:
+  - measured `37.008 FPS` versus the same `39.693 FPS` baseline on the first
+    isolated pass
+  - later direct A/B on a different renderer stack was near-noise rather than a
+    clear win, so this path is still not a credible big-yield target
+  - why it lost: it moved too little meaningful work off the emulator thread
+    while adding extra staging, copies, and bookkeeping; the ownership boundary
+    was not strong enough to beat the added overhead
+- JIT block-analysis refactor groundwork:
+  - latest direct pair was `30.187 FPS` with the analysis refactor versus
+    `30.697 FPS` without it, and live gameplay smoothness was reported as worse
+    with the refactor enabled
+  - earlier one-off harness runs were contradictory, so this area is noisy and
+    should not be judged from a single sample
+  - why it lost: it added analysis and container-copy overhead on the compile
+    path without a finished background worker or another structural consumer, so
+    the extra compile-time work could outweigh any restore-side benefit on this
+    workload
+- combined restore stack that re-enabled full text BG surface cache, GL
+  prep-thread expansion, sprite scanline binning, and the JIT analysis
+  groundwork:
+  - rough measured result `32.312 FPS`
+  - why it lost: the full text BG surface cache dominated the interaction and
+    dragged the whole stack down; treat that combined stack as poisoned by the
+    surface-cache design rather than evidence against sprite binning itself
+
 When an area is showing repeated rejects, pivot to another architectural lever
 instead of refining the same idea.
 

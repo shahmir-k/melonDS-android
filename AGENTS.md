@@ -134,6 +134,14 @@ Rules:
   avoid repeating the same dead end.
 - No optimization should be kept just because it looks clever in code.
 
+Benchmark harness defaults must be safe for new agents:
+- launched metric runs should wait for a verified scene before sampling
+- gameplay benchmarking should default to the real gameplay scene, not an early
+  boot/menu guess
+- launch-only metric runs may default to menu because they do not inject input
+- do not record benchmark numbers from a state that has not passed the scene
+  gate
+
 ## Workflow Rules
 
 These instructions are mandatory for work in this repo:

@@ -13,6 +13,8 @@ RECEIVER_CLASS="${MELONDS_DEBUG_RECEIVER:-me.magnum.melonds.debug.EmulatorDebugR
 SCENE_ANALYZER="$SCRIPT_DIR/analyze_harness_scene.py"
 TOP_DISPLAY_ID="${MELONDS_TOP_DISPLAY_ID:-1}"
 BOTTOM_DISPLAY_ID="${MELONDS_BOTTOM_DISPLAY_ID:-0}"
+DEFAULT_BENCHMARK_SCENE="gameplay_loaded"
+DEFAULT_LAUNCH_ONLY_SCENE="menu"
 
 URI=""
 SEQUENCE=""
@@ -93,6 +95,11 @@ Examples:
   $0 --capture-only --screenshot /tmp/current-top.png --bottom-screenshot /tmp/current-bottom.png
   $0 --uri 'content://...' --launch-only
   $0 --uri 'content://...' --launch-only --wait-for-scene menu
+
+Benchmark defaults:
+  - metrics runs default to waiting for gameplay_loaded
+  - launch-only metrics runs default to waiting for menu
+  - when a wait scene is active, screenshot validation defaults to that same scene
 EOF
     exit 2
 }
@@ -179,6 +186,18 @@ fi
 if ! [[ "$WAIT_INTERVAL_SEC" =~ ^[0-9]+$ ]] || [[ "$WAIT_INTERVAL_SEC" -le 0 ]]; then
     echo "Error: --wait-interval must be a positive integer." >&2
     exit 1
+fi
+
+if [[ "$SKIP_METRICS" -eq 0 && -z "$WAIT_FOR_SCENE" ]]; then
+    if [[ "$LAUNCH_ONLY" -eq 1 ]]; then
+        WAIT_FOR_SCENE="$DEFAULT_LAUNCH_ONLY_SCENE"
+    else
+        WAIT_FOR_SCENE="$DEFAULT_BENCHMARK_SCENE"
+    fi
+fi
+
+if [[ "$SKIP_SCENE_CHECK" -eq 0 && -z "$EXPECT_SCENE" && -n "$WAIT_FOR_SCENE" ]]; then
+    EXPECT_SCENE="$WAIT_FOR_SCENE"
 fi
 
 REMOTE_SCREENSHOT="/sdcard/Download/$(basename "$SCREENSHOT_OUT")"

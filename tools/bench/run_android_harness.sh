@@ -15,6 +15,7 @@ TOP_DISPLAY_ID="${MELONDS_TOP_DISPLAY_ID:-1}"
 BOTTOM_DISPLAY_ID="${MELONDS_BOTTOM_DISPLAY_ID:-0}"
 DEFAULT_BENCHMARK_SCENE="gameplay_loaded"
 DEFAULT_LAUNCH_ONLY_SCENE="menu"
+DEFAULT_BENCHMARK_SEQUENCE="A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A"
 
 URI=""
 SEQUENCE=""
@@ -97,7 +98,7 @@ Examples:
   $0 --uri 'content://...' --launch-only --wait-for-scene menu
 
 Benchmark defaults:
-  - metrics runs default to waiting for gameplay_loaded
+  - launched benchmark runs default to pressing A 30 times, then waiting for gameplay_loaded
   - launch-only metrics runs default to waiting for menu
   - when a wait scene is active, screenshot validation defaults to that same scene
 EOF
@@ -194,6 +195,10 @@ if [[ "$SKIP_METRICS" -eq 0 && -z "$WAIT_FOR_SCENE" ]]; then
     else
         WAIT_FOR_SCENE="$DEFAULT_BENCHMARK_SCENE"
     fi
+fi
+
+if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
+    SEQUENCE="$DEFAULT_BENCHMARK_SEQUENCE"
 fi
 
 if [[ "$SKIP_SCENE_CHECK" -eq 0 && -z "$EXPECT_SCENE" && -n "$WAIT_FOR_SCENE" ]]; then

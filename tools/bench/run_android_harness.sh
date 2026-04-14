@@ -15,6 +15,7 @@ TOP_DISPLAY_ID="${MELONDS_TOP_DISPLAY_ID:-1}"
 BOTTOM_DISPLAY_ID="${MELONDS_BOTTOM_DISPLAY_ID:-0}"
 DEFAULT_BENCHMARK_SCENE="gameplay_loaded"
 DEFAULT_LAUNCH_ONLY_SCENE="menu"
+DEFAULT_PRE_SEQUENCE_SCENE="menu"
 DEFAULT_BENCHMARK_SEQUENCE="A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A"
 
 URI=""
@@ -40,6 +41,7 @@ BOTTOM_SCREENSHOT_OUT=""
 CAPTURE_ONLY=0
 LAUNCH_ONLY=0
 WAIT_FOR_SCENE=""
+WAIT_BEFORE_SEQUENCE=""
 WAIT_TIMEOUT_SEC=60
 WAIT_INTERVAL_SEC=2
 
@@ -70,6 +72,8 @@ Other options:
   --perf-duration SEC  simpleperf duration in seconds. Default: ceil(samples * interval)
   --wait-for-scene NAME
                       Wait until the top screen matches: menu | gameplay_loaded | blackscreen | whiteframe
+  --wait-before-sequence NAME
+                      Wait for a scene before injecting the input sequence
   --wait-timeout SEC   Timeout for --wait-for-scene. Default: $WAIT_TIMEOUT_SEC
   --wait-interval SEC  Poll interval for --wait-for-scene. Default: $WAIT_INTERVAL_SEC
   --top-display-id ID  Physical display ID for the DS top screen. Default: $TOP_DISPLAY_ID
@@ -98,7 +102,7 @@ Examples:
   $0 --uri 'content://...' --launch-only --wait-for-scene menu
 
 Benchmark defaults:
-  - launched benchmark runs default to pressing A 30 times, then waiting for gameplay_loaded
+  - launched benchmark runs default to waiting for menu, pressing A 30 times, then waiting for gameplay_loaded
   - launch-only metrics runs default to waiting for menu
   - when a wait scene is active, screenshot validation defaults to that same scene
 EOF
@@ -126,6 +130,7 @@ while [[ $# -gt 0 ]]; do
         --fps-interval-ms) FPS_INTERVAL_MS="$2"; shift 2 ;;
         --perf-duration) PERF_DURATION_SEC="$2"; shift 2 ;;
         --wait-for-scene) WAIT_FOR_SCENE="$2"; shift 2 ;;
+        --wait-before-sequence) WAIT_BEFORE_SEQUENCE="$2"; shift 2 ;;
         --wait-timeout) WAIT_TIMEOUT_SEC="$2"; shift 2 ;;
         --wait-interval) WAIT_INTERVAL_SEC="$2"; shift 2 ;;
         --top-display-id) TOP_DISPLAY_ID="$2"; shift 2 ;;
@@ -196,6 +201,10 @@ if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LO
     SEQUENCE="$DEFAULT_BENCHMARK_SEQUENCE"
 fi
 
+if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -n "$SEQUENCE" && -z "$WAIT_BEFORE_SEQUENCE" ]]; then
+    WAIT_BEFORE_SEQUENCE="$DEFAULT_PRE_SEQUENCE_SCENE"
+fi
+
 if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
     echo "Error: specify at least one of --sequence, --press-a/--press, --load-state-uri, or --fast-forward." >&2
     exit 1
@@ -259,6 +268,10 @@ if [[ "$CAPTURE_ONLY" -eq 0 ]]; then
     sleep "$LAUNCH_WAIT"
 
     if [[ "$LAUNCH_ONLY" -eq 0 ]]; then
+        if [[ -n "$WAIT_BEFORE_SEQUENCE" ]]; then
+            wait_for_scene "$WAIT_BEFORE_SEQUENCE" "$WAIT_TIMEOUT_SEC" "$WAIT_INTERVAL_SEC"
+        fi
+
         BROADCAST_ARGS=(
             shell am broadcast
             -a me.magnum.melonds.DEBUG_EMULATOR

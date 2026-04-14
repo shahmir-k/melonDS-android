@@ -142,7 +142,8 @@ Benchmark harness defaults must be safe for new agents:
 - do not record benchmark numbers from a state that has not passed the scene
   gate
 - for the current Shrek optimization benchmark, launched runs should default to
-  the known gameplay-driving input sequence instead of a menu-only boot check
+  a staged flow: wait for menu, run the known gameplay-driving input sequence,
+  then wait for gameplay before sampling
 
 ## Workflow Rules
 

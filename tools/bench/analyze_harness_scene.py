@@ -95,13 +95,14 @@ def classify_scene(
         scene = "blackscreen"
     elif white_ratio >= 0.82 and luma >= 220.0:
         scene = "whiteframe"
-    elif distances["menu"] <= 14.0:
+    elif distances["menu"] <= 18.0:
         scene = "menu"
     elif (
-        distances["gameplay"] <= 12.0
+        distances["gameplay"] <= 16.0
         or (
-            distances["gameplay"] <= 35.0
-            and (distances["menu"] - distances["gameplay"]) >= 8.0
+            best_scene == "gameplay"
+            and distances["gameplay"] <= 55.0
+            and (distances["menu"] - distances["gameplay"]) >= 20.0
         )
     ):
         scene = "gameplay_loaded"

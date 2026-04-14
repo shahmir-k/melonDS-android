@@ -35,6 +35,7 @@ PERF_DURATION_SEC=""
 PERF_EVENT="instructions"
 BOTTOM_SCREENSHOT_OUT=""
 CAPTURE_ONLY=0
+LAUNCH_ONLY=0
 
 usage() {
     cat <<EOF
@@ -65,6 +66,7 @@ Other options:
   --bottom-display-id ID
                       Physical display ID for the DS bottom screen. Default: $BOTTOM_DISPLAY_ID
   --capture-only       Do not launch or inject inputs. Capture/measure the current app state only
+  --launch-only        Launch the ROM and stop there. No input injection
   --package NAME       App package. Default: $PACKAGE
   --activity NAME      Activity class. Default: $ACTIVITY
   -h, --help           Show this help
@@ -82,6 +84,7 @@ Examples:
   $0 --uri 'content://...' --sequence 'A,A,DOWN,A,SLEEP:3000,A'
   $0 --uri 'content://...' --press-a 60 --expect-scene gameplay_loaded
   $0 --capture-only --screenshot /tmp/current-top.png --bottom-screenshot /tmp/current-bottom.png
+  $0 --uri 'content://...' --launch-only
 EOF
     exit 2
 }
@@ -109,6 +112,7 @@ while [[ $# -gt 0 ]]; do
         --top-display-id) TOP_DISPLAY_ID="$2"; shift 2 ;;
         --bottom-display-id) BOTTOM_DISPLAY_ID="$2"; shift 2 ;;
         --capture-only) CAPTURE_ONLY=1; shift 1 ;;
+        --launch-only) LAUNCH_ONLY=1; shift 1 ;;
         --package) PACKAGE="$2"; shift 2 ;;
         --activity) ACTIVITY="$2"; shift 2 ;;
         -h|--help) usage ;;
@@ -137,7 +141,7 @@ if [[ -n "$PRESS_BUTTON" ]]; then
     SEQUENCE="$generated"
 fi
 
-if [[ "$CAPTURE_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
+if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
     echo "Error: specify at least one of --sequence, --press-a/--press, --load-state-uri, or --fast-forward." >&2
     exit 1
 fi
@@ -172,28 +176,32 @@ if [[ "$CAPTURE_ONLY" -eq 0 ]]; then
 
     sleep "$LAUNCH_WAIT"
 
-    BROADCAST_ARGS=(
-        shell am broadcast
-        -a me.magnum.melonds.DEBUG_EMULATOR
-        -n "${PACKAGE}/${RECEIVER_CLASS}"
-    )
+    if [[ "$LAUNCH_ONLY" -eq 0 ]]; then
+        BROADCAST_ARGS=(
+            shell am broadcast
+            -a me.magnum.melonds.DEBUG_EMULATOR
+            -n "${PACKAGE}/${RECEIVER_CLASS}"
+        )
 
-    if [[ -n "$LOAD_STATE_URI" ]]; then
-        BROADCAST_ARGS+=(--es load_state_uri "$LOAD_STATE_URI")
+        if [[ -n "$LOAD_STATE_URI" ]]; then
+            BROADCAST_ARGS+=(--es load_state_uri "$LOAD_STATE_URI")
+        fi
+
+        if [[ -n "$FAST_FORWARD" ]]; then
+            BROADCAST_ARGS+=(--ez fast_forward "$FAST_FORWARD")
+        fi
+
+        if [[ -n "$SEQUENCE" ]]; then
+            BROADCAST_ARGS+=(--es sequence "$SEQUENCE" --el press_ms "$PRESS_MS" --el gap_ms "$GAP_MS")
+        fi
+
+        echo "Injecting harness sequence..."
+        "$ADB" "${BROADCAST_ARGS[@]}" >/dev/null
+
+        sleep "$POST_WAIT"
+    else
+        echo "Launch-only mode: ROM launched without input injection"
     fi
-
-    if [[ -n "$FAST_FORWARD" ]]; then
-        BROADCAST_ARGS+=(--ez fast_forward "$FAST_FORWARD")
-    fi
-
-    if [[ -n "$SEQUENCE" ]]; then
-        BROADCAST_ARGS+=(--es sequence "$SEQUENCE" --el press_ms "$PRESS_MS" --el gap_ms "$GAP_MS")
-    fi
-
-    echo "Injecting harness sequence..."
-    "$ADB" "${BROADCAST_ARGS[@]}" >/dev/null
-
-    sleep "$POST_WAIT"
 else
     echo "Capture-only mode: using current app state"
 fi

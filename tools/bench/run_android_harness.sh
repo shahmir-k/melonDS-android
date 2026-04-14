@@ -160,11 +160,6 @@ if [[ -n "$PRESS_BUTTON" ]]; then
     SEQUENCE="$generated"
 fi
 
-if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
-    echo "Error: specify at least one of --sequence, --press-a/--press, --load-state-uri, or --fast-forward." >&2
-    exit 1
-fi
-
 if [[ -z "$SCREENSHOT_OUT" ]]; then
     SCREENSHOT_OUT="/tmp/$(date -u +%Y%m%dT%H%M%SZ)-top.png"
 fi
@@ -199,6 +194,11 @@ fi
 
 if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
     SEQUENCE="$DEFAULT_BENCHMARK_SEQUENCE"
+fi
+
+if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
+    echo "Error: specify at least one of --sequence, --press-a/--press, --load-state-uri, or --fast-forward." >&2
+    exit 1
 fi
 
 if [[ "$SKIP_SCENE_CHECK" -eq 0 && -z "$EXPECT_SCENE" && -n "$WAIT_FOR_SCENE" ]]; then

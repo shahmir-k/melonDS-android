@@ -36,7 +36,7 @@ android {
         }
         externalNativeBuild {
             cmake {
-                cppFlags("-std=c++17 -Wno-write-strings")
+                cppFlags("-std=c++17 -Wno-write-strings -O2 -DNDEBUG")
             }
         }
         vectorDrawables.useSupportLibrary = true

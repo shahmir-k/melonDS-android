@@ -100,7 +100,7 @@ def classify_scene(
     elif (
         distances["gameplay"] <= 12.0
         or (
-            distances["gameplay"] <= 25.0
+            distances["gameplay"] <= 35.0
             and (distances["menu"] - distances["gameplay"]) >= 8.0
         )
     ):

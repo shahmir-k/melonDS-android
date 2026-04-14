@@ -17,12 +17,17 @@ DEFAULT_BENCHMARK_SCENE="gameplay_loaded"
 DEFAULT_LAUNCH_ONLY_SCENE="menu"
 DEFAULT_PRE_SEQUENCE_SCENE="menu"
 DEFAULT_BENCHMARK_SEQUENCE="A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A"
+DEFAULT_SECOND_BENCHMARK_SEQUENCE="A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A"
+DEFAULT_PRE_SECOND_SEQUENCE_SCENE="gameplay_loaded"
 
 URI=""
 SEQUENCE=""
+SECOND_SEQUENCE=""
 LOAD_STATE_URI=""
 PRESS_BUTTON=""
 PRESS_COUNT=0
+SECOND_PRESS_BUTTON=""
+SECOND_PRESS_COUNT=0
 PRESS_MS=400
 GAP_MS=400
 LAUNCH_WAIT=20
@@ -42,6 +47,7 @@ CAPTURE_ONLY=0
 LAUNCH_ONLY=0
 WAIT_FOR_SCENE=""
 WAIT_BEFORE_SEQUENCE=""
+WAIT_BEFORE_SECOND_SEQUENCE=""
 WAIT_TIMEOUT_SEC=60
 WAIT_INTERVAL_SEC=2
 
@@ -51,8 +57,14 @@ Usage: $0 [--uri ROM_CONTENT_URI] [sequence options] [options]
 
 Sequence options:
   --sequence CSV       Direct harness sequence, e.g. 'A,A,DOWN,A,SLEEP:2000'
+  --second-sequence CSV
+                      Second direct harness sequence, run after an optional second scene gate
   --press-a COUNT      Convenience shorthand for COUNT presses of A
+  --press-a-second COUNT
+                      Convenience shorthand for COUNT presses of A in the second phase
   --press BUTTON COUNT Convenience shorthand for COUNT presses of BUTTON
+  --press-second BUTTON COUNT
+                      Convenience shorthand for COUNT presses of BUTTON in the second phase
 
 Other options:
   --load-state-uri URI Savestate content:// URI to load through the harness before inputs
@@ -74,6 +86,8 @@ Other options:
                       Wait until the top screen matches: menu | gameplay_loaded | blackscreen | whiteframe
   --wait-before-sequence NAME
                       Wait for a scene before injecting the input sequence
+  --wait-before-second-sequence NAME
+                      Wait for a scene before injecting the second input sequence
   --wait-timeout SEC   Timeout for --wait-for-scene. Default: $WAIT_TIMEOUT_SEC
   --wait-interval SEC  Poll interval for --wait-for-scene. Default: $WAIT_INTERVAL_SEC
   --top-display-id ID  Physical display ID for the DS top screen. Default: $TOP_DISPLAY_ID
@@ -102,7 +116,7 @@ Examples:
   $0 --uri 'content://...' --launch-only --wait-for-scene menu
 
 Benchmark defaults:
-  - launched benchmark runs default to waiting for menu, pressing A 30 times, then waiting for gameplay_loaded
+  - launched benchmark runs default to waiting for menu, pressing A 30 times, waiting for gameplay, pressing A 20 times, then waiting for gameplay again
   - launch-only metrics runs default to waiting for menu
   - when a wait scene is active, screenshot validation defaults to that same scene
 EOF
@@ -113,8 +127,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --uri) URI="$2"; shift 2 ;;
         --sequence) SEQUENCE="$2"; shift 2 ;;
+        --second-sequence) SECOND_SEQUENCE="$2"; shift 2 ;;
         --press-a) PRESS_BUTTON="A"; PRESS_COUNT="$2"; shift 2 ;;
+        --press-a-second) SECOND_PRESS_BUTTON="A"; SECOND_PRESS_COUNT="$2"; shift 2 ;;
         --press) PRESS_BUTTON="$2"; PRESS_COUNT="$3"; shift 3 ;;
+        --press-second) SECOND_PRESS_BUTTON="$2"; SECOND_PRESS_COUNT="$3"; shift 3 ;;
         --load-state-uri) LOAD_STATE_URI="$2"; shift 2 ;;
         --press-ms) PRESS_MS="$2"; shift 2 ;;
         --gap-ms) GAP_MS="$2"; shift 2 ;;
@@ -131,6 +148,7 @@ while [[ $# -gt 0 ]]; do
         --perf-duration) PERF_DURATION_SEC="$2"; shift 2 ;;
         --wait-for-scene) WAIT_FOR_SCENE="$2"; shift 2 ;;
         --wait-before-sequence) WAIT_BEFORE_SEQUENCE="$2"; shift 2 ;;
+        --wait-before-second-sequence) WAIT_BEFORE_SECOND_SEQUENCE="$2"; shift 2 ;;
         --wait-timeout) WAIT_TIMEOUT_SEC="$2"; shift 2 ;;
         --wait-interval) WAIT_INTERVAL_SEC="$2"; shift 2 ;;
         --top-display-id) TOP_DISPLAY_ID="$2"; shift 2 ;;
@@ -163,6 +181,22 @@ if [[ -n "$PRESS_BUTTON" ]]; then
         generated+="$PRESS_BUTTON"
     done
     SEQUENCE="$generated"
+fi
+
+if [[ -n "$SECOND_PRESS_BUTTON" ]]; then
+    if ! [[ "$SECOND_PRESS_COUNT" =~ ^[0-9]+$ ]] || [[ "$SECOND_PRESS_COUNT" -le 0 ]]; then
+        echo "Error: --press-second count must be a positive integer." >&2
+        exit 1
+    fi
+
+    generated=""
+    for ((i = 0; i < SECOND_PRESS_COUNT; i++)); do
+        if [[ -n "$generated" ]]; then
+            generated+=","
+        fi
+        generated+="$SECOND_PRESS_BUTTON"
+    done
+    SECOND_SEQUENCE="$generated"
 fi
 
 if [[ -z "$SCREENSHOT_OUT" ]]; then
@@ -203,6 +237,14 @@ fi
 
 if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -n "$SEQUENCE" && -z "$WAIT_BEFORE_SEQUENCE" ]]; then
     WAIT_BEFORE_SEQUENCE="$DEFAULT_PRE_SEQUENCE_SCENE"
+fi
+
+if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SECOND_SEQUENCE" ]]; then
+    SECOND_SEQUENCE="$DEFAULT_SECOND_BENCHMARK_SEQUENCE"
+fi
+
+if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -n "$SECOND_SEQUENCE" && -z "$WAIT_BEFORE_SECOND_SEQUENCE" ]]; then
+    WAIT_BEFORE_SECOND_SEQUENCE="$DEFAULT_PRE_SECOND_SEQUENCE_SCENE"
 fi
 
 if [[ "$CAPTURE_ONLY" -eq 0 && "$LAUNCH_ONLY" -eq 0 && -z "$SEQUENCE" && -z "$LOAD_STATE_URI" && -z "$FAST_FORWARD" ]]; then
@@ -294,6 +336,26 @@ if [[ "$CAPTURE_ONLY" -eq 0 ]]; then
         "$ADB" "${BROADCAST_ARGS[@]}" >/dev/null
 
         sleep "$POST_WAIT"
+
+        if [[ -n "$SECOND_SEQUENCE" ]]; then
+            if [[ -n "$WAIT_BEFORE_SECOND_SEQUENCE" ]]; then
+                wait_for_scene "$WAIT_BEFORE_SECOND_SEQUENCE" "$WAIT_TIMEOUT_SEC" "$WAIT_INTERVAL_SEC"
+            fi
+
+            SECOND_BROADCAST_ARGS=(
+                shell am broadcast
+                -a me.magnum.melonds.DEBUG_EMULATOR
+                -n "${PACKAGE}/${RECEIVER_CLASS}"
+                --es sequence "$SECOND_SEQUENCE"
+                --el press_ms "$PRESS_MS"
+                --el gap_ms "$GAP_MS"
+            )
+
+            echo "Injecting second harness sequence..."
+            "$ADB" "${SECOND_BROADCAST_ARGS[@]}" >/dev/null
+
+            sleep "$POST_WAIT"
+        fi
     else
         echo "Launch-only mode: ROM launched without input injection"
     fi

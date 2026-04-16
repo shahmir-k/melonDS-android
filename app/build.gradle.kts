@@ -43,8 +43,6 @@ android {
                     "-DLITEV_AGGRESSIVE_SKIP=ON",
                     "-DLITEV_SPU_FAST_INTERP=ON",
                     "-DLITEV_SINGLE_INSTANCE_CURRENT=ON",
-                    "-DLITEV_ARM7_HLE_AUDIO=ON",
-                    "-DLITEV_ARM7_HLE_WIFI=OFF",
                 )
             }
         }

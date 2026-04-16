@@ -164,6 +164,14 @@ Rules:
   real-time FPS movement as the main result. Measure how much uncapped speed or
   fast-forward speed the build can actually sustain.
 - CPU instructions and profiles are secondary diagnostics.
+- Profiling must be enabled when testing optimizations.
+- A profiler run is itself part of the benchmark result, not a one-off
+  investigation tool.
+- Optimization testing should use matched A/B profiler captures on device:
+  baseline build vs candidate build, same scene flow, same profiler overhead.
+- Keep/reject decisions should still be anchored by the top-line metric for the
+  workload state, but profiler deltas must be compared alongside FPS to show
+  which subsystem work actually moved.
 - Every optimization pass should be measured with the right top-line metric for
   that benchmark state:
   - normal FPS when below full speed,

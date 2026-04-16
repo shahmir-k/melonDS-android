@@ -71,6 +71,47 @@ Preferred direction:
 - avoid materializing intermediate planes when a simpler line or frame mode is
   known in advance.
 
+Current 2D rewrite state and direction:
+- the current kept renderer stack already has the right upstream building
+  blocks:
+  - prepared per-frame 2D state,
+  - prepared text BG source state,
+  - prepared affine source state,
+  - prepared sprite state and sprite scanline bins,
+  - composed-line replay keyed from exact prepared state
+- this means the next 2D wins should come from **expanding the reach of
+  composed-line replay**, not adding more downstream line-output caches
+- for the current Shrek benchmark, the main remaining structural limiter is
+  that composed-line replay is still disabled for large classes of lines:
+  - any window usage,
+  - BG mosaic,
+  - OBJ mosaic,
+  - some top-screen 3D compositions
+
+Mandatory planning rule for 2D work:
+- before implementing another 2D renderer experiment, explicitly identify:
+  - which expensive uncached step it removes,
+  - whether it operates **upstream** of final line composition or only caches a
+    downstream intermediate/output,
+  - what exact ownership key or prepared state it depends on,
+  - whether it expands composed-line replay coverage or only optimizes a
+    subordinate cache
+- if a proposed 2D change does not widen top-level replay coverage or remove a
+  major uncached stage in `DrawScanline_BGOBJ()`, it is probably not worth a
+  turn
+- do not keep “throwing random caches” at the renderer; state the plan first
+
+Current preferred 2D roadmap:
+1. cache `WindowMask`/window-state output with an exact key and use it to allow
+   composed-line replay on windowed lines
+2. after windowed replay works, attack affine/extended/large BG replay from
+   prepared source state
+3. only then investigate region invalidation on top of the widened replay
+   boundary
+4. do not prioritize per-line metadata-heavy text BG caches, final sprite-line
+   caches, or other downstream line-output caches unless new profiling proves
+   they expand top-level replay
+
 ### 3. Multithreaded Design
 
 The emulator is currently too single-core limited.
@@ -256,6 +297,23 @@ blindly:
     path without a finished background worker or another structural consumer, so
     the extra compile-time work could outweigh any restore-side benefit on this
     workload
+- exact per-line text BG frame-cache ownership:
+  - measured `39.552 FPS` against a kept renderer build at `42.872 FPS`
+  - why it lost: it added too much per-line metadata and memory traffic to a
+    subordinate cache without expanding top-level composed-line replay
+- final sprite-line output cache:
+  - measured `40.921 FPS` from a manually verified gameplay frame, below the
+    kept renderer build at `42.872 FPS`
+  - why it lost: it cached a large downstream sprite output buffer instead of
+    increasing composed-line replay coverage, so it duplicated line data and
+    bookkeeping without removing enough upstream work
+
+Current 2D dead-end pattern:
+- upstream replay and prepared-state ownership have been the winning direction
+- downstream line-output caches and per-line metadata-heavy caches have been the
+  losing direction
+- when choosing the next 2D experiment, bias toward the strongest replay
+  boundary, not the easiest local cache
 - combined restore stack that re-enabled full text BG surface cache, GL
   prep-thread expansion, sprite scanline binning, and the JIT analysis
   groundwork:

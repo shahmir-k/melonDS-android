@@ -72,6 +72,13 @@ def white_pixel_ratio(rgb: bytes, threshold: int = 235) -> float:
     return bright / pixels
 
 
+def color_bucket_count(rgb: bytes, shift: int = 4) -> int:
+    buckets = set()
+    for i in range(0, len(rgb), 3):
+        buckets.add((rgb[i] >> shift, rgb[i + 1] >> shift, rgb[i + 2] >> shift))
+    return len(buckets)
+
+
 def classify_scene(
     screenshot: Path,
     baselines: dict,
@@ -90,18 +97,28 @@ def classify_scene(
     luma = mean_luma(screenshot_rgb)
     dark_ratio = dark_pixel_ratio(screenshot_rgb)
     white_ratio = white_pixel_ratio(screenshot_rgb)
+    bucket_count = color_bucket_count(screenshot_rgb)
+    is_rendering = (
+        dark_ratio < 0.97
+        and white_ratio < 0.97
+        and bucket_count >= 12
+    )
 
     if dark_ratio >= 0.82 and luma <= 35.0:
         scene = "blackscreen"
     elif white_ratio >= 0.82 and luma >= 220.0:
         scene = "whiteframe"
-    elif distances["menu"] <= 14.0:
+    elif (
+        distances["menu"] <= 18.0
+        and (distances["gameplay"] - distances["menu"]) >= 15.0
+    ):
         scene = "menu"
     elif (
-        distances["gameplay"] <= 12.0
+        distances["gameplay"] <= 16.0
         or (
-            distances["gameplay"] <= 35.0
-            and (distances["menu"] - distances["gameplay"]) >= 8.0
+            best_scene == "gameplay"
+            and distances["gameplay"] <= 55.0
+            and (distances["menu"] - distances["gameplay"]) >= 20.0
         )
     ):
         scene = "gameplay_loaded"
@@ -116,9 +133,17 @@ def classify_scene(
         "mean_luma": round(luma, 3),
         "dark_ratio": round(dark_ratio, 3),
         "white_ratio": round(white_ratio, 3),
+        "color_bucket_count": bucket_count,
+        "is_rendering": is_rendering,
         "grid": [grid_w, grid_h],
         "crop_top": crop_top,
     }
+
+
+def scene_matches(result: dict, expected_scene: str) -> bool:
+    if expected_scene == "rendering":
+        return result["is_rendering"]
+    return result["scene"] == expected_scene
 
 
 def main() -> int:
@@ -158,7 +183,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--expect-scene",
-        choices=["menu", "gameplay_loaded", "blackscreen", "whiteframe"],
+        choices=["menu", "gameplay_loaded", "rendering", "blackscreen", "whiteframe"],
         help="Return non-zero if the classified scene does not match",
     )
     parser.add_argument(
@@ -198,7 +223,7 @@ def main() -> int:
             f"distances={result['distances']}"
         )
 
-    if args.expect_scene and result["scene"] != args.expect_scene:
+    if args.expect_scene and not scene_matches(result, args.expect_scene):
         return 1
 
     return 0

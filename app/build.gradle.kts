@@ -10,6 +10,10 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val litevProfile = providers.gradleProperty("litevProfile")
+    .map { it.toBooleanStrictOrNull() ?: false }
+    .orElse(false)
+
 android {
     signingConfigs {
         create("release") {
@@ -30,6 +34,7 @@ android {
         targetSdk = AppConfig.targetSdkVersion
         versionCode = AppConfig.versionCode
         versionName = AppConfig.versionName
+        buildConfigField("boolean", "LITEV_PROFILE_ENABLED", litevProfile.get().toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64"))
@@ -43,12 +48,14 @@ android {
                     "-DLITEV_AGGRESSIVE_SKIP=ON",
                     "-DLITEV_SPU_FAST_INTERP=ON",
                     "-DLITEV_SINGLE_INSTANCE_CURRENT=ON",
+                    "-DLITEV_PROFILE=${if (litevProfile.get()) "ON" else "OFF"}",
                 )
             }
         }
         vectorDrawables.useSupportLibrary = true
     }
     buildFeatures {
+        buildConfig = true
         viewBinding = true
         compose = true
     }

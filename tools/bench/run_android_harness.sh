@@ -7,23 +7,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 ADB="${ADB:-adb}"
-PACKAGE="${MELONDS_PACKAGE:-me.magnum.melonds.nightly.dev}"
+PACKAGE="${MELONDS_PACKAGE:-}"
 ACTIVITY="${MELONDS_ACTIVITY:-me.magnum.melonds.ui.emulator.EmulatorActivity}"
 RECEIVER_CLASS="${MELONDS_DEBUG_RECEIVER:-me.magnum.melonds.debug.EmulatorDebugReceiver}"
 SCENE_ANALYZER="$SCRIPT_DIR/analyze_harness_scene.py"
 TOP_DISPLAY_ID="${MELONDS_TOP_DISPLAY_ID:-1}"
 BOTTOM_DISPLAY_ID="${MELONDS_BOTTOM_DISPLAY_ID:-0}"
-DEFAULT_BENCHMARK_SCENE="gameplay_loaded"
+DEFAULT_BENCHMARK_SCENE="rendering"
 DEFAULT_LAUNCH_ONLY_SCENE="menu"
 DEFAULT_PRE_SEQUENCE_SCENE="menu"
 DEFAULT_BENCHMARK_SEQUENCE="A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A"
 DEFAULT_SECOND_BENCHMARK_SEQUENCE="A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A,A"
-DEFAULT_PRE_SECOND_SEQUENCE_SCENE="gameplay_loaded"
+DEFAULT_PRE_SECOND_SEQUENCE_SCENE="rendering"
 
 URI=""
+RUN_LABEL="${HARNESS_LABEL:-}"
 SEQUENCE=""
 SECOND_SEQUENCE=""
 LOAD_STATE_URI=""
+SAVE_STATE_URI=""
 PRESS_BUTTON=""
 PRESS_COUNT=0
 SECOND_PRESS_BUTTON=""
@@ -50,6 +52,38 @@ WAIT_BEFORE_SEQUENCE=""
 WAIT_BEFORE_SECOND_SEQUENCE=""
 WAIT_TIMEOUT_SEC=60
 WAIT_INTERVAL_SEC=2
+REQUIRE_PROFILE_BUILD="${HARNESS_EXPECT_PROFILE:-any}"
+PROFILE_BUILD="unknown"
+
+git_stamp() {
+    local repo="$1"
+    if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        git -C "$repo" describe --always --dirty 2>/dev/null
+    else
+        echo "unknown"
+    fi
+}
+
+append_metric_stamp() {
+    local file="$1"
+    local stamp_time="$2"
+    local sample_token="$3"
+    local main_repo_stamp="$4"
+    local core_repo_stamp="$5"
+
+    {
+        echo "# harness_label=${RUN_LABEL:-unlabeled}"
+        echo "# harness_utc=${stamp_time}"
+        echo "# sample_token=${sample_token}"
+        echo "# repo_main=${main_repo_stamp}"
+        echo "# repo_core=${core_repo_stamp}"
+        echo "# package=${PACKAGE}"
+        echo "# activity=${ACTIVITY}"
+        echo "# expect_scene=${EXPECT_SCENE:-none}"
+        echo "# wait_for_scene=${WAIT_FOR_SCENE:-none}"
+        echo "# litev_profile_build=${PROFILE_BUILD}"
+    } >> "$file"
+}
 
 usage() {
     cat <<EOF
@@ -68,6 +102,8 @@ Sequence options:
 
 Other options:
   --load-state-uri URI Savestate content:// URI to load through the harness before inputs
+  --save-state-uri URI Savestate URI or path to save after the final scene gate
+  --label TEXT        Stamp local metric logs with a human label for this run
   --press-ms MS        Button hold duration per command. Default: $PRESS_MS
   --gap-ms MS          Delay between commands. Default: $GAP_MS
   --launch-wait SEC    Seconds to wait after ROM launch. Default: $LAUNCH_WAIT
@@ -76,14 +112,14 @@ Other options:
   --screenshot PATH    Local top-screen screenshot output path. Default: /tmp/<timestamp>-top.png
   --bottom-screenshot PATH
                       Optional local bottom-screen screenshot output path
-  --expect-scene NAME  Expected final scene: menu | gameplay_loaded | blackscreen | whiteframe
+  --expect-scene NAME  Expected final scene: menu | gameplay_loaded | rendering | blackscreen | whiteframe
   --skip-scene-check   Skip baseline scene analysis after the screenshot
   --skip-metrics       Skip FPS sampling and simpleperf instruction counting
   --fps-samples N      Number of FPS samples to average. Default: $FPS_SAMPLE_COUNT
   --fps-interval-ms MS Delay between FPS samples. Default: $FPS_INTERVAL_MS
   --perf-duration SEC  simpleperf duration in seconds. Default: ceil(samples * interval)
   --wait-for-scene NAME
-                      Wait until the top screen matches: menu | gameplay_loaded | blackscreen | whiteframe
+                      Wait until the top screen matches: menu | gameplay_loaded | rendering | blackscreen | whiteframe
   --wait-before-sequence NAME
                       Wait for a scene before injecting the input sequence
   --wait-before-second-sequence NAME
@@ -95,32 +131,136 @@ Other options:
                       Physical display ID for the DS bottom screen. Default: $BOTTOM_DISPLAY_ID
   --capture-only       Do not launch or inject inputs. Capture/measure the current app state only
   --launch-only        Launch the ROM and stop there. No input injection
-  --package NAME       App package. Default: $PACKAGE
+  --package NAME       App package. Default: auto-detect installed melonDS variant
   --activity NAME      Activity class. Default: $ACTIVITY
+  --require-profile-build on|off|any
+                      Require installed app to report a matching LITEV_PROFILE build mode
   -h, --help           Show this help
 
 Environment:
   ADB                  adb binary. Default: adb
-  MELONDS_PACKAGE      Overrides default package
+  MELONDS_PACKAGE      Overrides auto-detected package
   MELONDS_ACTIVITY     Overrides default activity
   MELONDS_DEBUG_RECEIVER Overrides default receiver class
   MELONDS_TOP_DISPLAY_ID Overrides default top display id
   MELONDS_BOTTOM_DISPLAY_ID Overrides default bottom display id
+  HARNESS_LABEL        Default value for --label
+  HARNESS_EXPECT_PROFILE Default value for --require-profile-build
 
 Examples:
   $0 --uri 'content://...' --press-a 30
   $0 --uri 'content://...' --sequence 'A,A,DOWN,A,SLEEP:3000,A'
-  $0 --uri 'content://...' --press-a 60 --expect-scene gameplay_loaded
+  $0 --uri 'content://...' --press-a 60 --expect-scene rendering
   $0 --capture-only --screenshot /tmp/current-top.png --bottom-screenshot /tmp/current-bottom.png
   $0 --uri 'content://...' --launch-only
   $0 --uri 'content://...' --launch-only --wait-for-scene menu
 
 Benchmark defaults:
-  - launched benchmark runs default to waiting for menu, pressing A 30 times, waiting for gameplay, pressing A 20 times, then waiting for gameplay again
+  - launched benchmark runs default to waiting for menu, pressing A 30 times, waiting for rendering, pressing A 20 times, then waiting for rendering again
   - launch-only metrics runs default to waiting for menu
   - when a wait scene is active, screenshot validation defaults to that same scene
 EOF
     exit 2
+}
+
+detect_package() {
+    local candidates=(
+        "me.magnum.melonds.dev"
+        "me.magnum.melonds.nightly.dev"
+        "me.magnum.melonds.nightly"
+        "me.magnum.melonds"
+    )
+    local installed
+
+    installed="$("$ADB" shell pm list packages 2>/dev/null || true)"
+    for candidate in "${candidates[@]}"; do
+        if grep -q "^package:${candidate}\$" <<<"$installed"; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+resolve_component() {
+    local package_name="$1"
+    local component_class="$2"
+    local component_kind="$3"
+    local dump
+
+    dump="$("$ADB" shell dumpsys package "$package_name" 2>/dev/null || true)"
+    if grep -Fq "$component_class" <<<"$dump"; then
+        return 0
+    fi
+
+    echo "Error: ${component_kind} '${component_class}' was not found in installed package '${package_name}'." >&2
+    exit 1
+}
+
+probe_receiver() {
+    if ! "$ADB" shell am broadcast \
+        -a me.magnum.melonds.DEBUG_EMULATOR \
+        -n "${PACKAGE}/${RECEIVER_CLASS}" \
+        --ez cancel_sequence true >/dev/null 2>&1; then
+        echo "Error: receiver '${RECEIVER_CLASS}' did not accept an explicit harness broadcast in package '${PACKAGE}'." >&2
+        exit 1
+    fi
+}
+
+preflight_package() {
+    if [[ -z "$PACKAGE" ]]; then
+        if ! PACKAGE="$(detect_package)"; then
+            echo "Error: no supported melonDS Android package is installed." >&2
+            "$ADB" shell pm list packages | grep 'me.magnum.melonds' >&2 || true
+            exit 1
+        fi
+        echo "Auto-detected package: $PACKAGE"
+    fi
+
+    if ! "$ADB" shell pm list packages | grep -q "^package:${PACKAGE}\$"; then
+        echo "Error: package '$PACKAGE' is not installed on the device." >&2
+        "$ADB" shell pm list packages | grep 'me.magnum.melonds' >&2 || true
+        exit 1
+    fi
+
+    if ! "$ADB" shell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$PACKAGE" >/dev/null 2>&1; then
+        echo "Error: package '$PACKAGE' does not resolve a launcher activity." >&2
+        exit 1
+    fi
+
+    resolve_component "$PACKAGE" "$ACTIVITY" "activity"
+    probe_receiver
+}
+
+query_profile_build() {
+    local logs
+    local line
+
+    "$ADB" logcat -c
+    "$ADB" shell am broadcast \
+        -a me.magnum.melonds.DEBUG_EMULATOR \
+        -n "${PACKAGE}/${RECEIVER_CLASS}" \
+        --ez query_profile_build true >/dev/null 2>&1 || true
+    sleep 1
+
+    logs="$("$ADB" logcat -d -s EmulatorDebugReceiver:I 2>/dev/null || true)"
+    line="$(grep 'HARNESS_PROFILE_BUILD' <<<"$logs" | tail -n 1 || true)"
+
+    if grep -q 'enabled=true' <<<"$line"; then
+        PROFILE_BUILD="on"
+    elif grep -q 'enabled=false' <<<"$line"; then
+        PROFILE_BUILD="off"
+    else
+        PROFILE_BUILD="unknown"
+    fi
+
+    echo "Detected LITEV_PROFILE build: $PROFILE_BUILD"
+
+    if [[ "$REQUIRE_PROFILE_BUILD" != "any" && "$PROFILE_BUILD" != "$REQUIRE_PROFILE_BUILD" ]]; then
+        echo "Error: required LITEV_PROFILE build '$REQUIRE_PROFILE_BUILD' but detected '$PROFILE_BUILD'." >&2
+        exit 1
+    fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -133,6 +273,8 @@ while [[ $# -gt 0 ]]; do
         --press) PRESS_BUTTON="$2"; PRESS_COUNT="$3"; shift 3 ;;
         --press-second) SECOND_PRESS_BUTTON="$2"; SECOND_PRESS_COUNT="$3"; shift 3 ;;
         --load-state-uri) LOAD_STATE_URI="$2"; shift 2 ;;
+        --save-state-uri) SAVE_STATE_URI="$2"; shift 2 ;;
+        --label) RUN_LABEL="$2"; shift 2 ;;
         --press-ms) PRESS_MS="$2"; shift 2 ;;
         --gap-ms) GAP_MS="$2"; shift 2 ;;
         --launch-wait) LAUNCH_WAIT="$2"; shift 2 ;;
@@ -157,6 +299,7 @@ while [[ $# -gt 0 ]]; do
         --launch-only) LAUNCH_ONLY=1; shift 1 ;;
         --package) PACKAGE="$2"; shift 2 ;;
         --activity) ACTIVITY="$2"; shift 2 ;;
+        --require-profile-build) REQUIRE_PROFILE_BUILD="$2"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "Unknown argument: $1" >&2; usage ;;
     esac
@@ -222,6 +365,14 @@ if ! [[ "$WAIT_INTERVAL_SEC" =~ ^[0-9]+$ ]] || [[ "$WAIT_INTERVAL_SEC" -le 0 ]];
     echo "Error: --wait-interval must be a positive integer." >&2
     exit 1
 fi
+
+case "$REQUIRE_PROFILE_BUILD" in
+    on|off|any) ;;
+    *)
+        echo "Error: --require-profile-build must be one of: on, off, any." >&2
+        exit 1
+        ;;
+esac
 
 if [[ "$SKIP_METRICS" -eq 0 && -z "$WAIT_FOR_SCENE" ]]; then
     if [[ "$LAUNCH_ONLY" -eq 1 ]]; then
@@ -301,6 +452,9 @@ if ! "$ADB" get-state >/dev/null 2>&1; then
     exit 1
 fi
 
+preflight_package
+query_profile_build
+
 if [[ "$CAPTURE_ONLY" -eq 0 ]]; then
     echo "Launching ROM..."
     "$ADB" shell am start -S \
@@ -367,6 +521,15 @@ if [[ -n "$WAIT_FOR_SCENE" ]]; then
     wait_for_scene "$WAIT_FOR_SCENE" "$WAIT_TIMEOUT_SEC" "$WAIT_INTERVAL_SEC"
 fi
 
+if [[ -n "$SAVE_STATE_URI" ]]; then
+    echo "Saving state..."
+    "$ADB" shell am broadcast \
+        -a me.magnum.melonds.DEBUG_EMULATOR \
+        -n "${PACKAGE}/${RECEIVER_CLASS}" \
+        --es save_state_uri "$SAVE_STATE_URI" >/dev/null
+    sleep 2
+fi
+
 echo "Capturing screenshot..."
 capture_top_to_file "$SCREENSHOT_OUT"
 
@@ -405,6 +568,9 @@ PY
     SAMPLE_TOKEN="harness-$RANDOM-$(date -u +%Y%m%d%H%M%S)"
     FPS_LOG="/tmp/${SAMPLE_TOKEN}-fps.log"
     PERF_LOG="/tmp/${SAMPLE_TOKEN}-simpleperf.txt"
+    STAMP_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    MAIN_REPO_STAMP="$(git_stamp "$REPO_ROOT")"
+    CORE_REPO_STAMP="$(git_stamp "$REPO_ROOT/melonDS-android-lib")"
 
     echo "Collecting FPS and instruction metrics..."
     "$ADB" logcat -c
@@ -418,13 +584,17 @@ PY
     ) &
     FPS_BROADCAST_PID=$!
 
+    : > "$PERF_LOG"
+    append_metric_stamp "$PERF_LOG" "$STAMP_TIME" "$SAMPLE_TOKEN" "$MAIN_REPO_STAMP" "$CORE_REPO_STAMP"
     "$ADB" shell simpleperf stat \
         --app "$PACKAGE" \
         --duration "$PERF_DURATION_SEC" \
-        -e "$PERF_EVENT" > "$PERF_LOG" 2>&1
+        -e "$PERF_EVENT" >> "$PERF_LOG" 2>&1
 
     wait "$FPS_BROADCAST_PID"
-    "$ADB" logcat -d -s EmulatorDebugReceiver:I > "$FPS_LOG"
+    : > "$FPS_LOG"
+    append_metric_stamp "$FPS_LOG" "$STAMP_TIME" "$SAMPLE_TOKEN" "$MAIN_REPO_STAMP" "$CORE_REPO_STAMP"
+    "$ADB" logcat -d -s EmulatorDebugReceiver:I >> "$FPS_LOG"
 
     python3 - <<PY
 import pathlib

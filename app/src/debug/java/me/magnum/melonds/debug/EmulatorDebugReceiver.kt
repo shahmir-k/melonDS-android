@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import me.magnum.melonds.BuildConfig
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.Input
 import java.util.concurrent.atomic.AtomicInteger
@@ -15,6 +16,7 @@ class EmulatorDebugReceiver : BroadcastReceiver() {
         const val ACTION = "me.magnum.melonds.DEBUG_EMULATOR"
 
         private const val EXTRA_LOAD_STATE_URI = "load_state_uri"
+        private const val EXTRA_SAVE_STATE_URI = "save_state_uri"
         private const val EXTRA_SEQUENCE = "sequence"
         private const val EXTRA_PRESS_MS = "press_ms"
         private const val EXTRA_GAP_MS = "gap_ms"
@@ -23,6 +25,7 @@ class EmulatorDebugReceiver : BroadcastReceiver() {
         private const val EXTRA_FPS_INTERVAL_MS = "fps_interval_ms"
         private const val EXTRA_SAMPLE_TOKEN = "sample_token"
         private const val EXTRA_CANCEL_SEQUENCE = "cancel_sequence"
+        private const val EXTRA_QUERY_PROFILE_BUILD = "query_profile_build"
 
         private const val TAG = "EmulatorDebugReceiver"
 
@@ -40,10 +43,20 @@ class EmulatorDebugReceiver : BroadcastReceiver() {
                     return@thread
                 }
 
+                if (intent.getBooleanExtra(EXTRA_QUERY_PROFILE_BUILD, false)) {
+                    Log.i(TAG, "HARNESS_PROFILE_BUILD enabled=${BuildConfig.LITEV_PROFILE_ENABLED}")
+                }
+
                 val loadStateUri = intent.getStringExtra(EXTRA_LOAD_STATE_URI)
                 if (!loadStateUri.isNullOrBlank()) {
                     val loaded = MelonEmulator.loadState(Uri.parse(loadStateUri))
                     Log.i(TAG, "loadState($loadStateUri) -> $loaded")
+                }
+
+                val saveStateUri = intent.getStringExtra(EXTRA_SAVE_STATE_URI)
+                if (!saveStateUri.isNullOrBlank()) {
+                    val saved = MelonEmulator.saveState(Uri.parse(saveStateUri))
+                    Log.i(TAG, "saveState($saveStateUri) -> $saved")
                 }
 
                 if (intent.hasExtra(EXTRA_FAST_FORWARD)) {

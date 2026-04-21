@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <atomic>
 #include <time.h>
 #include <MelonDS.h>
 #include <MelonDSAudio.h>
@@ -21,6 +22,10 @@
 #include "RetroAchievementsMapper.h"
 
 #include "Platform.h"
+
+#ifndef LITEV_PROFILE
+#define LITEV_PROFILE 0
+#endif
 
 enum GbaSlotType {
     NONE = 0,
@@ -42,6 +47,9 @@ bool paused;
 std::atomic_bool isThreadReallyPaused = false;
 int observedFrames = 0;
 float fps = 0;
+#if LITEV_PROFILE
+std::atomic<uint64_t> frameCounter {0};
+#endif
 int targetFps;
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
@@ -241,6 +249,11 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
 {
     stop = false;
     isThreadReallyPaused = false;
+#if LITEV_PROFILE
+    frameCounter.store(0, std::memory_order_relaxed);
+#endif
+    observedFrames = 0;
+    fps = 0;
     limitFps = true;
     targetFps = 60;
     isFastForwardEnabled = false;
@@ -296,6 +309,16 @@ JNIEXPORT jfloat JNICALL
 Java_me_magnum_melonds_MelonEmulator_getFPS(JNIEnv* env, jobject thiz)
 {
     return fps;
+}
+
+JNIEXPORT jlong JNICALL
+Java_me_magnum_melonds_MelonEmulator_getFrameCounter(JNIEnv* env, jobject thiz)
+{
+#if LITEV_PROFILE
+    return static_cast<jlong>(frameCounter.load(std::memory_order_relaxed));
+#else
+    return 0;
+#endif
 }
 
 JNIEXPORT jobject JNICALL
@@ -641,6 +664,9 @@ void* emulate(void*)
         }
 
         observedFrames++;
+#if LITEV_PROFILE
+        frameCounter.fetch_add(1, std::memory_order_relaxed);
+#endif
         if (observedFrames >= 30) {
             fps = (observedFrames * 1000.0) / (lastTick - lastMeasureFpsTick);
             lastMeasureFpsTick = lastTick;

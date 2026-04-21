@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import me.magnum.melonds.BuildConfig
 import me.magnum.melonds.MelonEmulator
@@ -139,9 +140,19 @@ class EmulatorDebugReceiver : BroadcastReceiver() {
 
     private fun sampleFps(sampleCount: Int, intervalMs: Long, token: String?) {
         val samples = mutableListOf<Float>()
+        val startMs = SystemClock.elapsedRealtime()
+        val startFrame = MelonEmulator.getFrameCounter()
         repeat(sampleCount) { index ->
             val fps = MelonEmulator.getFPS()
+            val frame = MelonEmulator.getFrameCounter()
+            val elapsedMs = SystemClock.elapsedRealtime() - startMs
             samples += fps
+            val tokenSuffix = token?.let { " token=$it" }.orEmpty()
+            Log.i(
+                TAG,
+                "HARNESS_FPS_SAMPLE$tokenSuffix index=$index elapsed_ms=$elapsedMs " +
+                    "frame=$frame fps=${"%.3f".format(fps)}"
+            )
             if (index + 1 < sampleCount) {
                 Thread.sleep(intervalMs)
             }
@@ -149,9 +160,11 @@ class EmulatorDebugReceiver : BroadcastReceiver() {
 
         val avg = if (samples.isEmpty()) 0f else samples.sum() / samples.size
         val tokenSuffix = token?.let { " token=$it" }.orEmpty()
+        val endFrame = MelonEmulator.getFrameCounter()
         Log.i(
             TAG,
             "HARNESS_FPS$tokenSuffix avg=${"%.3f".format(avg)} " +
+                "start_frame=$startFrame end_frame=$endFrame " +
                 "samples=${samples.joinToString(prefix = "[", postfix = "]") { "%.3f".format(it) }}"
         )
     }

@@ -87,6 +87,8 @@ object MelonEmulator {
 
     external fun getFPS(): Float
 
+    external fun getFrameCounter(): Long
+
     external fun getScreenshotBuffer(): ByteBuffer?
 
 	external fun pauseEmulation()

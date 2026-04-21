@@ -44,6 +44,9 @@ FPS_SAMPLE_COUNT=6
 FPS_INTERVAL_MS=1000
 PERF_DURATION_SEC=""
 PERF_EVENT="instructions"
+CONTINUOUS_LOG=""
+CONTINUOUS_DURATION_SEC=0
+CONTINUOUS_FPS_INTERVAL_MS=0
 BOTTOM_SCREENSHOT_OUT=""
 CAPTURE_ONLY=0
 LAUNCH_ONLY=0
@@ -118,6 +121,12 @@ Other options:
   --fps-samples N      Number of FPS samples to average. Default: $FPS_SAMPLE_COUNT
   --fps-interval-ms MS Delay between FPS samples. Default: $FPS_INTERVAL_MS
   --perf-duration SEC  simpleperf duration in seconds. Default: ceil(samples * interval)
+  --continuous-log PATH
+                      Capture a timestamped time-series log containing HARNESS_FPS_SAMPLE and LITEV_PROFILE lines
+  --continuous-duration SEC
+                      Duration for --continuous-log sampling after the final scene gate. Default: 0 (disabled)
+  --continuous-fps-interval-ms MS
+                      FPS time-series sample interval for --continuous-log. Default: --fps-interval-ms
   --wait-for-scene NAME
                       Wait until the top screen matches: menu | gameplay_loaded | rendering | blackscreen | whiteframe
   --wait-before-sequence NAME
@@ -288,6 +297,9 @@ while [[ $# -gt 0 ]]; do
         --fps-samples) FPS_SAMPLE_COUNT="$2"; shift 2 ;;
         --fps-interval-ms) FPS_INTERVAL_MS="$2"; shift 2 ;;
         --perf-duration) PERF_DURATION_SEC="$2"; shift 2 ;;
+        --continuous-log) CONTINUOUS_LOG="$2"; shift 2 ;;
+        --continuous-duration) CONTINUOUS_DURATION_SEC="$2"; shift 2 ;;
+        --continuous-fps-interval-ms) CONTINUOUS_FPS_INTERVAL_MS="$2"; shift 2 ;;
         --wait-for-scene) WAIT_FOR_SCENE="$2"; shift 2 ;;
         --wait-before-sequence) WAIT_BEFORE_SEQUENCE="$2"; shift 2 ;;
         --wait-before-second-sequence) WAIT_BEFORE_SECOND_SEQUENCE="$2"; shift 2 ;;
@@ -353,6 +365,25 @@ fi
 
 if ! [[ "$FPS_INTERVAL_MS" =~ ^[0-9]+$ ]] || [[ "$FPS_INTERVAL_MS" -le 0 ]]; then
     echo "Error: --fps-interval-ms must be a positive integer." >&2
+    exit 1
+fi
+
+if ! [[ "$CONTINUOUS_DURATION_SEC" =~ ^[0-9]+$ ]]; then
+    echo "Error: --continuous-duration must be a non-negative integer." >&2
+    exit 1
+fi
+
+if [[ "$CONTINUOUS_FPS_INTERVAL_MS" -eq 0 ]]; then
+    CONTINUOUS_FPS_INTERVAL_MS="$FPS_INTERVAL_MS"
+fi
+
+if ! [[ "$CONTINUOUS_FPS_INTERVAL_MS" =~ ^[0-9]+$ ]] || [[ "$CONTINUOUS_FPS_INTERVAL_MS" -le 0 ]]; then
+    echo "Error: --continuous-fps-interval-ms must be a positive integer." >&2
+    exit 1
+fi
+
+if [[ -n "$CONTINUOUS_LOG" && "$CONTINUOUS_DURATION_SEC" -le 0 ]]; then
+    echo "Error: --continuous-log requires --continuous-duration SEC." >&2
     exit 1
 fi
 
@@ -444,6 +475,59 @@ wait_for_scene() {
     python3 "$SCENE_ANALYZER" "$probe" || true
     rm -f "$probe"
     exit 1
+}
+
+collect_continuous_log() {
+    local local_out="$1"
+    local duration_sec="$2"
+    local interval_ms="$3"
+    local sample_count
+    local sample_token
+    local stamp_time
+    local main_repo_stamp
+    local core_repo_stamp
+    local fps_pid
+    local logcat_pid
+
+    sample_count="$(python3 - <<PY
+import math
+print(max(1, math.ceil(($duration_sec * 1000.0) / $interval_ms)))
+PY
+)"
+    sample_token="continuous-$RANDOM-$(date -u +%Y%m%d%H%M%S)"
+    stamp_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    main_repo_stamp="$(git_stamp "$REPO_ROOT")"
+    core_repo_stamp="$(git_stamp "$REPO_ROOT/melonDS-android-lib")"
+
+    mkdir -p "$(dirname "$local_out")"
+    : > "$local_out"
+    append_metric_stamp "$local_out" "$stamp_time" "$sample_token" "$main_repo_stamp" "$core_repo_stamp"
+    {
+        echo "# continuous_duration_sec=${duration_sec}"
+        echo "# continuous_fps_interval_ms=${interval_ms}"
+        echo "# continuous_fps_sample_count=${sample_count}"
+        echo "# log_tags=EmulatorDebugReceiver:I,melonDS:I"
+    } >> "$local_out"
+
+    echo "Collecting continuous FPS/profiler log: $local_out"
+    "$ADB" logcat -c
+    "$ADB" logcat -v epoch EmulatorDebugReceiver:I melonDS:I '*:S' >> "$local_out" &
+    logcat_pid=$!
+
+    "$ADB" shell am broadcast \
+        -a me.magnum.melonds.DEBUG_EMULATOR \
+        -n "${PACKAGE}/${RECEIVER_CLASS}" \
+        --ei fps_sample_count "$sample_count" \
+        --el fps_interval_ms "$interval_ms" \
+        --es sample_token "$sample_token" >/dev/null &
+    fps_pid=$!
+
+    wait "$fps_pid"
+    sleep 1
+    kill "$logcat_pid" >/dev/null 2>&1 || true
+    wait "$logcat_pid" >/dev/null 2>&1 || true
+
+    echo "$local_out"
 }
 
 if ! "$ADB" get-state >/dev/null 2>&1; then
@@ -549,6 +633,10 @@ if [[ "$SKIP_SCENE_CHECK" -eq 0 && -n "$EXPECT_SCENE" && -f "$SCENE_ANALYZER" ]]
 
     echo "Analyzing screenshot scene..."
     python3 "${ANALYZER_ARGS[@]}"
+fi
+
+if [[ -n "$CONTINUOUS_LOG" ]]; then
+    collect_continuous_log "$CONTINUOUS_LOG" "$CONTINUOUS_DURATION_SEC" "$CONTINUOUS_FPS_INTERVAL_MS"
 fi
 
 if [[ "$SKIP_METRICS" -eq 0 ]]; then

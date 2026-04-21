@@ -331,6 +331,8 @@ These are the removed changes most worth bringing back in a controlled form.
 
 Source item: `#4`
 
+Status: reintroduced as `tools/bench/run_android_simpleperf.sh`.
+
 Why it is a good candidate:
 - it improves production-build measurement without touching emulation behavior
 - it matches the repo goal of understanding production hot paths in a gameplay-valid scene

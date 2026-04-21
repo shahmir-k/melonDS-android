@@ -375,3 +375,53 @@ These should stay out unless needed again for one-off debugging:
 
 - `#5` through `#9`: they were temporary fastmem isolate edits, not product changes
 - `#10` through `#12`: they were debug-only logging probes and should only return behind an explicit debug flag when needed
+
+## Rejected Follow-up: Guarded MainRAM Raw Stores In Patch Thunks
+
+Date: 2026-04-21
+
+Status: rejected and reverted.
+
+Experiment:
+- added a direct MainRAM store path to the ARM9 patched fastmem store thunks
+- kept DTCM raw stores unchanged
+- allowed raw MainRAM stores only for DS-mode `0x02xxxxxx` hits
+- checked `CodeIndexMainRAM[(addr & 0x3FFFFF) / 512].Code` before the raw store
+- fell back to `SlowWrite9` when the page had compiled code so existing JIT invalidation stayed authoritative
+
+Representative removed shape:
+
+```cpp
+LSR(W6, W5, 24);
+CMP(W6, 0x02);
+FixupBranch slowFallback = B(CC_NEQ);
+ANDI2R(W5, W5, 0x3FFFFF);
+
+MOVP2R(X6, NDS.JIT.CodeIndexMainRAM);
+LSR(W7, W5, 9);
+ADD(X6, X6, X7, ArithOption(X7, ST_LSL, 4));
+LDR(INDEX_UNSIGNED, W7, X6, offsetof(AddressRange, Code));
+FixupBranch codeFallback = CBNZ(W7);
+
+MOVP2R(X6, NDS.JIT.Memory.GetMainRAM());
+ADD(X6, X6, X5);
+STRGeneric(accessSize, INDEX_UNSIGNED, W2, X6, 0);
+FixupBranch mainDone = B();
+
+SetJumpTarget(slowFallback);
+SetJumpTarget(codeFallback);
+```
+
+Measured result:
+- valid Shrek gameplay run
+- `24.187 FPS`
+- `4,820,830,156` CPU instructions
+
+Why it was rejected:
+- the current kept raw-load/thunk baseline already has `arm9_slowmem write main=0.0/frame`
+- the new guard did not remove meaningful remaining work
+- the extra CodeIndex check increased hot patched-thunk cost and the top-line FPS regressed from the kept raw-op baseline around `25.6-25.7 FPS`
+
+Guidance:
+- do not retry this exact guard-heavy MainRAM store thunk path unless profiler data shows nonzero ARM9 MainRAM slow-write traffic again
+- if MainRAM stores become worth revisiting, prefer a cheaper structural write-barrier design instead of checking `CodeIndexMainRAM` on every patched store

@@ -488,6 +488,7 @@ collect_continuous_log() {
     local core_repo_stamp
     local fps_pid
     local logcat_pid
+    local capture_wait_sec
 
     sample_count="$(python3 - <<PY
 import math
@@ -523,7 +524,12 @@ PY
     fps_pid=$!
 
     wait "$fps_pid"
-    sleep 1
+    capture_wait_sec="$(python3 - <<PY
+import math
+print(max(1, math.ceil(($sample_count * $interval_ms) / 1000.0) + 2))
+PY
+)"
+    sleep "$capture_wait_sec"
     kill "$logcat_pid" >/dev/null 2>&1 || true
     wait "$logcat_pid" >/dev/null 2>&1 || true
 
@@ -680,6 +686,12 @@ PY
         -e "$PERF_EVENT" >> "$PERF_LOG" 2>&1
 
     wait "$FPS_BROADCAST_PID"
+    for _ in $(seq 1 40); do
+        if "$ADB" logcat -d -s EmulatorDebugReceiver:I 2>/dev/null | rg -q "HARNESS_FPS token=${SAMPLE_TOKEN}\\b"; then
+            break
+        fi
+        sleep 0.25
+    done
     : > "$FPS_LOG"
     append_metric_stamp "$FPS_LOG" "$STAMP_TIME" "$SAMPLE_TOKEN" "$MAIN_REPO_STAMP" "$CORE_REPO_STAMP"
     "$ADB" logcat -d -s EmulatorDebugReceiver:I >> "$FPS_LOG"
@@ -695,7 +707,7 @@ token = "$SAMPLE_TOKEN"
 
 fps_match = None
 for line in fps_log.splitlines():
-    if token in line and "HARNESS_FPS" in line:
+    if token in line and "HARNESS_FPS " in line:
         fps_match = line
         break
 

@@ -77,7 +77,13 @@ class EmulatorDebugReceiver : BroadcastReceiver() {
                 if (fpsSampleCount > 0) {
                     val fpsIntervalMs = intent.getLongExtra(EXTRA_FPS_INTERVAL_MS, 1000L).coerceAtLeast(1L)
                     val sampleToken = intent.getStringExtra(EXTRA_SAMPLE_TOKEN)?.ifBlank { null }
-                    sampleFps(fpsSampleCount, fpsIntervalMs, sampleToken)
+                    thread(name = "EmuDebugFpsSampler") {
+                        try {
+                            sampleFps(fpsSampleCount, fpsIntervalMs, sampleToken)
+                        } catch (t: Throwable) {
+                            Log.e(TAG, "FPS sampling failed", t)
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "Debug harness failed", t)

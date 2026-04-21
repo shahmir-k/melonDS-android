@@ -195,6 +195,23 @@ Benchmark harness defaults must be safe for new agents:
   for gameplay, run the cutscene-skip input sequence, then wait for gameplay
   again before sampling
 
+Profiler compile-out and fastmem safety:
+- benchmarking for optimization lanes should still use profiling enabled, but
+  when a change touches shared ARM9 JIT/fastmem codegen or helper ABIs, also
+  verify that `LITEV_PROFILE=off` still builds and boots
+- do not assume that a profiled build proving correctness means the production
+  build is safe; this repo already hit an off-build fastmem crash where
+  profiler-only shape metadata was packed into `helperWordCount` in the emitter
+  but only stripped in the profiled helper path, so the `off` build consumed a
+  bogus word count and executed invalid block-transfer behavior
+- the same bug chase also exposed wrapper-boundary correctness risk in fastmem
+  patch code: preserving/restoring the wrong mapped registers around helper
+  calls can silently corrupt block-load/store results even when the profiled
+  build appears fine
+- when touching this area, treat `LITEV_PROFILE=on` and `off` as separate
+  correctness configurations for validation, even if only the profiled build is
+  used for benchmark numbers
+
 ## Workflow Rules
 
 These instructions are mandatory for work in this repo:

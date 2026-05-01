@@ -212,6 +212,18 @@ Profiler compile-out and fastmem safety:
   correctness configurations for validation, even if only the profiled build is
   used for benchmark numbers
 
+ARM9 hot-exit profiler interpretation:
+- the current `arm9_exit_hot* pc=` profiler field is the **JIT block start
+  PC**, not automatically the actual exit-instruction PC
+- do not key site-specific rewrites directly from that field without tracing
+  the real exit instruction first
+- for ARM blocks whose terminating branch/return is the last instruction in the
+  block, the real exit PC is typically:
+  `block_start_pc + 4 * (instr_per_hit - 1)`
+- before attempting a direct branch/return specialization, disassemble the
+  traced block and confirm the exact exit instruction shape (`bx lr`,
+  `pop {..., pc}`, `popls {..., pc}`, etc.)
+
 ## Workflow Rules
 
 These instructions are mandatory for work in this repo:
@@ -332,6 +344,26 @@ blindly:
   - why it lost: it cached a large downstream sprite output buffer instead of
     increasing composed-line replay coverage, so it duplicated line data and
     bookkeeping without removing enough upstream work
+- broad/shared ARM9 continuation rewrites:
+  - generic continuation-helper argument rewrites, shared epilogue rewrites,
+    and broad direct continuation shapes repeatedly regressed, white-screened,
+    or failed to reach menu/gameplay
+  - why they lost: they changed the common block-boundary contract too broadly,
+    making it easy to break timing or target/cycle state on paths that were not
+    actually the hot traced returns
+- corrected inline max-block direct lookup:
+  - once retargeted to the **actual** hot max-block exit instructions instead
+    of the profiler's block-start PCs, the harness collapsed to
+    `0.000 FPS` / `scene=unknown`
+  - why it lost: that inline max-block branch shape is unsafe when actually
+    active; do not revive it blindly
+- over-broad expansion of site-specific stack-`PC` direct-hit chaining:
+  - a narrow exact-site direct-return path for traced `bx lr` and hot
+    stack-`PC` exits produced a measured win, but widening it to additional
+    nearby `pop {pc}` sites regressed repeat performance
+  - why it lost: even within the same instruction family, extra guard cost can
+    outweigh the benefit if the site is not hot enough or does not repeat the
+    same target often enough
 
 Current 2D dead-end pattern:
 - upstream replay and prepared-state ownership have been the winning direction
@@ -349,6 +381,17 @@ Current 2D dead-end pattern:
 
 When an area is showing repeated rejects, pivot to another architectural lever
 instead of refining the same idea.
+
+Current ARM9 return-lane guidance:
+- for the current Shrek benchmark, the profitable direct-instruction lane is
+  **narrow exact-site same-mode return chaining**, not broad shared dispatch
+  rewrites
+- the kept shape is:
+  - inline same-arm jump state update
+  - direct `LastJitBlock` hit only for exact traced hot return instructions
+  - immediate fallback to the existing continuation/helper path on every miss
+- if extending this lane, prefer exact traced `bx lr` / stack-`PC` exits with
+  proven repetition over generic branch families or shared epilogues
 
 ## What Counts as a Good Change
 

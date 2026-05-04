@@ -44,10 +44,11 @@ Interpretation:
 
 The next drastic ARM9 speedup should come from:
 
-1. **trace formation**
-2. **direct internal chaining**
-3. **deferred state commit**
-4. **cold side exits back to the existing JIT/runtime**
+1. **hot-root promotion**
+2. **dedicated trace code objects**
+3. **direct internal chaining**
+4. **deferred state commit**
+5. **cold side exits back to the existing JIT/runtime**
 
 The key idea is:
 
@@ -56,6 +57,81 @@ The key idea is:
 
 That avoids the failure mode seen in several recent experiments where extra
 runtime fast-path machinery ended up adding its own overhead.
+
+Important refinement:
+
+- the goal is not "more trace machinery"
+- the goal is "more generated trace code, less steady-state runtime
+  machinery"
+- any approach that improves traceability while adding always-on helper-side or
+  compile-path bookkeeping is suspect by default
+
+## What We Learned From The First Implementation Passes
+
+The plan direction was correct, but several early implementation shapes were
+not.
+
+What the rejected passes proved:
+
+1. **helper-managed pseudo-traces are not enough**
+   - active trace windows, trace-root caches, and helper-side direct-edge
+     attempts can raise `arm9_trace_hit`, but they still leave the old
+     block-boundary contract intact
+   - once the extra metadata checks and activation work are counted, the FPS
+     win disappears or reverses
+
+2. **scheduler widening by itself is not the answer**
+   - widening the cadence increased trace hits and reduced `normal_max`
+   - but overall frame shape got worse and FPS dropped hard
+   - this means we cannot “fake” a superblock win by only stretching the old
+     dispatch session
+
+3. **root activation caching is lower value than it looks**
+   - caching trace metadata on root blocks or via side caches still adds
+     bookkeeping on the hot path
+   - the hot path cannot afford many extra pointer chases, map lookups, or
+     branchy activation checks
+
+4. **the current compiled blocks are too self-contained to reuse naively**
+   - each block is compiled as its own unit with its own epilogue/continuation
+     expectations
+   - helper-side chaining can skip some lookup work, but it does not remove the
+     structural cost of block-local state commit and block-local exit handling
+
+5. **the next real step must be generated-code internal-edge execution**
+   - not more metadata shells
+   - not more helper-side caching
+   - not more direct-edge experiments bolted onto the same block epilogue
+
+6. **production builds must not carry profiler-lane trace baggage**
+   - recent `LITEV_PROFILE=off` recovery proved that profiler-lane trace
+     planning and helper-managed trace runtime can materially drag down the
+     production build if they leak into the `off` configuration
+   - future trace work must therefore assume:
+     - diagnostic-only trace analysis belongs behind `LITEV_PROFILE`
+     - runtime trace code must justify itself directly in `off`
+     - broad compile-path trace maintenance is not acceptable in production
+
+So the updated interpretation is:
+
+- the profiler still clearly says “superblocks/traces” are the right
+  architecture
+- but the implementation must move faster toward a **dedicated trace code
+  object / trace ABI**, instead of spending more time on runtime metadata
+  management around the existing block ABI
+
+### New Hard Rule
+
+Do not add new always-on helper-managed trace layers to the normal JIT path.
+
+If a future trace step requires:
+
+- root activation bookkeeping on every block entry
+- trace window checks on every continuation
+- per-block trace-map churn in production
+- or compile-path trace maintenance for cold/non-promoted blocks
+
+then it is probably the wrong implementation shape.
 
 ## What This System Should Do
 
@@ -81,6 +157,21 @@ The new hot path should become:
 4. do not write back state at each internal block boundary
 5. only exit when timing, memory, invalidation, mode, or rare control-flow
    hazards require it
+
+### Correct Mental Model
+
+The target is **not**:
+
+- "make every normal JIT block trace-aware"
+
+The target is:
+
+- "promote a tiny hot set of exact roots into separate trace code objects and
+  jump into those directly"
+
+That distinction matters because the rejected pseudo-trace work kept trying to
+make the generic block path smarter instead of making the hot promoted path
+different.
 
 ## Non-Negotiable Constraints
 
@@ -108,9 +199,29 @@ Do not replace the current block JIT in one shot.
 
 The trace path should:
 
-- reuse the existing compiled blocks as building blocks or inputs,
+- reuse the existing block JIT as the safety net and source of traceability
+  metadata,
 - reuse the existing invalidation and fallback machinery where possible,
 - and bail out cleanly to the normal block continuation path on any uncertainty.
+
+Important refinement from the rejected passes:
+
+- do **not** assume the existing compiled block entrypoints can simply be
+  stitched together into an efficient runtime trace
+- they are still valuable as:
+  - correctness fallback,
+  - invalidation ownership,
+  - and trace planning inputs
+- but the hot winning path likely needs its **own codegen mode** with a
+  dedicated trace ABI
+
+Additional refinement:
+
+- the normal JIT block path should remain simple and generic
+- promoted traces should be layered *beside* it, not smeared through it
+- a trace root should ideally patch or replace the normal root entry so the hot
+  path does not first enter a normal block and only then "discover" that it is
+  part of a trace
 
 ### 2. Compile More, Run Simpler
 
@@ -122,6 +233,13 @@ So this design should prefer:
 - trace assembly work during compile/link,
 - patched direct edges,
 - and minimal runtime dispatch inside the trace.
+
+But "compile more" also needs a hard limit:
+
+- do not do broad trace-prep work for every block compile
+- do not persist recipes or maintain trace plans universally in production
+- promotion/build work should happen only for hot roots that already crossed a
+  threshold
 
 ### 3. Internal Edges Must Be Cheap
 
@@ -136,6 +254,23 @@ and farther from:
 - lookup helper
 - state writeback
 - re-entry ceremony
+
+Additional concrete rule from the first failed passes:
+
+- if an internal edge still requires:
+  - trace-map lookup,
+  - vector walk,
+  - root activation cache setup,
+  - extra epilogue-specific guards,
+  - or helper re-entry,
+  then it is probably still too expensive
+
+Practical rule:
+
+- the trace root may pay a one-time dispatch cost
+- internal edges may not
+- if an internal edge is not close to a plain generated branch, the design is
+  off course
 
 ### 4. State Commit Should Be Exit-Oriented
 
@@ -155,6 +290,20 @@ Commit them only on:
 - cold fallback path
 
 ## Proposed Architecture
+
+## Promotion-First Model
+
+The high-level structure should be:
+
+1. **normal block JIT remains the default**
+2. **profiling identifies exact hot trace roots**
+3. **only those roots are promoted into dedicated trace objects**
+4. **root lookup resolves directly to the promoted trace entry**
+5. **internal trace edges stay inside generated code**
+6. **all uncommon behavior side-exits back to the normal block JIT**
+
+This should replace the earlier instinct to make all ordinary blocks carry
+trace-runtime awareness.
 
 ## Phase 0: Instrumentation Before Runtime Changes
 
@@ -201,6 +350,12 @@ dynamic edges.
      - max-block fallthrough
      - mode transition
 
+5. **Promotion candidacy profiling**
+   - identify exact hot roots that are both:
+     - stable enough to justify promotion
+     - narrow enough to avoid dragging in mixed-mode or dynamic-exit baggage
+   - keep this rooted in real exit instruction shape, not just block start PCs
+
 ### Success Criteria
 
 Proceed only if the data confirms:
@@ -210,11 +365,17 @@ Proceed only if the data confirms:
   superblock
 - mode-switch and invalidation barriers are the minority on the hot benchmark
 
-## Phase 1: Trace Metadata Layer
+## Phase 1: Profile-Only Planning Layer
 
 ### Objective
 
 Add a trace planning layer without yet changing runtime behavior.
+
+This phase is explicitly **profile-only infrastructure**:
+
+- allowed in `LITEV_PROFILE=on`
+- compiled out in `LITEV_PROFILE=off` unless some piece later becomes part of
+  the actual promoted runtime path
 
 ### Required Data Structures
 
@@ -240,6 +401,12 @@ Add a trace planning layer without yet changing runtime behavior.
    - commit points
    - maximum guest-cycle budget
 
+4. **Promotion record**
+   - exact root PC
+   - hotness / stability score
+   - chosen trace family
+   - reason selected over nearby alternatives
+
 ### Planning Rules
 
 The first trace planner should only include edges that are:
@@ -254,31 +421,56 @@ The first trace planner should only include edges that are:
 
 Do not try to solve arbitrary dynamic CFG formation in v1.
 
-v1 should be **hot linear traces**, not a full hyperblock system.
+v1 should be **hot linear promoted traces**, not a full hyperblock system.
 
-## Phase 2: Runtime Skeleton With No Real Win Expected Yet
+Also:
+
+- no production runtime dependency on this metadata layer yet
+- this phase is allowed to be rich only because it can stay out of `off`
+  builds
+
+## Phase 2: Promoted Trace Code Object Skeleton
 
 ### Objective
 
-Create the trace execution shell and side-exit contract before doing serious
-optimization.
+Create the promoted trace execution shell and side-exit contract before doing
+serious optimization.
 
 ### Implementation Shape
 
-1. enter trace with current ARM9 live-state register mapping
-2. execute constituent blocks in sequence
-3. when an internal edge is taken, branch directly inside the trace
-4. when a side exit is hit:
+1. promote one exact hot root into a **dedicated compiled trace object**
+2. enter that trace with current ARM9 live-state register mapping
+3. the hot root must resolve directly to trace entry
+4. execute multiple guest blocks inside that one trace object
+5. internal edges must stay inside the same generated code object
+6. when a side exit is hit:
    - materialize guest state
    - return to existing continuation/runtime path
+
+### Important Correction To The Original Plan
+
+The first implementation attempts treated this phase as:
+
+- helper-side trace metadata
+- runtime activation caches
+- direct continuation shortcuts around existing block entrypoints
+
+That shape is now considered a **proven low-yield sub-lane**.
+
+Phase 2 should now explicitly mean:
+
+- add a separate trace codegen mode or trace wrapper code object
+- resolve promoted roots directly to trace entries
+- stop trying to get a superblock win from helper-managed pseudo-traces alone
 
 ### Keep It Narrow
 
 The first runnable version should support:
 
-- hot same-mode fallthrough
-- traced same-mode immediate branches
-- traced same-mode exact return edges already proven hot
+- one narrow hot family only for the first execution pass
+- preferably the max/fallthrough family rooted at proven sites like
+  `02068440`, because it is structurally cleaner than generic computed-PC exits
+- optionally a second exact-root family only if the first one is already sound
 
 It should explicitly exclude:
 
@@ -286,10 +478,13 @@ It should explicitly exclude:
 - generic computed-target misses
 - uncommon memory-assisted `PC` writes
 - Thumb-mode trace formation
+- any "all blocks are trace-capable" runtime shell
 
 ### Validation Goal
 
-This phase is a correctness scaffold. It does not need to win yet.
+This phase is a correctness scaffold, but it still has one performance rule:
+
+- a non-promoted block must not get slower just because the trace system exists
 
 It must:
 
@@ -297,6 +492,12 @@ It must:
 - pass the normal Shrek gameplay harness
 - preserve profiler visibility
 - build in both `LITEV_PROFILE=on` and `off`
+
+And it should avoid repeating already-rejected shapes:
+
+- no more root-trace metadata caches as the main optimization
+- no more scheduler widening as a surrogate for trace execution
+- no more exact-root direct-edge hacks attached to the ordinary block epilogue
 
 ## Phase 3: Deferred State Commit
 
@@ -325,11 +526,16 @@ Keep these live across internal edges:
 This is one of the highest-risk layers because recent broken continuation
 rewrites failed on state ownership mismatches.
 
+This is also likely the first place a real superblock win appears. The earlier
+runtime experiments mostly failed because they preserved eager block-local state
+commit and only optimized around it.
+
 So phase 3 must be introduced incrementally:
 
 1. only defer `R15/CPSR/cycle` materialization first
 2. keep all other state behavior unchanged
 3. validate against known hot return sites before broadening
+4. keep the non-promoted path untouched
 
 ### Success Signal
 
@@ -343,7 +549,7 @@ Stop treating hot internal trace edges as helper-driven continuation events.
 
 ### Mechanism
 
-For trace-internal edges:
+For trace-internal edges inside the dedicated trace object:
 
 - emit direct host branches to the next compiled segment
 - patch them once the target is available
@@ -362,6 +568,15 @@ For trace-internal edges:
 - exact-site return edges already proved valuable in the current direct-return
   work
 - generic register-target prediction should not be phase 1 of this system
+
+Important update:
+
+- this phase should now be treated as the **real start** of the winning runtime
+  path, not as a later polish step after helper-managed traces
+- helper-managed traces were good enough for measurement, but not good enough
+  for the intended speedup
+- if phase 2 does not already put the root directly into generated trace code,
+  phase 4 should not proceed
 
 ## Phase 5: Trace Budgeting And Event Awareness
 
@@ -402,7 +617,7 @@ not from:
 
 - aggressively stretching timing windows
 
-## Phase 6: Trace Selection Policy
+## Phase 6: Trace Selection And Promotion Policy
 
 ### Objective
 
@@ -416,6 +631,7 @@ Only form traces when:
 - successor edge is hot enough
 - edge stability is high enough
 - expected chain length is large enough
+- predicted promoted-path win is high enough to justify extra compile work
 
 ### Initial Heuristics
 
@@ -423,6 +639,7 @@ Only form traces when:
 2. trace only the dominant successor edge first
 3. cap trace length tightly in v1
 4. abandon trace growth when side exits become too frequent
+5. do not promote neighboring sites just because they are similar
 
 ### Why This Matters
 
@@ -430,6 +647,12 @@ This repo has already seen “good-looking machinery” lose because its own
 bookkeeping cost outweighed the benefit.
 
 Trace formation must be selective, not universal.
+
+Recent lesson:
+
+- exact-root promotion beat broad smart-runtime ideas
+- over-broad site expansion and broad recipe persistence lost
+- promotion policy should therefore bias toward a very small hot set
 
 ## Phase 7: Invalidation And Safety Model
 
@@ -519,32 +742,49 @@ Reject or revert a trace pass if it:
 - depends on profiler-on behavior that does not hold with `LITEV_PROFILE=off`
 - adds a lot of runtime bookkeeping without reducing `dispatch/post`
 
+Additional explicit rejection rule from the current attempts:
+
+- if a trace experiment mainly improves `arm9_trace_hit` counts or reduces
+  `normal_max`, but does so through more helper-side/runtime metadata work
+  rather than fewer real internal boundaries, do not treat that as progress on
+  its own
+
 ## Immediate Next Steps
 
 ### Step 1
 
-Implement Phase 0 instrumentation:
+Freeze the current lesson set:
 
-- edge-pair profiling
-- chain-length histogram
-- traceability/miss-reason split
-- commit-pressure counts
+- no more helper-managed pseudo-trace work in production
+- no more broad compile-path trace-prep work in production
+- no more runtime trace activation shells for non-promoted blocks
 
 ### Step 2
 
-Use the measured edge data to identify the first narrow trace family:
+Use the existing profiler data to choose **one** exact promoted root family:
 
-- likely same-mode ARM traces rooted at the existing hot return/fallthrough
-  sites
+- first choice remains hot ARM same-mode max/fallthrough roots around
+  `02068440`
 
 ### Step 3
 
-Add a trace metadata/planning layer without changing runtime behavior.
+Move planning/promotion selection behind `LITEV_PROFILE` unless it is directly
+part of the promoted runtime path.
 
 ### Step 4
 
-Implement a correctness-first narrow trace execution shell for one hot trace
-family.
+Implement a correctness-first promoted trace root that:
+
+- replaces normal root entry on hit
+- executes multiple internal edges in generated code
+- side-exits cleanly to the existing block JIT
+
+### Step 5
+
+Only after the first promoted root family is sound:
+
+- add deferred state commit
+- then broaden to the next exact-root family
 
 ## Final Recommendation
 

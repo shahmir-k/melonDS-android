@@ -164,14 +164,19 @@ Rules:
   real-time FPS movement as the main result. Measure how much uncapped speed or
   fast-forward speed the build can actually sustain.
 - CPU instructions and profiles are secondary diagnostics.
-- Profiling must be enabled when testing optimizations.
-- A profiler run is itself part of the benchmark result, not a one-off
-  investigation tool.
-- Optimization testing should use matched A/B profiler captures on device:
-  baseline build vs candidate build, same scene flow, same profiler overhead.
-- Keep/reject decisions should still be anchored by the top-line metric for the
-  workload state, but profiler deltas must be compared alongside FPS to show
-  which subsystem work actually moved.
+- Production `LITEV_PROFILE=off` performance is the only keep/reject metric.
+- Profiling must still be run when testing optimizations, but `LITEV_PROFILE=on`
+  is a diagnostic configuration, not the shipping score.
+- Optimization testing for shared JIT/runtime/profiler changes should use a
+  matched 4-way device matrix when practical:
+  baseline `off`, baseline `on`, candidate `off`, candidate `on`, same scene
+  flow and same harness settings.
+- Use the `off` pair to decide whether the optimization is a win.
+- Use the `on` pair to compare profiler movement and to catch
+  instrumentation/configuration-specific correctness issues.
+- Do not reject a change just because the profiled configuration is slower if
+  the production `off` build wins and the profiled build still produces usable
+  diagnostics.
 - Every optimization pass should be measured with the right top-line metric for
   that benchmark state:
   - normal FPS when below full speed,
@@ -196,9 +201,10 @@ Benchmark harness defaults must be safe for new agents:
   again before sampling
 
 Profiler compile-out and fastmem safety:
-- benchmarking for optimization lanes should still use profiling enabled, but
-  when a change touches shared ARM9 JIT/fastmem codegen or helper ABIs, also
-  verify that `LITEV_PROFILE=off` still builds and boots
+- benchmarking for optimization lanes should still include profiling, but when
+  a change touches shared ARM9 JIT/fastmem codegen or helper ABIs, always
+  verify that `LITEV_PROFILE=off` still builds, boots, and carries the real
+  benchmark decision
 - do not assume that a profiled build proving correctness means the production
   build is safe; this repo already hit an off-build fastmem crash where
   profiler-only shape metadata was packed into `helperWordCount` in the emitter
@@ -209,8 +215,8 @@ Profiler compile-out and fastmem safety:
   calls can silently corrupt block-load/store results even when the profiled
   build appears fine
 - when touching this area, treat `LITEV_PROFILE=on` and `off` as separate
-  correctness configurations for validation, even if only the profiled build is
-  used for benchmark numbers
+  correctness configurations for validation, but treat `off` as the production
+  performance configuration that decides keep/reject
 
 ARM9 hot-exit profiler interpretation:
 - the current `arm9_exit_hot* pc=` profiler field is the **JIT block start
@@ -236,6 +242,9 @@ These instructions are mandatory for work in this repo:
   risk.
 - Do not report CPU instruction deltas alone as the main result of an
   optimization. Report FPS first.
+- When reporting benchmark results or commit bodies for optimization work, use
+  production `LITEV_PROFILE=off` FPS and CPU instruction numbers unless the
+  text explicitly says otherwise.
 - If a change is functionally meaningful, commit it.
 - Make a commit for every functional change that is kept.
 - Each commit must include a description/body that records:

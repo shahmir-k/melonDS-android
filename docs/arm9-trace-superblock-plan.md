@@ -183,6 +183,17 @@ The system must preserve:
 - correct IRQ/event/timing behavior
 - correct fallback behavior for MMIO and unsafe memory paths
 
+WiFi is not just a general caution here. Any runtime trace phase that lands in
+code must also pass a concrete multiplayer validation gate before it is treated
+as safe to keep:
+
+- Shrek gameplay harness remains the main performance gate
+- the normal boot/menu/gameplay correctness flow must still pass
+- WiFi-sensitive timing paths must be exercised with the repo's multiplayer
+  validation workflow before broadening coverage or relaxing timing ownership
+- until that gate passes, trace promotion must remain scoped away from any
+  WiFi-specific behavior rather than assuming ARM9-only changes are harmless
+
 The first implementation should be intentionally narrow:
 
 - ARM9 only
@@ -240,6 +251,17 @@ But "compile more" also needs a hard limit:
 - do not persist recipes or maintain trace plans universally in production
 - promotion/build work should happen only for hot roots that already crossed a
   threshold
+
+Production compile-path rule:
+
+- cold or non-promoted block compilation may not gain persistent trace-owned
+  maps, recipes, vectors, or side caches in `LITEV_PROFILE=off`
+- if a trace experiment needs compile-time bookkeeping for blocks that never
+  promote, that bookkeeping belongs behind `LITEV_PROFILE` or it is the wrong
+  production shape
+- the ordinary block compiler must stay close to today's cost model unless the
+  promoted runtime win already proved large enough to justify a specific added
+  field or hook
 
 ### 3. Internal Edges Must Be Cheap
 
@@ -312,6 +334,20 @@ trace-runtime awareness.
 Measure whether a trace design would actually collapse the current hottest
 dynamic edges.
 
+Important profiling rule:
+
+- `(block_start_pc -> successor_block_start_pc)` counts are only a first-pass
+  locator
+- promotion decisions may not be keyed from block-start PCs alone
+- before any root family is promoted, derive and confirm the real terminating
+  guest instruction PC and exit shape for the traced block
+- for ARM blocks whose terminating branch/return is last in block, treat the
+  real exit PC as `block_start_pc + 4 * (instr_per_hit - 1)` until
+  disassembly/tracing proves otherwise
+- no exact-site optimization should ship without confirming the actual exit
+  instruction shape (`bx lr`, `pop {..., pc}`, `popls {..., pc}`, immediate
+  branch, etc.)
+
 ### Add These Profilers
 
 1. **Edge-pair profiling**
@@ -355,6 +391,8 @@ dynamic edges.
      - stable enough to justify promotion
      - narrow enough to avoid dragging in mixed-mode or dynamic-exit baggage
    - keep this rooted in real exit instruction shape, not just block start PCs
+   - record both block-start PC and derived real exit PC so traced reports do
+     not collapse distinct terminating sites into one misleading bucket
 
 ### Success Criteria
 
@@ -447,6 +485,32 @@ serious optimization.
    - materialize guest state
    - return to existing continuation/runtime path
 
+### Required ABI Boundary
+
+Before broadening the first promoted root family, the trace entry/exit contract
+must be explicit and written down in code comments near the implementation.
+
+At minimum it must define:
+
+- which guest registers remain live only in host-mapped state while executing
+  inside the trace
+- whether `R15`, `CPSR`, and the local cycle delta are trace-canonical until
+  side exit
+- when `LastJitBlockAddr` / `LastJitBlockEntry` become valid again for the
+  fallback path
+- which scheduler/event/timestamp-facing values must be materialized before any
+  helper or continuation fallback
+- whether any memory/invalidation ownership state is speculative during the
+  trace and what forces it to become canonical
+
+Hard rule:
+
+- do not rely on "same as the ordinary block path, but later" as the ABI
+  description
+- the recent return-lane failures were ownership-boundary bugs, so the first
+  promoted trace path must name the canonical owner of each deferred field at
+  trace entry, internal edge, and side exit
+
 ### Important Correction To The Original Plan
 
 The first implementation attempts treated this phase as:
@@ -493,6 +557,15 @@ It must:
 - preserve profiler visibility
 - build in both `LITEV_PROFILE=on` and `off`
 
+Important scoring rule:
+
+- this phase is kept or rejected by production `LITEV_PROFILE=off`
+  performance, not by profiled FPS
+- `LITEV_PROFILE=on` may regress if the instrumentation stays diagnostically
+  useful and the production path improves
+- a profiled-only slowdown is a problem to understand, not by itself a reason
+  to discard a production win
+
 And it should avoid repeating already-rejected shapes:
 
 - no more root-trace metadata caches as the main optimization
@@ -536,6 +609,13 @@ So phase 3 must be introduced incrementally:
 2. keep all other state behavior unchanged
 3. validate against known hot return sites before broadening
 4. keep the non-promoted path untouched
+
+Additional safety rule:
+
+- the first deferred-commit pass should treat scheduler-visible timing state as
+  a separate correctness boundary from plain register state
+- if timing/state ownership cannot be described precisely for a field, keep it
+  eagerly materialized until the promoted ABI is proven sound
 
 ### Success Signal
 
@@ -695,23 +775,35 @@ Do not start with mixed-mode complexity.
 
 Every phase that changes runtime behavior must be tested with:
 
-1. `LITEV_PROFILE=true`
-2. Android device harness
-3. real gameplay scene gate
-4. matched baseline vs candidate runs
-5. `LITEV_PROFILE=false` build+boot validation when shared JIT/runtime code is
+1. `LITEV_PROFILE=false` baseline vs candidate on device
+2. `LITEV_PROFILE=true` baseline vs candidate on device
+3. Android device harness
+4. real gameplay scene gate
+5. same scene flow and harness settings across the compared runs
+6. `LITEV_PROFILE=false` build+boot validation when shared JIT/runtime code is
    touched
+7. multiplayer/WiFi validation before widening runtime coverage beyond the
+   initial narrow same-mode ARM9 family
+
+Interpretation rule:
+
+- the `off` pair is the production score and decides keep/reject
+- the `on` pair is for profiler movement, trace-shape analysis, and
+  configuration-specific correctness
+- do not throw away a production win only because `LITEV_PROFILE=on` is slower
 
 ### Primary Success Metric
 
 For current Shrek:
 
-- FPS first
+- production `LITEV_PROFILE=off` FPS first
+- if the benchmark nears the frame cap, production `off` fast-forward
+  throughput first
 
 ### Secondary Diagnostics
 
-- CPU instructions
-- profiler movement
+- production `off` CPU instructions
+- profiler movement from the `on` pair
 - specifically:
   - `dispatch`
   - `post`
@@ -736,11 +828,21 @@ If `execute` barely changes but `dispatch/post` fall sharply, that is the right
 
 Reject or revert a trace pass if it:
 
-- lowers FPS on repeat
+- lowers production `LITEV_PROFILE=off` FPS on repeat
 - increases compile-time overhead enough to offset runtime gains
 - introduces white-screen / crash / menu-gate failures
 - depends on profiler-on behavior that does not hold with `LITEV_PROFILE=off`
 - adds a lot of runtime bookkeeping without reducing `dispatch/post`
+
+Do not reject a trace pass only because:
+
+- profiled `LITEV_PROFILE=on` FPS is worse
+- profiler instrumentation adds measurable hot-path cost
+
+Those are only rejection reasons if:
+
+- the profiled build becomes too distorted to be useful diagnostically
+- or the same mechanism leaks into and slows the production `off` path
 
 Additional explicit rejection rule from the current attempts:
 

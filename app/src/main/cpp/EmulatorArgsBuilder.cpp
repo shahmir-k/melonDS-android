@@ -20,7 +20,7 @@ std::unique_ptr<ARM9BIOSImage> loadARM9BIOS(const EmulatorConfiguration& configu
 {
     if (configuration.userInternalFirmwareAndBios)
     {
-        return std::make_unique<ARM9BIOSImage>(bios_arm9_bin);
+        return std::make_unique<ARM9BIOSImage>(FreeBIOSGetNtrArm9());
     }
 
     std::string path = configuration.dsBios9Path;
@@ -43,7 +43,7 @@ std::unique_ptr<ARM7BIOSImage> loadARM7BIOS(const EmulatorConfiguration& configu
 {
     if (configuration.userInternalFirmwareAndBios)
     {
-        return std::make_unique<ARM7BIOSImage>(bios_arm7_bin);
+        return std::make_unique<ARM7BIOSImage>(FreeBIOSGetNtrArm7());
     }
 
     std::string path = configuration.dsBios7Path;
@@ -435,7 +435,12 @@ std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(const Emulato
         .MaxBlockSize = 32,
         .LiteralOptimizations = true,
         .BranchOptimizations = true,
-        .FastMemory = true,
+        // liteDS-v2-android: fastmem (signal-fault based direct memory access)
+        // segfaults on this Android 14 / Mali target with the LITEV JIT paths
+        // enabled (the fastmem+LITEV combination was never validated on-device;
+        // see liteDS-v2 plan Appendix C.5). Disable it so the JIT uses the safe
+        // slow-memory path; all other LITEV optimisations remain active.
+        .FastMemory = false,
     };
     auto jitArgs = configuration.useJit ? std::make_optional(_jitArgs) : std::nullopt;
 #else
@@ -488,8 +493,7 @@ std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(const Emulato
             std::move(arm7ibios),
             std::move(*nand),
             std::move(sdcard),
-            false,
-            true,
+            true, // DSPHLE (FullBIOSBoot field was removed upstream)
         };
 
         std::unique_ptr<DSiArgs> uniqueArgs = std::make_unique<DSiArgs>(std::move(_dsiArgs));

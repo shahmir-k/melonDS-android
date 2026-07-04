@@ -23,9 +23,15 @@ void ScreenshotRenderer::renderScreenshot(GPU* gpu, Renderer renderer, Frame* re
 {
     if (renderer == Renderer::Software)
     {
-        int frontBuffer = gpu->FrontBuffer;
-        memcpy(screenshotBuffer, gpu->Framebuffer[frontBuffer][0].get(), 256 * 192 * 4);
-        memcpy(&screenshotBuffer[256 * 192], gpu->Framebuffer[frontBuffer][1].get(), 256 * 192 * 4);
+        // Unified renderer API: GetFramebuffers() returns the front RAM buffers
+        // for the software renderer (top/bottom, 256x192 BGRA each).
+        void* topBuffer = nullptr;
+        void* bottomBuffer = nullptr;
+        if (gpu->GetFramebuffers(&topBuffer, &bottomBuffer) && topBuffer && bottomBuffer)
+        {
+            memcpy(screenshotBuffer, topBuffer, 256 * 192 * 4);
+            memcpy(&screenshotBuffer[256 * 192], bottomBuffer, 256 * 192 * 4);
+        }
     }
     else
     {

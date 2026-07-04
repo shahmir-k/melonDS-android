@@ -32,11 +32,44 @@ android {
         versionName = AppConfig.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64"))
+            // liteDS-v2-android: the LITEV performance flags (JIT dispatcher,
+            // block linking, tiered memory fast paths, NEON renderer) are
+            // AArch64-only, so this playable build targets arm64-v8a exclusively.
+            abiFilters.addAll(listOf("arm64-v8a"))
         }
         externalNativeBuild {
             cmake {
                 cppFlags("-std=c++17 -Wno-write-strings")
+                // The debug variant defaults CMAKE_BUILD_TYPE=Debug (-O0), which
+                // makes the emulator core ~6x too slow. Force the Debug-config
+                // native flags to release-grade optimisation (-O3 -DNDEBUG) so
+                // the APK stays debuggable/installable but the core runs fast.
+                arguments(
+                    "-DCMAKE_C_FLAGS_DEBUG=-O3 -DNDEBUG",
+                    "-DCMAKE_CXX_FLAGS_DEBUG=-O3 -DNDEBUG"
+                )
+                // liteDS-v2 LITEV flags. Conservative first-playable set:
+                // ARM7 idle detection and aggressive frameskip stay OFF.
+                arguments(
+                    // LITEV_JIT_DISPATCH (emitted A64 block dispatcher + block
+                    // linking) triggers an on-device memory-corruption crash
+                    // during NDS construction on this A55/arm64 target
+                    // (SIGSEGV/SEGV_ACCERR in NDS::NDS -> FIFO::FIFO). Disabled
+                    // for the first playable build pending a fix; the LINK_*
+                    // flags depend on it so they are off too. All other LITEV
+                    // optimisations (event slices, tiered memory fast paths,
+                    // NEON 2D) remain active.
+                    "-DLITEV_JIT_DISPATCH=OFF",
+                    "-DLITEV_LINK_UNCOND=OFF",
+                    "-DLITEV_LINK_COND=OFF",
+                    "-DLITEV_LINK_FALLTHROUGH=OFF",
+                    "-DLITEV_EVENT_SLICES=ON",
+                    "-DLITEV_MEM_DTCM_BLOCK=ON",
+                    "-DLITEV_MEM_MAINRAM_LOAD=ON",
+                    "-DLITEV_NEON_RENDERER=ON",
+                    "-DLITEV_ARM7_IDLE=OFF",
+                    "-DLITEV_AGGRESSIVE_SKIP=OFF"
+                )
             }
         }
         vectorDrawables.useSupportLibrary = true

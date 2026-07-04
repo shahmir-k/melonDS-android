@@ -70,6 +70,7 @@ public:
 
 private:
     void updateRenderer();
+    void blitAcceleratedFrame(melonDS::u32 srcArrayTex, melonDS::u32 dstTex, int dstWidth, int dstHeight);
     void setBatteryLevels();
     void setDateTime();
     void saveRewindState(RewindSaveState* rewindSaveState);
@@ -93,6 +94,10 @@ private:
     Renderer currentRenderer;
     bool isRenderConfigurationDirty;
     int frame;
+    // FBOs used to blit the accelerated renderer's array-texture output into
+    // the app's stacked 2D frame texture (created lazily, 0 = uninitialised).
+    melonDS::u32 blitReadFBO = 0;
+    melonDS::u32 blitDrawFBO = 0;
 };
 
 }

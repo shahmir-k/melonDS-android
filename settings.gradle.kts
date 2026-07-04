@@ -16,6 +16,8 @@ dependencyResolutionManagement {
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
+rootProject.name = "melonDS-android"
+
 include(":app")
 include(":common")
 include(":masterswitch")

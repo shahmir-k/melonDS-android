@@ -435,12 +435,12 @@ std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(const Emulato
         .MaxBlockSize = 32,
         .LiteralOptimizations = true,
         .BranchOptimizations = true,
-        // liteDS-v2-android: fastmem (signal-fault based direct memory access)
-        // segfaults on this Android 14 / Mali target with the LITEV JIT paths
-        // enabled (the fastmem+LITEV combination was never validated on-device;
-        // see liteDS-v2 plan Appendix C.5). Disable it so the JIT uses the safe
-        // slow-memory path; all other LITEV optimisations remain active.
-        .FastMemory = false,
+        // liteDS-v2-android: fastmem (signal-fault based direct memory access).
+        // The fault-handler gating fix (core 3ab2961f) installs the SIGSEGV
+        // handler only when fastmem is effectively enabled, so fastmem now
+        // works on this Android 14 / Mali target. In-race it shaves CPU
+        // memory-access cost (the frame is ARM-emulation bound). Measured win.
+        .FastMemory = true,
     };
     auto jitArgs = configuration.useJit ? std::make_optional(_jitArgs) : std::nullopt;
 #else

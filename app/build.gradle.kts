@@ -59,10 +59,10 @@ android {
                     // flags depend on it so they are off too. All other LITEV
                     // optimisations (event slices, tiered memory fast paths,
                     // NEON 2D) remain active.
-                    "-DLITEV_JIT_DISPATCH=OFF",
-                    "-DLITEV_LINK_UNCOND=OFF",
-                    "-DLITEV_LINK_COND=OFF",
-                    "-DLITEV_LINK_FALLTHROUGH=OFF",
+                    "-DLITEV_JIT_DISPATCH=ON",
+                    "-DLITEV_LINK_UNCOND=ON",
+                    "-DLITEV_LINK_COND=ON",
+                    "-DLITEV_LINK_FALLTHROUGH=ON",
                     "-DLITEV_EVENT_SLICES=ON",
                     "-DLITEV_MEM_DTCM_BLOCK=ON",
                     "-DLITEV_MEM_MAINRAM_LOAD=ON",

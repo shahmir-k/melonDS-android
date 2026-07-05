@@ -68,7 +68,13 @@ android {
                     "-DLITEV_MEM_MAINRAM_LOAD=ON",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
-                    "-DLITEV_AGGRESSIVE_SKIP=OFF"
+                    // Aggressive frameskip: compiled in and runtime-controllable
+                    // (default target 0 = no skip). The glue reads the frameskip
+                    // target from the emulator config / a debug property and calls
+                    // GPU::SetFrameskipTarget. On this A55 the frame is ARM-CPU
+                    // bound (~20ms emulation of a ~30ms frame), so skipping only
+                    // rasterisation caps near ~45 FPS; exposed as a user lever.
+                    "-DLITEV_AGGRESSIVE_SKIP=ON"
                 )
             }
         }

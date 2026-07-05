@@ -1,5 +1,7 @@
 #include <ctime>
 #include <chrono>
+#include <cstdlib>
+#include <sys/system_properties.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <filesystem>
@@ -19,6 +21,59 @@
 #include "net/Net_Slirp.h"
 #include "Platform.h"
 #include "SDCardArgsBuilder.h"
+#include "MelonLog.h"
+
+// ---- liteDS-v2 frame-phase profiler (gated by a debug property at runtime) ----
+// Enable with:  adb shell setprop debug.litev.prof 1
+// Emits a per-60-frame LITEV_PROF logcat line splitting the emulator frame into
+// present-fence wait / RunFrame (core emulation + GL submit) / blit / other, plus
+// a GPU TIME_ELAPSED reading. Default off => zero overhead in normal play.
+#include <GLES2/gl2ext.h>
+namespace {
+    bool litevProfEnabled = false;
+    void litevRefreshProfEnabled() {
+        char buf[8] = {0};
+        litevProfEnabled = (__system_property_get("debug.litev.prof", buf) > 0 && atoi(buf) != 0);
+    }
+    inline double litevNowMs() {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+    }
+    // GPU TIME_ELAPSED query (GL_EXT_disjoint_timer_query), deferred read.
+    typedef void (GL_APIENTRYP LITEV_PFNGENQUERIES)(GLsizei, GLuint*);
+    typedef void (GL_APIENTRYP LITEV_PFNBEGINQUERY)(GLenum, GLuint);
+    typedef void (GL_APIENTRYP LITEV_PFNENDQUERY)(GLenum);
+    typedef void (GL_APIENTRYP LITEV_PFNGETQOBJUI64)(GLuint, GLenum, GLuint64*);
+    typedef void (GL_APIENTRYP LITEV_PFNGETQOBJUIV)(GLuint, GLenum, GLuint*);
+    LITEV_PFNGENQUERIES  litevGenQueries  = nullptr;
+    LITEV_PFNBEGINQUERY  litevBeginQuery  = nullptr;
+    LITEV_PFNENDQUERY    litevEndQuery    = nullptr;
+    LITEV_PFNGETQOBJUI64 litevGetQObjUI64 = nullptr;
+    LITEV_PFNGETQOBJUIV  litevGetQObjUIV  = nullptr;
+    bool  litevGpuInit = false;
+    bool  litevGpuOk   = false;
+    GLuint litevQ[2] = {0, 0};
+    int    litevQSlot = 0;
+    bool   litevQPending[2] = {false, false};
+    static const GLenum LITEV_TIME_ELAPSED = 0x88BF;
+    static const GLenum LITEV_QUERY_RESULT = 0x8866;
+    static const GLenum LITEV_QUERY_RESULT_AVAILABLE = 0x8867;
+    void litevGpuEnsure() {
+        if (litevGpuInit) return;
+        litevGpuInit = true;
+        litevGenQueries  = (LITEV_PFNGENQUERIES) eglGetProcAddress("glGenQueriesEXT");
+        litevBeginQuery  = (LITEV_PFNBEGINQUERY) eglGetProcAddress("glBeginQueryEXT");
+        litevEndQuery    = (LITEV_PFNENDQUERY)   eglGetProcAddress("glEndQueryEXT");
+        litevGetQObjUI64 = (LITEV_PFNGETQOBJUI64) eglGetProcAddress("glGetQueryObjectui64vEXT");
+        litevGetQObjUIV  = (LITEV_PFNGETQOBJUIV)  eglGetProcAddress("glGetQueryObjectuivEXT");
+        if (litevGenQueries && litevBeginQuery && litevEndQuery && litevGetQObjUI64 && litevGetQObjUIV) {
+            litevGenQueries(2, litevQ);
+            litevGpuOk = (litevQ[0] != 0 && litevQ[1] != 0);
+        }
+    }
+}
+// ---- end profiler ----
 
 using namespace std;
 using namespace melonDS;
@@ -323,6 +378,30 @@ u32 MelonInstance::runFrame()
         isRenderConfigurationDirty = false;
     }
 
+#ifdef LITEV_AGGRESSIVE_SKIP
+    // Runtime-controllable frameskip target (skips rasterisation only; CPU/DMA/
+    // timers keep running so gameplay/audio stay full-speed). Default 0.
+    // Controllable via: adb shell setprop debug.litev.frameskip <0..3>
+    // A UI setting can drive the same GPU::SetFrameskipTarget entry point.
+    {
+        static int cachedSkip = -1;
+        static int checkCounter = 0;
+        if (--checkCounter <= 0)
+        {
+            checkCounter = 30;
+            char buf[8] = {0};
+            int target = 0;
+            if (__system_property_get("debug.litev.frameskip", buf) > 0)
+                target = atoi(buf);
+            if (target != cachedSkip)
+            {
+                cachedSkip = target;
+                nds->GPU.SetFrameskipTarget(target);
+            }
+        }
+    }
+#endif
+
     int screenWidth;
     int screenHeight;
     if (currentRenderer == Renderer::OpenGl)
@@ -346,6 +425,8 @@ u32 MelonInstance::runFrame()
         screenHeight = 192 + 1;
     }
 
+    double litev_t0 = litevNowMs();
+
     Frame* renderFrame = frameQueue.getRenderFrame();
 
     EGLDisplay currentDisplay = eglGetCurrentDisplay();
@@ -356,14 +437,36 @@ u32 MelonInstance::runFrame()
         renderFrame->renderFence = 0;
     }
 
+    double litev_t_fw0 = litevNowMs();
     // Ensure presentation is finished
     if (renderFrame->presentFence)
     {
         eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
     }
+    double litev_t_fw1 = litevNowMs();
 
     // Validate frame after ensuring that the frame has finished presenting
     frameQueue.validateRenderFrame(renderFrame, screenWidth, screenHeight * 2);
+
+    // --- GPU timer: read previous frame's TIME_ELAPSED (deferred, non-stalling) ---
+    static double litev_gpuMsAccum = 0.0;
+    static int    litev_gpuSamples = 0;
+    if (litevProfEnabled) litevGpuEnsure();
+    if (litevProfEnabled && litevGpuOk) {
+        int prev = litevQSlot ^ 1;
+        if (litevQPending[prev]) {
+            GLuint avail = 0;
+            litevGetQObjUIV(litevQ[prev], LITEV_QUERY_RESULT_AVAILABLE, &avail);
+            if (avail) {
+                GLuint64 ns = 0;
+                litevGetQObjUI64(litevQ[prev], LITEV_QUERY_RESULT, &ns);
+                litev_gpuMsAccum += ns / 1000000.0;
+                litev_gpuSamples++;
+                litevQPending[prev] = false;
+            }
+        }
+        litevBeginQuery(LITEV_TIME_ELAPSED, litevQ[litevQSlot]);
+    }
 
     [[unlikely]] if (nds->GPU.GetRenderer().NeedsShaderCompile())
     {
@@ -377,7 +480,9 @@ u32 MelonInstance::runFrame()
         while (nds->GPU.GetRenderer().NeedsShaderCompile());
     }
 
+    double litev_t_rf0 = litevNowMs();
     u32 nLines = nds->RunFrame();
+    double litev_t_rf1 = litevNowMs();
     retroAchievementsManager->FrameUpdate();
 
     // Present. Unified renderer API: GetFramebuffers() returns true with RAM
@@ -401,6 +506,13 @@ u32 MelonInstance::runFrame()
     {
         GLuint arrayTex = *(GLuint*) fbTop;
         blitAcceleratedFrame(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight);
+    }
+
+    double litev_t_blit1 = litevNowMs();
+    if (litevProfEnabled && litevGpuOk) {
+        litevEndQuery(LITEV_TIME_ELAPSED);
+        litevQPending[litevQSlot] = true;
+        litevQSlot ^= 1;
     }
 
     bool isSleeping = nds->CPUStop & CPUStop_Sleep;
@@ -435,6 +547,39 @@ u32 MelonInstance::runFrame()
     {
         auto nextRewindState = rewindManager.GetNextRewindSaveState(frame);
         saveRewindState(nextRewindState);
+    }
+
+    double litev_t_end = litevNowMs();
+    // Accumulate phase timings and log every 60 frames.
+    {
+        static double a_fw = 0, a_rf = 0, a_blit = 0, a_other = 0, a_total = 0;
+        static int    n = 0;
+        static double lastWall = 0;
+        double wall = litev_t_end;
+        a_fw    += (litev_t_fw1 - litev_t_fw0);
+        a_rf    += (litev_t_rf1 - litev_t_rf0);
+        a_blit  += (litev_t_blit1 - litev_t_rf1);
+        a_other += (litev_t_end - litev_t0) - (litev_t_fw1 - litev_t_fw0)
+                   - (litev_t_rf1 - litev_t_rf0) - (litev_t_blit1 - litev_t_rf1);
+        a_total += (litev_t_end - litev_t0);
+        n++;
+        if (n >= 60) {
+            litevRefreshProfEnabled();
+            if (litevProfEnabled) {
+                double wallSpan = (lastWall > 0) ? (wall - lastWall) : 0;
+                double gpuAvg = (litev_gpuSamples > 0) ? (litev_gpuMsAccum / litev_gpuSamples) : -1.0;
+                LOG_INFO("LITEV_PROF",
+                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f blit=%.2f other=%.2f) | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
+                    a_total / n, a_fw / n, a_rf / n, a_blit / n, a_other / n,
+                    gpuAvg, wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0));
+            }
+            a_fw = a_rf = a_blit = a_other = a_total = 0;
+            litev_gpuMsAccum = 0; litev_gpuSamples = 0;
+            n = 0;
+            lastWall = wall;
+        } else if (lastWall == 0) {
+            lastWall = wall;
+        }
     }
 
     return nLines;

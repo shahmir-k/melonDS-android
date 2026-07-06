@@ -980,17 +980,34 @@ void MelonInstance::renderThreadLoop()
         return;
     }
 
-    // r4-fix: do NOT register the EARLY (post-BuildPolygons) bank-release callback.
-    // The FBHASH gate proved the early release corrupts the threaded output: it fires
-    // before the 2D command-log replay and the 3D raster, both of which still read
-    // emu-owned state (live GLRenderer2D LayerConfig/ScanlineConfig/SpriteConfig, the
-    // texture VRAM, and — pre-3e6dac43 — the polygon RAM) that emu frame N+1 overwrites
-    // during the overlap window. That produced a spurious frame every other rendered
-    // frame (serial vs threaded FBHASH: 0/303 match, both screens). Instead the emu
-    // thread is released explicitly in glSubmitPresent AFTER nds->GPU.SubmitFrame()
-    // returns, i.e. after ALL emu-state reads complete; the GPU blit/present still
-    // overlaps emu frame N+1. Guaranteed race-free (threaded == serial).
-    nds->GPU.SetBankReleaseCallback(nullptr);
+    // r4-fix: EARLY vs DELAYED bank release, prop-gated (debug.litev.earlyrelease).
+    //
+    // DELAYED (default, prop=0): the emu thread is released explicitly in glSubmitPresent
+    // AFTER nds->GPU.SubmitFrame() returns — i.e. after ALL emu-state reads complete
+    // (geometry, 2D config replay, texture VRAM). Only the GPU blit/present overlaps emu
+    // frame N+1. Guaranteed race-free, ~40-45fps cooled.
+    //
+    // EARLY (prop=1): the geometry bank is released from ReplayLog right after
+    // RenderFrameBodyGeometry/BuildPolygons has consumed all geometry into render-private
+    // VBOs (design §4.2). The emu thread then overlaps the 2D command-log replay + 3D
+    // raster + blit/present — the ~55fps overlap win. This is now SAFE because:
+    //   - geometry: RenderSceneChunk reads only render-private snapshots (3e6dac43);
+    //   - 2D config: RIRReplay stages LayerConfig/ScanlineConfig/SpriteConfig from the
+    //     REPLAY-bank log arena into render-private Rpl.* copies (STEP A, ed8062d8);
+    //   - texture VRAM + render registers: STEP-2 A/B banked to the replay bank;
+    //   - log arena: ReplaySrc() reads the replay bank, emu records the other (4492c0e1).
+    // The FBHASH gate proves threaded==serial before this is enabled by default.
+    bool earlyRelease = true;   // default ON: FBHASH-gate-proven race-free (threaded==serial
+                                // 444/444, ==flag-OFF golden 397/397). Overridable for A/B.
+    {
+        char b[8] = {0};
+        if (__system_property_get("debug.litev.earlyrelease", b) > 0)
+            earlyRelease = (atoi(b) != 0);
+    }
+    if (earlyRelease)
+        nds->GPU.SetBankReleaseCallback([this]{ onBankReleased(); });
+    else
+        nds->GPU.SetBankReleaseCallback(nullptr);
     // Re-init the screenshot renderer on THIS context so renderScreenshot (dispatched
     // here for rewind/user screenshots) uses render-context FBO/VAO objects.
     screenshotRenderer->init();

@@ -16,6 +16,7 @@
 #include "GPU_OpenGL.h"
 #include "MelonDS.h"
 #include "MelonInstance.h"
+#include "OpenGLContext.h"
 #include "NDS.h"
 #include "NDSCart.h"
 #include "net/Net_Slirp.h"
@@ -138,6 +139,9 @@ MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfigurati
 
 MelonInstance::~MelonInstance()
 {
+#ifdef LITEV_RENDER_THREAD
+    stopRenderThread();
+#endif
     frameQueue.clear();
     if (blitReadFBO) glDeleteFramebuffers(1, &blitReadFBO);
     if (blitDrawFBO) glDeleteFramebuffers(1, &blitDrawFBO);
@@ -150,6 +154,11 @@ MelonInstance::~MelonInstance()
 // frame texture, matching the software renderer's vertical layout (top at y=0,
 // bottom at y=(192+2)*scale).
 void MelonInstance::blitAcceleratedFrame(u32 srcArrayTex, u32 dstTex, int dstWidth, int dstHeight)
+{
+    blitAcceleratedFrameFBO(srcArrayTex, dstTex, dstWidth, dstHeight, blitReadFBO, blitDrawFBO);
+}
+
+void MelonInstance::blitAcceleratedFrameFBO(u32 srcArrayTex, u32 dstTex, int dstWidth, int dstHeight, u32& blitReadFBO, u32& blitDrawFBO)
 {
     if (!blitReadFBO) glGenFramebuffers(1, &blitReadFBO);
     if (!blitDrawFBO) glGenFramebuffers(1, &blitDrawFBO);
@@ -350,6 +359,11 @@ void MelonInstance::start()
 
 void MelonInstance::reset()
 {
+#ifdef LITEV_RENDER_THREAD
+    // Drain the render thread so it is not reading emulation/renderer state while
+    // Reset clears the geometry banks / re-derives renderer state (design §5.2).
+    drainRenderThread();
+#endif
     nds->Reset();
     setBatteryLevels();
     setDateTime();
@@ -372,6 +386,15 @@ void MelonInstance::reset()
 
 u32 MelonInstance::runFrame()
 {
+#ifdef LITEV_RENDER_THREAD
+    // Decide the thread topology once (design §6) and start the render thread
+    // BEFORE the first updateRenderer, so the renderer's per-context GL objects
+    // (FBOs/VAOs — not shared across EGL contexts on this Mali driver) are created
+    // on the render thread's context, where SubmitFrame later uses them.
+    if (!rtTopologyDecided) { rtUse = renderThreadWanted(); rtTopologyDecided = true; }
+    if (rtUse) startRenderThread();
+#endif
+
     if (isRenderConfigurationDirty)
     {
         updateRenderer();
@@ -426,6 +449,148 @@ u32 MelonInstance::runFrame()
     }
 
     double litev_t0 = litevNowMs();
+
+#ifdef LITEV_RENDER_THREAD
+    // ===================== R4 STEP 3: render-thread offload =====================
+    // The render thread is the sole GL-context owner. This (emu) thread runs the
+    // GL-free NDS::RunFrame and hands off a depth-1 packet; the render thread
+    // replays the frame's GL submission + blit + present. Frames whose GL must be
+    // serialized on the render context (capture, screenshot/rewind) are dispatched
+    // there synchronously.
+    if (rtUse)
+    {
+        // Capture frames raster inline INSIDE RunFrame, so their RunFrame must run
+        // on the render context. Predict via the previous frame (capture comes in
+        // bursts). Screenshot/rewind frames need a freshly-rendered frame for the
+        // capture, so they run their submit (and the screenshot) on the render
+        // thread too — but RunFrame itself is GL-free for them, so it stays here.
+        bool predictCapture = rtCapturePrev;
+        bool willScreenshot = rewindManager.ShouldCaptureState(frame + 1)
+                              || screenshotRenderer->isScreenshotPending();
+
+        double litev_g0 = 0, litev_g1 = 0, litev_t_rf0 = 0, litev_t_rf1 = 0;
+        u32 nLines;
+
+        if (predictCapture)
+        {
+            // Whole frame on the render thread: RunFrame (inline capture GL) + submit.
+            int sw = screenWidth, sh = screenHeight;
+            litev_t_rf0 = litevNowMs();
+            dispatchToRenderThread([this, sw, sh]{
+                rtNLines = nds->RunFrame();
+                int bank = nds->GPU.GetLogBuildBank();
+                bool deferred = nds->GPU.IsDeferredSubmit();
+                bool sleeping = (nds->CPUStop & CPUStop_Sleep) != 0;
+                glSubmitPresent(bank, deferred, sleeping, sw, sh, true);
+            });
+            litev_t_rf1 = litevNowMs();
+            nLines = rtNLines;
+            rtCapturePrev = nds->GPU.WasCaptureActiveThisFrame();
+        }
+        else
+        {
+            // Depth-1 gate (design §4.2): wait until the render thread has released
+            // the previously-published job's bank (early release — which fires AFTER
+            // BuildPolygons, i.e. after the whole 2D command log was replayed AND the
+            // texcache GetTexture reads, so this RunFrame cannot race the geometry
+            // bank, the 2D config members, or the texcache Cache the replay reads).
+            litev_g0 = litevNowMs();
+            {
+                // DIAGNOSTIC: debug.litev.rtserial=1 => wait for the render thread to
+                // fully finish each frame (no overlap) to distinguish an overlap race
+                // from a render-context correctness bug. Default (0) = depth-1 early
+                // release.
+                static int serialMode = -1;
+                if (serialMode < 0) {
+                    char b[8] = {0};
+                    serialMode = (__system_property_get("debug.litev.rtserial", b) > 0 && atoi(b) != 0) ? 1 : 0;
+                }
+                std::unique_lock<std::mutex> lk(rtMutex);
+                if (serialMode)
+                    rtDoneCond.wait(lk, [this]{ return (!rtBusy && !rtHasJob) || rtStop; });
+                else
+                    rtDoneCond.wait(lk, [this]{ return rtBanksReleased == rtJobsPublished || rtStop; });
+            }
+            litev_g1 = litevNowMs();
+
+            litev_t_rf0 = litevNowMs();
+            nLines = nds->RunFrame();          // GL-free (non-capture)
+            litev_t_rf1 = litevNowMs();
+
+            bool captured = nds->GPU.WasCaptureActiveThisFrame();
+            bool sleeping = (nds->CPUStop & CPUStop_Sleep) != 0;
+            int  bank     = nds->GPU.GetLogBuildBank();
+            bool deferred = nds->GPU.IsDeferredSubmit();
+            rtCapturePrev = captured;
+
+            if (captured || willScreenshot)
+            {
+                // Dispatch the submit (and any screenshot) to the render context.
+                int sw = screenWidth, sh = screenHeight;
+                bool shot = willScreenshot;
+                dispatchToRenderThread([this, bank, deferred, sleeping, sw, sh, shot]{
+                    Frame* f = glSubmitPresent(bank, deferred, sleeping, sw, sh, true);
+                    if (shot) screenshotRenderer->renderScreenshot(&nds->GPU, currentRenderer, f);
+                });
+            }
+            else
+            {
+                // Publish the depth-1 packet; the render thread does the GL.
+                std::unique_lock<std::mutex> lk(rtMutex);
+                rtJobBank      = bank;
+                rtJobDeferred  = deferred;
+                rtJobSleeping  = sleeping;
+                rtJobScreenW   = screenWidth;
+                rtJobScreenH   = screenHeight;
+                rtHasJob       = true;
+                rtBusy         = true;
+                rtJobsPublished++;
+                lk.unlock();
+                rtJobCond.notify_one();
+            }
+        }
+
+        // ---- emu-thread tail (no GL): achievements, saves, rewind savestate ----
+        retroAchievementsManager->FrameUpdate();
+        if (ndsSave)      ndsSave->CheckFlush();
+        if (gbaSave)      gbaSave->CheckFlush();
+        if (firmwareSave) firmwareSave->CheckFlush();
+
+        frame++;
+        if (rewindManager.ShouldCaptureState(frame))
+        {
+            auto nextRewindState = rewindManager.GetNextRewindSaveState(frame);
+            saveRewindState(nextRewindState);
+        }
+
+        double litev_t_end = litevNowMs();
+        {
+            static double a_rf = 0, a_gate = 0, a_total = 0;
+            static int    n = 0;
+            static double lastWall = 0;
+            a_rf    += (litev_t_rf1 - litev_t_rf0);
+            a_gate  += (litev_g1 - litev_g0);
+            a_total += (litev_t_end - litev_t0);
+            n++;
+            if (n >= 60) {
+                litevRefreshProfEnabled();
+                if (litevProfEnabled) {
+                    double wallSpan = (lastWall > 0) ? (litev_t_end - lastWall) : 0;
+                    LOG_INFO("LITEV_PROF",
+                        "60f THREADED: cpu_loop=%.2fms (gate=%.2f runFrame=%.2f) | wall/frame=%.2fms (%.1f fps)",
+                        a_total / n, a_gate / n, a_rf / n,
+                        wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0));
+                }
+                a_rf = a_gate = a_total = 0;
+                n = 0;
+                lastWall = litev_t_end;
+            } else if (lastWall == 0) {
+                lastWall = litev_t_end;
+            }
+        }
+        return nLines;
+    }
+#endif
 
     Frame* renderFrame = frameQueue.getRenderFrame();
 
@@ -482,6 +647,16 @@ u32 MelonInstance::runFrame()
 
     double litev_t_rf0 = litevNowMs();
     u32 nLines = nds->RunFrame();
+    double litev_t_submit0 = litevNowMs();
+#ifdef LITEV_RENDER_THREAD
+    // R4 submit phase (single-thread this tranche): replay the frame's deferred
+    // GL submission on the emu thread, right after RunFrame and before the frame
+    // texture is read below. No-op unless the renderer is in deferred mode and
+    // the frame actually deferred (non-capture). This is the seam a later tranche
+    // moves onto a dedicated render thread.
+    if (nds->GPU.IsDeferredSubmit())
+        nds->GPU.SubmitFrame();
+#endif
     double litev_t_rf1 = litevNowMs();
     retroAchievementsManager->FrameUpdate();
 
@@ -553,11 +728,13 @@ u32 MelonInstance::runFrame()
     // Accumulate phase timings and log every 60 frames.
     {
         static double a_fw = 0, a_rf = 0, a_blit = 0, a_other = 0, a_total = 0;
+        static double a_submit = 0;
         static int    n = 0;
         static double lastWall = 0;
         double wall = litev_t_end;
         a_fw    += (litev_t_fw1 - litev_t_fw0);
-        a_rf    += (litev_t_rf1 - litev_t_rf0);
+        a_rf    += (litev_t_submit0 - litev_t_rf0);
+        a_submit += (litev_t_rf1 - litev_t_submit0);
         a_blit  += (litev_t_blit1 - litev_t_rf1);
         a_other += (litev_t_end - litev_t0) - (litev_t_fw1 - litev_t_fw0)
                    - (litev_t_rf1 - litev_t_rf0) - (litev_t_blit1 - litev_t_rf1);
@@ -569,11 +746,39 @@ u32 MelonInstance::runFrame()
                 double wallSpan = (lastWall > 0) ? (wall - lastWall) : 0;
                 double gpuAvg = (litev_gpuSamples > 0) ? (litev_gpuMsAccum / litev_gpuSamples) : -1.0;
                 LOG_INFO("LITEV_PROF",
-                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f blit=%.2f other=%.2f) | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
-                    a_total / n, a_fw / n, a_rf / n, a_blit / n, a_other / n,
+                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f submit=%.2f blit=%.2f other=%.2f) | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
+                    a_total / n, a_fw / n, a_rf / n, a_submit / n, a_blit / n, a_other / n,
                     gpuAvg, wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0));
+#ifdef LITEV_RENDER_THREAD
+                // R4 RIR counter proof (recipe §8): replay = converted GL sites
+                // routed through record+replay; inlineGL = converted sites forced
+                // inline (should be 0 in RIR mode). Cumulative since emu start.
+                LOG_INFO("LITEV_RIR", "rir: replayed=%llu inlineGL=%llu",
+                    (unsigned long long) nds->GPU.GetRIRReplayCount(),
+                    (unsigned long long) nds->GPU.GetRIRInlineGL());
+                // R4 Phase 3 prep-decomposition (TEMP): per-frame ms inside RunFrame
+                // spent in VRAM flatten (MakeVRAMFlat_*) vs config compute
+                // (UpdateLayerConfig/UpdateScanlineConfig/UpdateOAM). Delta of the
+                // cumulative core ns counters across this 60-frame window / n.
+                {
+                    static unsigned long long prevFlat = 0, prevCfg = 0, prev2D = 0;
+                    unsigned long long curFlat = (unsigned long long) nds->GPU.GetPrepFlattenNs();
+                    unsigned long long curCfg  = (unsigned long long) nds->GPU.GetPrepCfgNs();
+                    unsigned long long cur2D   = (unsigned long long) nds->GPU.GetPrep2DNs();
+                    double flatMs = (double)(curFlat - prevFlat) / 1.0e6 / n;
+                    double cfgMs  = (double)(curCfg  - prevCfg)  / 1.0e6 / n;
+                    double d2dMs  = (double)(cur2D   - prev2D)   / 1.0e6 / n;
+                    LOG_INFO("LITEV_PREP",
+                        "prep: full2D=%.2fms flatten=%.2fms cfg=%.2fms (of runFrame=%.2fms)",
+                        d2dMs, flatMs, cfgMs, a_rf / n);
+                    prevFlat = curFlat;
+                    prevCfg  = curCfg;
+                    prev2D   = cur2D;
+                }
+#endif
             }
             a_fw = a_rf = a_blit = a_other = a_total = 0;
+            a_submit = 0;
             litev_gpuMsAccum = 0; litev_gpuSamples = 0;
             n = 0;
             lastWall = wall;
@@ -585,8 +790,252 @@ u32 MelonInstance::runFrame()
     return nLines;
 }
 
+#ifdef LITEV_RENDER_THREAD
+// ======================= R4 STEP 3: render-thread offload =======================
+
+bool MelonInstance::renderThreadActive()
+{
+    // The render thread offloads only the accelerated deferred-submit path.
+    // IsDeferredSubmit() already encodes the debug.litev.renderthread property
+    // (applied at updateRenderer). Software renderer / RIR / flag-off => false.
+    return (currentRenderer == Renderer::OpenGl || currentRenderer == Renderer::Compute)
+           && nds->GPU.IsDeferredSubmit();
+}
+
+bool MelonInstance::renderThreadWanted()
+{
+    // Topology decision (design §6), taken once before the first updateRenderer.
+    if (!(currentConfiguration->renderer == Renderer::OpenGl
+          || currentConfiguration->renderer == Renderer::Compute))
+        return false;
+    char buf[8] = {0};
+    bool on = true;   // default ON when the flag is compiled in
+    if (__system_property_get("debug.litev.renderthread", buf) > 0)
+        on = (atoi(buf) != 0);
+    return on;
+}
+
+void MelonInstance::dispatchToRenderThread(std::function<void()> fn)
+{
+    if (!rtStarted)
+    {
+        // No render thread (software / flag-off / not yet started): run inline on
+        // whatever GL context is current on this thread.
+        fn();
+        return;
+    }
+    std::unique_lock<std::mutex> lk(rtMutex);
+    // Drain any in-flight offload frame so the task has exclusive use of the context.
+    rtDoneCond.wait(lk, [this]{ return (!rtBusy && !rtHasJob && !rtTaskPending) || rtStop; });
+    if (rtStop) { lk.unlock(); fn(); return; }
+    rtTask = std::move(fn);
+    rtTaskPending = true;
+    rtTaskDone = false;
+    lk.unlock();
+    rtJobCond.notify_one();
+    lk.lock();
+    rtDoneCond.wait(lk, [this]{ return rtTaskDone || rtStop; });
+}
+
+void MelonInstance::startRenderThread()
+{
+    if (rtStarted) return;
+    rtStarted = true;
+    rtStop = false;
+    rtHasJob = false;
+    rtBusy = false;
+    rtJobsPublished = 0;
+    rtBanksReleased = 0;
+    rtReleasePending = false;
+    renderThread = std::thread([this]{ renderThreadLoop(); });
+}
+
+void MelonInstance::stopRenderThread()
+{
+    if (!rtStarted) return;
+    {
+        std::unique_lock<std::mutex> lk(rtMutex);
+        rtStop = true;
+    }
+    rtJobCond.notify_all();
+    rtDoneCond.notify_all();
+    if (renderThread.joinable()) renderThread.join();
+    rtStarted = false;
+}
+
+void MelonInstance::onBankReleased()
+{
+    // Invoked from GLRenderer3D::RenderFrameBody (on the render thread, inside
+    // SubmitFrame) right after the geometry upload — the early bank release point.
+    // rtMutex is NOT held here (glSubmitPresent runs unlocked). rtReleasePending is
+    // render-thread-owned (set at job pickup) so this never collides with the emu.
+    std::unique_lock<std::mutex> lk(rtMutex);
+    if (rtReleasePending)
+    {
+        rtReleasePending = false;
+        rtBanksReleased++;
+        lk.unlock();
+        rtDoneCond.notify_all();
+    }
+}
+
+void MelonInstance::drainRenderThread()
+{
+    if (!rtStarted) return;
+    std::unique_lock<std::mutex> lk(rtMutex);
+    rtDoneCond.wait(lk, [this]{ return (!rtBusy && !rtHasJob) || rtStop; });
+}
+
+void MelonInstance::renderThreadLoop()
+{
+    // Own GL context in the emu context's share group + a private pbuffer. All
+    // melonDS GL objects (renderer FBOs/VAOs/textures/shaders, FrameQueue frame
+    // textures) live in the share group and are visible on both contexts.
+    renderGlContext = new OpenGLContext();
+    bool ok = renderGlContext->InitContext((long) MelonDSAndroid::openGlContext->GetContext())
+              && renderGlContext->Use();
+    if (!ok)
+    {
+        LOG_ERROR("LITEV_RT", "render thread failed to create/current shared GL context");
+        renderGlContext->DeInit(); delete renderGlContext; renderGlContext = nullptr;
+        // Wake any emu-thread waiter so the depth-1 gate can't deadlock on a dead
+        // render thread; the frame(s) already published simply go unrendered.
+        std::unique_lock<std::mutex> lk(rtMutex);
+        rtStop = true; rtBusy = false; rtHasJob = false;
+        rtBanksReleased = rtJobsPublished;   // balance the depth-1 gate
+        lk.unlock();
+        rtDoneCond.notify_all();
+        return;
+    }
+
+    // Register the early bank-release callback (fires on THIS thread inside SubmitFrame).
+    nds->GPU.SetBankReleaseCallback([this]{ onBankReleased(); });
+    // Re-init the screenshot renderer on THIS context so renderScreenshot (dispatched
+    // here for rewind/user screenshots) uses render-context FBO/VAO objects.
+    screenshotRenderer->init();
+
+    for (;;)
+    {
+        int bank; bool deferred; bool sleeping; int sw; int sh;
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lk(rtMutex);
+            rtJobCond.wait(lk, [this]{ return rtHasJob || rtTaskPending || rtStop; });
+            if (rtStop) break;
+            if (rtTaskPending)
+            {
+                rtTaskPending = false;
+                task = std::move(rtTask);
+                lk.unlock();
+                task();                     // GL closure on the render context
+                lk.lock();
+                rtTaskDone = true;
+                lk.unlock();
+                rtDoneCond.notify_all();
+                continue;
+            }
+            rtHasJob = false;          // consume the depth-1 slot
+            rtReleasePending = true;   // this job's bank release not yet counted
+            bank = rtJobBank; deferred = rtJobDeferred; sleeping = rtJobSleeping;
+            sw = rtJobScreenW; sh = rtJobScreenH;
+        }
+
+        glSubmitPresent(bank, deferred, sleeping, sw, sh, /*onRenderThread*/true);
+
+        // Guarantee the bank release is counted even for frames with no 3D record
+        // (RenderFrameIdentical / zero polygons never call the early-release hook),
+        // and mark the frame fully done.
+        {
+            std::unique_lock<std::mutex> lk(rtMutex);
+            if (rtReleasePending) { rtReleasePending = false; rtBanksReleased++; }
+            rtBusy = false;
+            lk.unlock();
+            rtDoneCond.notify_all();
+        }
+    }
+
+    nds->GPU.SetBankReleaseCallback(nullptr);
+    renderGlContext->DeInit();
+    delete renderGlContext;
+    renderGlContext = nullptr;
+}
+
+Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, int screenWidth, int screenHeight, bool onRenderThread)
+{
+    Frame* renderFrame = frameQueue.getRenderFrame();
+
+    EGLDisplay currentDisplay = eglGetCurrentDisplay();
+    if (renderFrame->renderFence)
+    {
+        eglDestroySyncKHR(currentDisplay, renderFrame->renderFence);
+        renderFrame->renderFence = 0;
+    }
+    if (renderFrame->presentFence)
+        eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
+
+    frameQueue.validateRenderFrame(renderFrame, screenWidth, screenHeight * 2);
+
+    // Shaders compile lazily on the thread that owns the GL context (design §5.7).
+    [[unlikely]] if (nds->GPU.GetRenderer().NeedsShaderCompile())
+    {
+        do
+        {
+            int currentShader, shadersCount;
+            nds->GPU.GetRenderer().ShaderCompileStep(currentShader, shadersCount);
+        }
+        while (nds->GPU.GetRenderer().NeedsShaderCompile());
+    }
+
+    // Replay the deferred GL command log for the published bank. Under the render
+    // thread the packet carries the bank the emu thread recorded into; the emu
+    // thread is meanwhile recording bank 1-r for the next frame.
+    if (deferred)
+    {
+        nds->GPU.SetSubmitReplayBank(bank);
+        nds->GPU.SubmitFrame();
+    }
+
+    void* fbTop = nullptr;
+    void* fbBottom = nullptr;
+    bool ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
+    if (ramFramebuffers)
+    {
+        if (fbTop && fbBottom)
+        {
+            glBindTexture(GL_TEXTURE_2D, renderFrame->frameTexture);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbTop);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192 + 2, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbBottom);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    }
+    else if (fbTop)
+    {
+        GLuint arrayTex = *(GLuint*) fbTop;
+        if (onRenderThread)
+            blitAcceleratedFrameFBO(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight, rtBlitReadFBO, rtBlitDrawFBO);
+        else
+            blitAcceleratedFrameFBO(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight, blitReadFBO, blitDrawFBO);
+    }
+
+    if (!sleeping) [[likely]]
+    {
+        renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
+        glFlush();
+        frameQueue.pushRenderedFrame(renderFrame);
+    }
+    else
+    {
+        frameQueue.discardRenderedFrame(renderFrame);
+    }
+    return renderFrame;
+}
+#endif // LITEV_RENDER_THREAD
+
 void MelonInstance::stop()
 {
+#ifdef LITEV_RENDER_THREAD
+    stopRenderThread();
+#endif
     retroAchievementsManager = nullptr;
     screenshotRenderer->cleanup();
 }
@@ -709,6 +1158,9 @@ void MelonInstance::requestFirmwareSaveWrite(const u8* saveData, u32 saveLength,
 
 bool MelonInstance::saveState(Savestate* state)
 {
+#ifdef LITEV_RENDER_THREAD
+    drainRenderThread();   // §5.2: no render read during savestate serialization
+#endif
     if (!retroAchievementsManager->DoSavestate(state))
         return false;
 
@@ -717,6 +1169,9 @@ bool MelonInstance::saveState(Savestate* state)
 
 bool MelonInstance::loadState(Savestate* state)
 {
+#ifdef LITEV_RENDER_THREAD
+    drainRenderThread();   // §5.2: no render read while emulation state is replaced
+#endif
     if (!retroAchievementsManager->DoSavestate(state))
         return false;
 
@@ -800,26 +1255,7 @@ std::vector<RetroAchievements::RARuntimeAchievement> MelonInstance::getRuntimeAc
 void MelonInstance::updateRenderer()
 {
     Renderer newRenderer = currentConfiguration->renderer;
-
-    // Unified renderer API (upstream GPU rework): a single Renderer owns both
-    // the 2D and 3D pipelines. SoftRenderer(nds) / GLRenderer(nds, compute).
-    if (newRenderer != currentRenderer)
-    {
-        switch (newRenderer)
-        {
-            case Renderer::Software:
-                nds->GPU.SetRenderer(std::make_unique<SoftRenderer>(*nds));
-                break;
-            case Renderer::OpenGl:
-                nds->GPU.SetRenderer(std::make_unique<GLRenderer>(*nds, /*compute=*/false));
-                break;
-            case Renderer::Compute:
-                nds->GPU.SetRenderer(std::make_unique<GLRenderer>(*nds, /*compute=*/true));
-                break;
-            default: __builtin_unreachable();
-        }
-        currentRenderer = newRenderer;
-    }
+    bool swap = (newRenderer != currentRenderer);
 
     RendererSettings settings {};
     switch (newRenderer)
@@ -847,7 +1283,83 @@ void MelonInstance::updateRenderer()
         }
         default: __builtin_unreachable();
     }
-    nds->GPU.GetRenderer().SetRenderSettings(settings);
+
+    // Unified renderer API (upstream GPU rework): a single Renderer owns both the
+    // 2D and 3D pipelines.
+    auto createAndConfigureRenderer = [this, newRenderer, swap, &settings]{
+        if (swap)
+        {
+            switch (newRenderer)
+            {
+                case Renderer::Software:
+                    nds->GPU.SetRenderer(std::make_unique<SoftRenderer>(*nds));
+                    break;
+                case Renderer::OpenGl:
+                    nds->GPU.SetRenderer(std::make_unique<GLRenderer>(*nds, /*compute=*/false));
+                    break;
+                case Renderer::Compute:
+                    nds->GPU.SetRenderer(std::make_unique<GLRenderer>(*nds, /*compute=*/true));
+                    break;
+                default: __builtin_unreachable();
+            }
+#ifdef LITEV_RENDER_THREAD
+            // Bind the early bank-release callback on the freshly created renderer
+            // (SetRenderer cleared it). Done inside the render-thread dispatch so it
+            // targets the current renderer with no cross-thread write to the GL
+            // renderer.
+            nds->GPU.SetBankReleaseCallback([this]{ onBankReleased(); });
+#endif
+        }
+        nds->GPU.GetRenderer().SetRenderSettings(settings);
+    };
+#ifdef LITEV_RENDER_THREAD
+    // Create/replace the renderer and upload settings ON THE RENDER CONTEXT — its GL
+    // objects (FBOs/VAOs) are per-context and are consumed there by SubmitFrame.
+    // dispatchToRenderThread drains the render thread first (so it is not mid-
+    // SubmitFrame against the renderer being replaced) and runs inline when there is
+    // no render thread (software / renderthread=0).
+    dispatchToRenderThread(createAndConfigureRenderer);
+#else
+    createAndConfigureRenderer();
+#endif
+    if (swap) currentRenderer = newRenderer;
+
+#ifdef LITEV_RENDER_THREAD
+    // R4 (docs/r4-render-thread-design.md §6): select deferred submission once at
+    // renderer (re)creation. Accelerated renderers only; the software renderer
+    // issues no GL and is a no-op. Runtime toggle: `debug.litev.renderthread`
+    // (default 1 when the flag is compiled in). Toggling takes effect on the next
+    // renderer re-init, which is exactly when this runs.
+    if (newRenderer == Renderer::OpenGl || newRenderer == Renderer::Compute)
+    {
+        char litevbuf[8] = {0};
+        bool deferOn = true;
+        if (__system_property_get("debug.litev.renderthread", litevbuf) > 0)
+            deferOn = (atoi(litevbuf) != 0);
+        nds->GPU.SetDeferredSubmit(deferOn);
+
+        // R4 RIR (recipe §8): route converted per-scanline GL sites through the
+        // command log with immediate replay. Independent of deferred submit; used
+        // to prove the record/replay plumbing bit-exact on device. Default off.
+        char rirbuf[8] = {0};
+        bool rirOn = false;
+        if (__system_property_get("debug.litev.rir", rirbuf) > 0)
+            rirOn = (atoi(rirbuf) != 0);
+        nds->GPU.SetRIRMode(rirOn);
+
+        // R4 decisive-split (TEMP): debug.litev.norender=1 skips ALL GL render
+        // calls (emulation/SPU/events still run) so runFrame reads the true in-app
+        // UNMOVABLE emulation floor. Applied at renderer (re)init = game load,
+        // after the protocol sets the prop. Default off.
+        char nrbuf[8] = {0};
+        bool nrOn = false;
+        if (__system_property_get("debug.litev.norender", nrbuf) > 0)
+            nrOn = (atoi(nrbuf) != 0);
+        nds->GPU.SetLitevNoRender(nrOn);
+        // (The bank-release callback is bound inside the render-thread dispatch
+        // above, on the freshly created renderer.)
+    }
+#endif
 }
 
 void MelonInstance::setBatteryLevels()

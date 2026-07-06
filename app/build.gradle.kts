@@ -74,7 +74,21 @@ android {
                     // GPU::SetFrameskipTarget. On this A55 the frame is ARM-CPU
                     // bound (~20ms emulation of a ~30ms frame), so skipping only
                     // rasterisation caps near ~45 FPS; exposed as a user lever.
-                    "-DLITEV_AGGRESSIVE_SKIP=ON"
+                    "-DLITEV_AGGRESSIVE_SKIP=ON",
+                    // R3 LOCAL-ONLY (do not commit): enable the GL per-frame
+                    // call counters for the instrumented measurement APK.
+                    "-DLITEV_PROFILE=ON",
+                    // R3 LOCAL-ONLY (do not commit): enable the GL redundant
+                    // bind/param shadow cache (the diet under test). Kept ON
+                    // together with LITEV_PROFILE so the before/after LITEV_GL
+                    // call counts are provable on-device.
+                    "-DLITEV_GL_STATE_CACHE=ON",
+                    // R4 LOCAL-ONLY (do not commit): render-thread offload
+                    // capture/submit seam. Compiles in the deferred 2D
+                    // final-composite phase; runtime toggle debug.litev.renderthread
+                    // (default ON when compiled). Set OFF here (or drop the line)
+                    // for the flag-OFF parity baseline APK.
+                    "-DLITEV_RENDER_THREAD=ON"
                 )
             }
         }

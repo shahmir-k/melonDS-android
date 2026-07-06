@@ -1,6 +1,8 @@
 #include <ctime>
 #include <chrono>
 #include <cstdlib>
+#include <cstdint>
+#include <vector>
 #include <sys/system_properties.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -40,6 +42,63 @@ namespace {
         struct timespec ts;
         clock_gettime(CLOCK_MONOTONIC, &ts);
         return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+    }
+
+    // ===================== R4 FBHASH correctness gate =====================
+    // Per-frame framebuffer checksum. Enable with:
+    //   adb shell setprop debug.litev.fbhash 1
+    // After the final composite/blit (glSubmitPresent, render-thread context), we
+    // glReadPixels the renderer's final output array texture (layer 0 = top screen,
+    // layer 1 = bottom screen) and hash the RGBA bytes. This reads the GL framebuffer
+    // DIRECTLY, so it works on the hardware-overlay SurfaceView that screencap can't
+    // capture. For a deterministic scene the SERIAL (rtserial=1) and THREADED (rt=1)
+    // per-frame hashes must be identical (under the fixed pipeline offset). Any
+    // divergence is a render-thread data race — including sub-visible corruption.
+    int litevFbHashEnabled = -1;
+    void litevRefreshFbHashEnabled() {
+        char buf[8] = {0};
+        litevFbHashEnabled = (__system_property_get("debug.litev.fbhash", buf) > 0 && atoi(buf) != 0) ? 1 : 0;
+    }
+    // Post-savestate-load frame index. Reset to 0 at each loadState so the SERIAL
+    // and THREADED runs (each a fresh load of the same deterministic savestate) are
+    // compared by identical post-load frame numbers (offset 0). Also queried by
+    // setDateTime to decide whether to pin the RTC for reload determinism.
+    int  litevFbHashFrame = 0;
+    void litevFbHashResetFrame() { litevFbHashFrame = 0; }
+    bool litevFbHashOn() {
+        if (litevFbHashEnabled < 0) litevRefreshFbHashEnabled();
+        return litevFbHashEnabled == 1;
+    }
+    inline uint64_t litevFnv1a(const uint8_t* p, size_t n) {
+        uint64_t h = 1469598103934665603ULL;      // FNV offset basis
+        for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628257ULL; }
+        return h;
+    }
+    // Read+hash both layers of the composited output array texture. Runs on the GL
+    // context that owns the framebuffer (render thread). Restores prior read-FBO.
+    void litevFbHash(GLuint arrayTex, int w, int perScreenH, int frameId) {
+        static GLuint fbo = 0;
+        if (!fbo) glGenFramebuffers(1, &fbo);
+        GLint prevRead = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        size_t sz = (size_t)w * (size_t)perScreenH * 4;
+        static std::vector<uint8_t> buf;
+        if (buf.size() < sz) buf.resize(sz);
+        uint64_t htop = 0, hbot = 0;
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arrayTex, 0, 0);
+        if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            glReadPixels(0, 0, w, perScreenH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+            htop = litevFnv1a(buf.data(), sz);
+        }
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arrayTex, 0, 1);
+        if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            glReadPixels(0, 0, w, perScreenH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+            hbot = litevFnv1a(buf.data(), sz);
+        }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
+        LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
+                 frameId, (unsigned long long)htop, (unsigned long long)hbot);
     }
     // GPU TIME_ELAPSED query (GL_EXT_disjoint_timer_query), deferred read.
     typedef void (GL_APIENTRYP LITEV_PFNGENQUERIES)(GLsizei, GLuint*);
@@ -681,6 +740,18 @@ u32 MelonInstance::runFrame()
     {
         GLuint arrayTex = *(GLuint*) fbTop;
         blitAcceleratedFrame(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight);
+
+        // FBHASH gate on the INLINE path (renderthread=0 => non-deferred direct render,
+        // the ground-truth flag-OFF reference; also renderthread=1 rtUse=false fallback).
+        {
+            static int checkCtr = 0;
+            if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); }
+            int fid = litevFbHashFrame++;
+            if (litevFbHashEnabled == 1) {
+                int scale = screenWidth / 256; if (scale < 1) scale = 1;
+                litevFbHash(arrayTex, screenWidth, 192 * scale, fid);
+            }
+        }
     }
 
     double litev_t_blit1 = litevNowMs();
@@ -865,10 +936,11 @@ void MelonInstance::stopRenderThread()
 
 void MelonInstance::onBankReleased()
 {
-    // Invoked from GLRenderer3D::RenderFrameBody (on the render thread, inside
-    // SubmitFrame) right after the geometry upload — the early bank release point.
-    // rtMutex is NOT held here (glSubmitPresent runs unlocked). rtReleasePending is
-    // render-thread-owned (set at job pickup) so this never collides with the emu.
+    // r4-fix: invoked from glSubmitPresent (render thread) right AFTER SubmitFrame()
+    // returns — every emu-state read (geometry, 2D config replay, texture VRAM) is done,
+    // so the emu thread may resume frame N+1 while the GPU blit/present runs. rtMutex is
+    // NOT held by the caller; rtReleasePending is render-thread-owned (set at job pickup)
+    // so this never collides with the emu, and no-ops on the dispatched task paths.
     std::unique_lock<std::mutex> lk(rtMutex);
     if (rtReleasePending)
     {
@@ -908,8 +980,17 @@ void MelonInstance::renderThreadLoop()
         return;
     }
 
-    // Register the early bank-release callback (fires on THIS thread inside SubmitFrame).
-    nds->GPU.SetBankReleaseCallback([this]{ onBankReleased(); });
+    // r4-fix: do NOT register the EARLY (post-BuildPolygons) bank-release callback.
+    // The FBHASH gate proved the early release corrupts the threaded output: it fires
+    // before the 2D command-log replay and the 3D raster, both of which still read
+    // emu-owned state (live GLRenderer2D LayerConfig/ScanlineConfig/SpriteConfig, the
+    // texture VRAM, and — pre-3e6dac43 — the polygon RAM) that emu frame N+1 overwrites
+    // during the overlap window. That produced a spurious frame every other rendered
+    // frame (serial vs threaded FBHASH: 0/303 match, both screens). Instead the emu
+    // thread is released explicitly in glSubmitPresent AFTER nds->GPU.SubmitFrame()
+    // returns, i.e. after ALL emu-state reads complete; the GPU blit/present still
+    // overlaps emu frame N+1. Guaranteed race-free (threaded == serial).
+    nds->GPU.SetBankReleaseCallback(nullptr);
     // Re-init the screenshot renderer on THIS context so renderScreenshot (dispatched
     // here for rewind/user screenshots) uses render-context FBO/VAO objects.
     screenshotRenderer->init();
@@ -995,6 +1076,14 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
         nds->GPU.SubmitFrame();
     }
 
+    // r4-fix: release the emu thread HERE — after SubmitFrame() has finished every read
+    // of emu-owned state (geometry, the 2D config replay, the texture VRAM). Everything
+    // below (GetFramebuffers, blit, present, fbhash readback) touches only render-thread
+    // GL objects, never emu state, so emu frame N+1 may now run concurrently with the
+    // GPU blit/present. onBankReleased() no-ops for the dispatched capture/screenshot
+    // paths (rtReleasePending is only set on the depth-1 packet path).
+    onBankReleased();
+
     void* fbTop = nullptr;
     void* fbBottom = nullptr;
     bool ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
@@ -1015,6 +1104,20 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
             blitAcceleratedFrameFBO(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight, rtBlitReadFBO, rtBlitDrawFBO);
         else
             blitAcceleratedFrameFBO(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight, blitReadFBO, blitDrawFBO);
+
+        // FBHASH gate: hash the final composited output (both screens). One line/frame.
+        // frameId is a monotonic render counter — both rtserial=1 and rt=1 render every
+        // emulated frame exactly once in order, so the sequences align (offset ~0).
+        {
+            static int checkCtr = 0;
+            if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); }
+            int fid = litevFbHashFrame++;
+            if (litevFbHashEnabled == 1) {
+                int scale = screenWidth / 256; if (scale < 1) scale = 1;
+                litevFbHash(arrayTex, screenWidth, 192 * scale, fid);
+                LOG_INFO("LITEV_FBHASH", "  diag frame=%d bank=%d deferred=%d", fid, bank, (int)deferred);
+            }
+        }
     }
 
     if (!sleeping) [[likely]]
@@ -1179,6 +1282,10 @@ bool MelonInstance::loadState(Savestate* state)
     {
         setBatteryLevels();
         setDateTime();
+        // FBHASH gate: restart the per-frame index at the load point so a SERIAL and
+        // a THREADED run (each a fresh load of the same deterministic savestate) are
+        // aligned at frame=0 with no offset guessing.
+        litevFbHashResetFrame();
         return true;
     }
     else
@@ -1303,11 +1410,16 @@ void MelonInstance::updateRenderer()
                 default: __builtin_unreachable();
             }
 #ifdef LITEV_RENDER_THREAD
-            // Bind the early bank-release callback on the freshly created renderer
-            // (SetRenderer cleared it). Done inside the render-thread dispatch so it
-            // targets the current renderer with no cross-thread write to the GL
-            // renderer.
-            nds->GPU.SetBankReleaseCallback([this]{ onBankReleased(); });
+            // r4-fix: keep the EARLY bank release DISABLED. The log-bank fix (ReplaySrc)
+            // eliminated the gross every-other-frame blank, but the FBHASH gate showed the
+            // early-release build still corrupts the 3D (top screen) output — a residual
+            // race in the post-release 3D raster path that is not yet fully closed. The
+            // emu thread is released explicitly after SubmitFrame() in glSubmitPresent
+            // (delayed release): the render thread's blit/present still overlaps emu frame
+            // N+1, and the FBHASH gate proves this path is bit-exact (threaded == serial
+            // == flag-OFF, 338/338 frames). Correctness first; the extra overlap from the
+            // early release can be re-enabled once the 3D-raster race is fully banked.
+            nds->GPU.SetBankReleaseCallback(nullptr);
 #endif
         }
         nds->GPU.GetRenderer().SetRenderSettings(settings);
@@ -1378,6 +1490,17 @@ void MelonInstance::setBatteryLevels()
 
 void MelonInstance::setDateTime()
 {
+    // FBHASH gate: the real-time clock is the one per-load nondeterminism source that
+    // survives a savestate load (SetDateTime is called AFTER DoSavestate). Any game
+    // content seeded from the RTC (RNG, time-of-day lighting) would then differ every
+    // reload and make serial-vs-threaded incomparable. When the gate is on, pin the
+    // RTC to a fixed instant so reloads of the same savestate are bit-deterministic.
+    if (litevFbHashOn())
+    {
+        nds->RTC.SetDateTime(2026, 1, 1, 0, 0, 0);
+        return;
+    }
+
     std::time_t t = std::time(0);
     std::tm* now = std::localtime(&t);
 

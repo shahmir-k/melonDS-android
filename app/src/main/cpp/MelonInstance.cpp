@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 #include <sys/system_properties.h>
+#include <sched.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <filesystem>
@@ -25,6 +26,18 @@
 #include "Platform.h"
 #include "SDCardArgsBuilder.h"
 #include "MelonLog.h"
+
+// liteDS-v2: pin the calling thread to a dedicated CPU core. Without this the
+// scheduler may co-locate the hot emu + render threads on one A55 core, so R4's
+// "overlap" degrades to time-slicing on a single core (render busy ~doubles under
+// overlap — measured). DraStic pins its emu/render/raster threads (teardown 07).
+static void litevPinThread(int cpu)
+{
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    sched_setaffinity(0, sizeof(set), &set);
+}
 
 // ---- liteDS-v2 frame-phase profiler (gated by a debug property at runtime) ----
 // Enable with:  adb shell setprop debug.litev.prof 1
@@ -446,6 +459,10 @@ void MelonInstance::reset()
 u32 MelonInstance::runFrame()
 {
 #ifdef LITEV_RENDER_THREAD
+    // Pin the emu thread to a dedicated core (once), separate from the render
+    // thread's core (2), so RunFrame and the GL SubmitFrame run truly parallel.
+    { static bool _pinned = false; if (!_pinned) { litevPinThread(3); _pinned = true; } }
+
     // Decide the thread topology once (design §6) and start the render thread
     // BEFORE the first updateRenderer, so the renderer's per-context GL objects
     // (FBOs/VAOs — not shared across EGL contexts on this Mali driver) are created
@@ -687,6 +704,10 @@ u32 MelonInstance::runFrame()
                 litev_gpuMsAccum += ns / 1000000.0;
                 litev_gpuSamples++;
                 litevQPending[prev] = false;
+                if (litev_gpuSamples >= 60) {
+                    LOG_INFO("LITEV_GPU", "gpu_hw=%.2fms/frame", litev_gpuMsAccum / litev_gpuSamples);
+                    litev_gpuMsAccum = 0.0; litev_gpuSamples = 0;
+                }
             }
         }
         litevBeginQuery(LITEV_TIME_ELAPSED, litevQ[litevQSlot]);
@@ -832,19 +853,22 @@ u32 MelonInstance::runFrame()
                 // (UpdateLayerConfig/UpdateScanlineConfig/UpdateOAM). Delta of the
                 // cumulative core ns counters across this 60-frame window / n.
                 {
-                    static unsigned long long prevFlat = 0, prevCfg = 0, prev2D = 0;
+                    static unsigned long long prevFlat = 0, prevCfg = 0, prev2D = 0, prevSpr = 0;
                     unsigned long long curFlat = (unsigned long long) nds->GPU.GetPrepFlattenNs();
                     unsigned long long curCfg  = (unsigned long long) nds->GPU.GetPrepCfgNs();
                     unsigned long long cur2D   = (unsigned long long) nds->GPU.GetPrep2DNs();
+                    unsigned long long curSpr  = (unsigned long long) nds->GPU.GetPrepSpritesNs();
                     double flatMs = (double)(curFlat - prevFlat) / 1.0e6 / n;
                     double cfgMs  = (double)(curCfg  - prevCfg)  / 1.0e6 / n;
                     double d2dMs  = (double)(cur2D   - prev2D)   / 1.0e6 / n;
+                    double sprMs  = (double)(curSpr  - prevSpr)  / 1.0e6 / n;
                     LOG_INFO("LITEV_PREP",
-                        "prep: full2D=%.2fms flatten=%.2fms cfg=%.2fms (of runFrame=%.2fms)",
-                        d2dMs, flatMs, cfgMs, a_rf / n);
+                        "prep: full2D=%.2fms (sprites=%.2f) flatten=%.2fms cfg=%.2fms (of runFrame=%.2fms)",
+                        d2dMs, sprMs, flatMs, cfgMs, a_rf / n);
                     prevFlat = curFlat;
                     prevCfg  = curCfg;
                     prev2D   = cur2D;
+                    prevSpr  = curSpr;
                 }
 #endif
             }
@@ -1012,10 +1036,15 @@ void MelonInstance::renderThreadLoop()
     // here for rewind/user screenshots) uses render-context FBO/VAO objects.
     screenshotRenderer->init();
 
+    // Pin the render thread to a dedicated core so it runs truly parallel to the
+    // emu thread (pinned to a different core in runFrame), not time-sliced with it.
+    litevPinThread(2);
+
     for (;;)
     {
         int bank; bool deferred; bool sleeping; int sw; int sh;
         std::function<void()> task;
+        auto _rtw0 = std::chrono::steady_clock::now();   // start idle-wait
         {
             std::unique_lock<std::mutex> lk(rtMutex);
             rtJobCond.wait(lk, [this]{ return rtHasJob || rtTaskPending || rtStop; });
@@ -1038,7 +1067,19 @@ void MelonInstance::renderThreadLoop()
             sw = rtJobScreenW; sh = rtJobScreenH;
         }
 
+        auto _rtw1 = std::chrono::steady_clock::now();   // job picked up (idle ended)
         glSubmitPresent(bank, deferred, sleeping, sw, sh, /*onRenderThread*/true);
+        {
+            auto _rtb1 = std::chrono::steady_clock::now();
+            static double aIdle = 0, aBusy = 0; static int rn = 0;
+            aIdle += std::chrono::duration_cast<std::chrono::nanoseconds>(_rtw1 - _rtw0).count() / 1e6;
+            aBusy += std::chrono::duration_cast<std::chrono::nanoseconds>(_rtb1 - _rtw1).count() / 1e6;
+            if (++rn >= 60) {
+                LOG_INFO("LITEV_RT", "render: idle=%.2fms busy=%.2fms (cycle=%.2fms)",
+                         aIdle / 60, aBusy / 60, (aIdle + aBusy) / 60);
+                aIdle = aBusy = 0; rn = 0;
+            }
+        }
 
         // Guarantee the bank release is counted even for frames with no 3D record
         // (RenderFrameIdentical / zero polygons never call the early-release hook),
@@ -1060,6 +1101,7 @@ void MelonInstance::renderThreadLoop()
 
 Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, int screenWidth, int screenHeight, bool onRenderThread)
 {
+    auto _sp0 = std::chrono::steady_clock::now();
     Frame* renderFrame = frameQueue.getRenderFrame();
 
     EGLDisplay currentDisplay = eglGetCurrentDisplay();
@@ -1070,6 +1112,7 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
     }
     if (renderFrame->presentFence)
         eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
+    auto _sp1 = std::chrono::steady_clock::now();  // after getRenderFrame + presentFence wait
 
     frameQueue.validateRenderFrame(renderFrame, screenWidth, screenHeight * 2);
 
@@ -1100,7 +1143,23 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
     // GPU blit/present. onBankReleased() no-ops for the dispatched capture/screenshot
     // paths (rtReleasePending is only set on the depth-1 packet path).
     onBankReleased();
+    // Kick the GPU to start the just-submitted 3D raster + 2D composite NOW, so the
+    // blit below (which reads that output) waits less for GPU completion. debug.litev.
+    // flushaftersubmit=1 to A/B this.
+    { static int _fa = -1; if (_fa < 0) { char b[8]={0}; _fa = (__system_property_get("debug.litev.flushaftersubmit", b) > 0 && atoi(b)!=0) ? 1 : 0; } if (_fa) glFlush(); }
+    {
+        auto _sp2 = std::chrono::steady_clock::now();
+        static double aWait = 0, aSub = 0; static int sn = 0;
+        aWait += std::chrono::duration_cast<std::chrono::nanoseconds>(_sp1 - _sp0).count() / 1e6;
+        aSub  += std::chrono::duration_cast<std::chrono::nanoseconds>(_sp2 - _sp1).count() / 1e6;
+        if (++sn >= 60) {
+            LOG_INFO("LITEV_SUBMIT", "60f: presentWait=%.2fms submitToRelease=%.2fms",
+                     aWait / 60, aSub / 60);
+            aWait = aSub = 0; sn = 0;
+        }
+    }
 
+    auto _bl0 = std::chrono::steady_clock::now();
     void* fbTop = nullptr;
     void* fbBottom = nullptr;
     bool ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
@@ -1117,10 +1176,15 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
     else if (fbTop)
     {
         GLuint arrayTex = *(GLuint*) fbTop;
+        // DIAGNOSTIC: debug.litev.noblit=1 skips the blit (garbage output) to measure
+        // whether the ~9ms blit is separable eliminable GPU cost vs an inseparable wait.
+        static int _nb = -1; if (_nb < 0) { char b[8]={0}; _nb = (__system_property_get("debug.litev.noblit", b) > 0 && atoi(b)!=0) ? 1 : 0; }
+        if (!_nb) {
         if (onRenderThread)
             blitAcceleratedFrameFBO(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight, rtBlitReadFBO, rtBlitDrawFBO);
         else
             blitAcceleratedFrameFBO(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight, blitReadFBO, blitDrawFBO);
+        }
 
         // FBHASH gate: hash the final composited output (both screens). One line/frame.
         // frameId is a monotonic render counter — both rtserial=1 and rt=1 render every
@@ -1137,6 +1201,7 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
         }
     }
 
+    auto _bl1 = std::chrono::steady_clock::now();   // after blit
     if (!sleeping) [[likely]]
     {
         renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
@@ -1146,6 +1211,16 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
     else
     {
         frameQueue.discardRenderedFrame(renderFrame);
+    }
+    {
+        auto _bl2 = std::chrono::steady_clock::now();
+        static double aBlit = 0, aPush = 0; static int bn = 0;
+        aBlit += std::chrono::duration_cast<std::chrono::nanoseconds>(_bl1 - _bl0).count() / 1e6;
+        aPush += std::chrono::duration_cast<std::chrono::nanoseconds>(_bl2 - _bl1).count() / 1e6;
+        if (++bn >= 60) {
+            LOG_INFO("LITEV_BLIT", "60f: blit=%.2fms fence+push=%.2fms", aBlit / 60, aPush / 60);
+            aBlit = aPush = 0; bn = 0;
+        }
     }
     return renderFrame;
 }
@@ -1379,6 +1454,10 @@ std::vector<RetroAchievements::RARuntimeAchievement> MelonInstance::getRuntimeAc
 void MelonInstance::updateRenderer()
 {
     Renderer newRenderer = currentConfiguration->renderer;
+    // DIAGNOSTIC: debug.litev.software=1 forces the software renderer (native, threaded)
+    // to gate M6.6 feasibility — measure its raw speed vs the GL renderer's 3x cost.
+    { char _sw[8] = {0}; if (__system_property_get("debug.litev.software", _sw) > 0 && atoi(_sw) != 0)
+        newRenderer = Renderer::Software; }
     bool swap = (newRenderer != currentRenderer);
 
     RendererSettings settings {};
@@ -1396,6 +1475,10 @@ void MelonInstance::updateRenderer()
             auto glRenderSettings = static_cast<OpenGlRenderSettings&>(*currentConfiguration->renderSettings);
             settings.ScaleFactor = glRenderSettings.scale;
             settings.BetterPolygons = glRenderSettings.betterPolygons;
+            // DIAGNOSTIC: debug.litev.scale overrides internal resolution (1..8) to test
+            // whether the render/SubmitFrame cost is GPU-fragment-bound (resolution) vs CPU.
+            { char _sb[8] = {0}; if (__system_property_get("debug.litev.scale", _sb) > 0) {
+                int _s = atoi(_sb); if (_s >= 1 && _s <= 8) settings.ScaleFactor = _s; } }
             break;
         }
         case Renderer::Compute:
@@ -1427,16 +1510,20 @@ void MelonInstance::updateRenderer()
                 default: __builtin_unreachable();
             }
 #ifdef LITEV_RENDER_THREAD
-            // r4-fix: keep the EARLY bank release DISABLED. The log-bank fix (ReplaySrc)
-            // eliminated the gross every-other-frame blank, but the FBHASH gate showed the
-            // early-release build still corrupts the 3D (top screen) output — a residual
-            // race in the post-release 3D raster path that is not yet fully closed. The
-            // emu thread is released explicitly after SubmitFrame() in glSubmitPresent
-            // (delayed release): the render thread's blit/present still overlaps emu frame
-            // N+1, and the FBHASH gate proves this path is bit-exact (threaded == serial
-            // == flag-OFF, 338/338 frames). Correctness first; the extra overlap from the
-            // early release can be re-enabled once the 3D-raster race is fully banked.
-            nds->GPU.SetBankReleaseCallback(nullptr);
+            // Re-register the EARLY-release callback (SetRenderer nulled it — the root
+            // cause of the wasted overlap). MEASURED: the render thread is IDLE ~17.6ms/
+            // frame (busy only 14.2ms) — it is NOT the bottleneck. The 8ms gate is the emu
+            // waiting for the FULL SubmitFrame under delayed release; early release lets the
+            // emu proceed after RenderFrameBodyGeometry (~0.8ms) so the 2D replay + 3D raster
+            // overlap emu frame N+1. Gated on debug.litev.earlyrelease (default ON here).
+            {
+                char _erb[8] = {0};
+                bool _er = true;
+                if (__system_property_get("debug.litev.earlyrelease", _erb) > 0)
+                    _er = (atoi(_erb) != 0);
+                nds->GPU.SetBankReleaseCallback(_er ? std::function<void()>([this]{ onBankReleased(); })
+                                                    : std::function<void()>(nullptr));
+            }
 #endif
         }
         nds->GPU.GetRenderer().SetRenderSettings(settings);

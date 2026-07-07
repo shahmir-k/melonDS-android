@@ -66,6 +66,13 @@ android {
                     "-DLITEV_EVENT_SLICES=ON",
                     "-DLITEV_MEM_DTCM_BLOCK=ON",
                     "-DLITEV_MEM_MAINRAM_LOAD=ON",
+                    // DraStic branchless software page-table fastmem (loads) +
+                    // register pin. Headless A/B: ARM9 u32-read helper calls
+                    // 21366->3540/frame, ARM9 exec -0.9ms, bit-exact. GLOBALREG
+                    // frees the MemBase reg via the sw-table.
+                    "-DLITEV_JIT_FIXEDREG=ON",
+                    "-DLITEV_JIT_GLOBALREG=ON",
+                    "-DLITEV_MEM_SWTABLE=ON",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
                     // Aggressive frameskip: compiled in and runtime-controllable
@@ -89,6 +96,12 @@ android {
                     // (default ON when compiled). Set OFF here (or drop the line)
                     // for the flag-OFF parity baseline APK.
                     "-DLITEV_RENDER_THREAD=ON"
+                    // G) geometry-transform offload — temporarily OFF: same-thread
+                    // G2 gives ~0 FPS and garbled the device render under the R4
+                    // render thread (VCount-215 deferred-raster vs VBlank-flush
+                    // ReplayGeometry ordering). Re-enable only after the render-
+                    // private-state G3 refactor + FBHASH gate.
+                    // , "-DLITEV_GEOM_OFFLOAD=ON"
                 )
             }
         }

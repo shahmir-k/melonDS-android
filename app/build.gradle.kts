@@ -73,6 +73,9 @@ android {
                     "-DLITEV_JIT_FIXEDREG=ON",
                     "-DLITEV_JIT_GLOBALREG=ON",
                     "-DLITEV_MEM_SWTABLE=ON",
+                    // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
+                    // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
+                    "-DLITEV_GXFIFO_THREADED=ON",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
                     // Aggressive frameskip: compiled in and runtime-controllable

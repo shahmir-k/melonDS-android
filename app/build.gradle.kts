@@ -88,6 +88,12 @@ android {
                     // stubs). Removes ~8k per-word SlowBlockTransfer9 helper calls/frame
                     // off the emu thread. Bit-exact.
                     "-DLITEV_JIT_LDMSTM=ON",
+                    // DraStic emu opt: instant ARM9 div/sqrt — compute the result at
+                    // register-write and skip the scheduled completion event. The div
+                    // unit was the #1 scheduler flood (~1016 events/frame, 42% of all
+                    // events); removing it cuts the run_system dispatch bucket. +5%
+                    // cooled emu-only. ARM9-only units -> MP-safe. FPS-first relaxation.
+                    "-DLITEV_INSTANT_DIVSQRT=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

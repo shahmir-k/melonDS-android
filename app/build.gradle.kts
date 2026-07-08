@@ -120,6 +120,11 @@ android {
                     // emu thread was descheduled by unpinned render threads landing on
                     // core 3 (app 28fps vs 49fps headless for identical code).
                     "-DLITEV_PIN_RENDER=ON",
+                    // DraStic JIT emit quality: one-shot MRS-NZCV flag merge (3 host
+                    // instrs) vs melonDS's per-flag CSET+BFI (8 instrs) for full-flag
+                    // arithmetic S-ops -- the hottest ARM9 case. Bit-exact. Attacks the
+                    // arm9_exec bucket (the sole remaining gate to 60fps).
+                    "-DLITEV_JIT_FLAGMERGE=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

@@ -83,6 +83,11 @@ android {
                     // the 5-instr flag-table path). Bit-for-bit the same decision;
                     // frequent in ARM conditional-execution code. Headless bit-exact.
                     "-DLITEV_JIT_CONDFOLD=ON",
+                    // DraStic emu opt: LDM/STM block transfer via ldp/stp pairs + the
+                    // enabled MainRAM inline block-load tier (DraStic's arm64_load_blockN
+                    // stubs). Removes ~8k per-word SlowBlockTransfer9 helper calls/frame
+                    // off the emu thread. Bit-exact.
+                    "-DLITEV_JIT_LDMSTM=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

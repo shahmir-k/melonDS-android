@@ -105,6 +105,15 @@ android {
                     // MainRAM->ARM9Read32->ARM9Write32->IO-dispatch chain for display-list
                     // DMA, calling WriteToGXFIFO directly. DMA bucket -47%. Bit-exact.
                     "-DLITEV_DMA_GXFIFO_FAST=ON",
+                    // DraStic emu opt (BIGGEST single lever, +7.5%): aggressive idle-loop
+                    // detection. melonDS caught only 2.3 spin-loops/frame; Shrek's main
+                    // loop polls a timeout counter (cross-iteration register recurrence)
+                    // that DraStic fast-forwards. Relax the reject for genuine polls
+                    // (load + no address-recurrence; scans/copies/stores still rejected).
+                    // 17.7 idle-hits/frame, ARM9 exec -8%, framebuffer bit-identical on
+                    // Shrek. + cached timer deadline (exact). FPS-first timing change.
+                    "-DLITEV_IDLE_AGGRESSIVE=ON",
+                    "-DLITEV_TIMER_FAST=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

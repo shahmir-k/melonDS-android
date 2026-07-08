@@ -114,6 +114,12 @@ android {
                     // Shrek. + cached timer deadline (exact). FPS-first timing change.
                     "-DLITEV_IDLE_AGGRESSIVE=ON",
                     "-DLITEV_TIMER_FAST=ON",
+                    // DraStic thread affinity: pin the software render threads (async 2D,
+                    // 3D render, band workers) to cores {1,2}, off the emu's core 3 (pinned
+                    // in MelonInstance) and the UI/Mali core 0. Fixes the ~13ms/frame the
+                    // emu thread was descheduled by unpinned render threads landing on
+                    // core 3 (app 28fps vs 49fps headless for identical code).
+                    "-DLITEV_PIN_RENDER=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

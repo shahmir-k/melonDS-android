@@ -5,6 +5,17 @@ project(melonDS-android-frontend)
 add_compile_definitions(MELONDS_GL_HEADER=<GLES3/gl32.h>)
 add_compile_definitions(EGL_EGLEXT_PROTOTYPES)
 
+# R4 render-thread offload: the lib defines LITEV_RENDER_THREAD in its OWN scope
+# (add_compile_definitions in melonDS-android-lib/CMakeLists.txt), which does NOT
+# propagate up to this app target. Without it, ALL #ifdef LITEV_RENDER_THREAD
+# blocks in MelonInstance.cpp (startRenderThread, SetDeferredSubmit, the deferred
+# dispatch) compile out — the entire R4 offload runs inline on the emu thread and
+# the 3D raster never moves to the render thread. Mirror the flag onto the app
+# target so the frontend actually uses the offload the lib was built with.
+if (LITEV_RENDER_THREAD)
+    add_compile_definitions(LITEV_RENDER_THREAD=1)
+endif()
+
 set(BUILD_QT_SDL OFF)
 set(ENABLE_GDBSTUB OFF)
 

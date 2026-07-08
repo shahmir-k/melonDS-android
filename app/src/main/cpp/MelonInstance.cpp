@@ -540,7 +540,16 @@ u32 MelonInstance::runFrame()
         // bursts). Screenshot/rewind frames need a freshly-rendered frame for the
         // capture, so they run their submit (and the screenshot) on the render
         // thread too — but RunFrame itself is GL-free for them, so it stays here.
-        bool predictCapture = rtCapturePrev;
+        // With debug.litev.defercapture, capture frames record their display-capture
+        // GL into the deferred log (GLOp::Capture) and replay it on the render thread,
+        // so RunFrame is GL-FREE even for them — they no longer need the synchronous
+        // render-context RunFrame and CAN take the depth-1 overlap path (the 34->55fps
+        // win that was previously gated off for the whole Shrek race by the minimap
+        // capture). Fixes the incomplete defercapture: it engaged the render thread but
+        // this app-side gate still forced the no-overlap synchronous path.
+        static int _deferCap = -1;
+        if (_deferCap < 0) { char _b[8]={0}; _deferCap = (__system_property_get("debug.litev.defercapture", _b) > 0 && atoi(_b)!=0) ? 1 : 0; }
+        bool predictCapture = rtCapturePrev && !_deferCap;
         bool willScreenshot = rewindManager.ShouldCaptureState(frame + 1)
                               || screenshotRenderer->isScreenshotPending();
 
@@ -599,7 +608,10 @@ u32 MelonInstance::runFrame()
             bool deferred = nds->GPU.IsDeferredSubmit();
             rtCapturePrev = captured;
 
-            if (captured || willScreenshot)
+            // With defercapture, a captured frame's submit is fully deferred (the
+            // GLOp::Capture replays on the render thread), so it can ride the depth-1
+            // overlap packet like any non-capture frame instead of a blocking submit.
+            if ((captured && !_deferCap) || willScreenshot)
             {
                 // Dispatch the submit (and any screenshot) to the render context.
                 int sw = screenWidth, sh = screenHeight;
@@ -1454,6 +1466,11 @@ std::vector<RetroAchievements::RARuntimeAchievement> MelonInstance::getRuntimeAc
 void MelonInstance::updateRenderer()
 {
     Renderer newRenderer = currentConfiguration->renderer;
+#ifdef LITEV_RENDER_THREAD
+    LOG_INFO("LITEV_DEFER", "updateRenderer ENTER: RENDER_THREAD compiled IN, renderer=%d", (int)newRenderer);
+#else
+    LOG_INFO("LITEV_DEFER", "updateRenderer ENTER: RENDER_THREAD compiled OUT, renderer=%d", (int)newRenderer);
+#endif
     // DIAGNOSTIC: debug.litev.software=1 forces the software renderer (native, threaded)
     // to gate M6.6 feasibility — measure its raw speed vs the GL renderer's 3x cost.
     { char _sw[8] = {0}; if (__system_property_get("debug.litev.software", _sw) > 0 && atoi(_sw) != 0)
@@ -1553,6 +1570,8 @@ void MelonInstance::updateRenderer()
         if (__system_property_get("debug.litev.renderthread", litevbuf) > 0)
             deferOn = (atoi(litevbuf) != 0);
         nds->GPU.SetDeferredSubmit(deferOn);
+        LOG_INFO("LITEV_DEFER", "updateRenderer: newRenderer=%d deferOn=%d rtUse=%d IsDeferredSubmit=%d",
+                 (int)newRenderer, (int)deferOn, (int)rtUse, (int)nds->GPU.IsDeferredSubmit());
 
         // R4 RIR (recipe §8): route converted per-scanline GL sites through the
         // command log with immediate replay. Independent of deferred submit; used

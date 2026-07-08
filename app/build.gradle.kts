@@ -94,6 +94,13 @@ android {
                     // events); removing it cuts the run_system dispatch bucket. +5%
                     // cooled emu-only. ARM9-only units -> MP-safe. FPS-first relaxation.
                     "-DLITEV_INSTANT_DIVSQRT=ON",
+                    // DraStic emu opt: cut the next two scheduler-event floods.
+                    // SPU_BATCH (N=8): SPU::Mix generates 8 samples/event (547->68
+                    // events/frame, batched audio ring). COARSE_RTC: skip inert 32kHz
+                    // ticks when no RTC IRQ armed (548->0.5 events/frame). Together
+                    // -1026 sched events/frame off the emu critical path. FPS-first.
+                    "-DLITEV_SPU_BATCH=ON",
+                    "-DLITEV_COARSE_RTC=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

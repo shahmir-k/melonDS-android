@@ -101,6 +101,10 @@ android {
                     // -1026 sched events/frame off the emu critical path. FPS-first.
                     "-DLITEV_SPU_BATCH=ON",
                     "-DLITEV_COARSE_RTC=ON",
+                    // DraStic emu opt: GXFIFO geometry-DMA fast path — elide the per-word
+                    // MainRAM->ARM9Read32->ARM9Write32->IO-dispatch chain for display-list
+                    // DMA, calling WriteToGXFIFO directly. DMA bucket -47%. Bit-exact.
+                    "-DLITEV_DMA_GXFIFO_FAST=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",

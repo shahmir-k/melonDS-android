@@ -76,6 +76,12 @@ android {
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",
+                    // DraStic-model software 2D renderer: whole-frame deferred raster
+                    // banded across idle A55 cores (LITEV_SOFT2D_THREADED). Active only
+                    // when the Software renderer is selected (debug.litev.software=1);
+                    // headless bit-exact vs inline. Removes the GL driver + VRAM->GL +
+                    // geometry->GL render-prep from the emu thread when in software mode.
+                    "-DLITEV_SOFT2D_THREADED=ON",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
                     // Aggressive frameskip: compiled in and runtime-controllable
@@ -85,9 +91,13 @@ android {
                     // bound (~20ms emulation of a ~30ms frame), so skipping only
                     // rasterisation caps near ~45 FPS; exposed as a user lever.
                     "-DLITEV_AGGRESSIVE_SKIP=ON",
-                    // R3 LOCAL-ONLY (do not commit): enable the GL per-frame
-                    // call counters for the instrumented measurement APK.
-                    "-DLITEV_PROFILE=ON",
+                    // LITEV_PROFILE OFF for shipping: the core per-event ScopeTimer
+                    // instrumentation costs ~7.5% of the emu thread (clock_gettime,
+                    // ~1.8ms/frame, simpleperf-measured). The app's own LITEV_PROF
+                    // fps log is gated on the debug.litev.prof runtime prop, not this
+                    // compile flag, so it still works. Re-enable only for headless-
+                    // style per-event core decomposition.
+                    "-DLITEV_PROFILE=OFF",
                     // R3 LOCAL-ONLY (do not commit): enable the GL redundant
                     // bind/param shadow cache (the diet under test). Kept ON
                     // together with LITEV_PROFILE so the before/after LITEV_GL

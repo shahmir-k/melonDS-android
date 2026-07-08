@@ -1485,6 +1485,16 @@ void MelonInstance::updateRenderer()
             auto softwareRenderSettings = static_cast<SoftwareRenderSettings&>(*currentConfiguration->renderSettings);
             settings.ScaleFactor = 1;
             settings.Threaded = softwareRenderSettings.threadedRendering;
+            // Force software 3D threading ON — the banded/fast software 3D raster
+            // (LITEV_SOFT3D_BANDED/FAST) needs the render thread, and the app config
+            // field is often off, which would run the 3D raster INLINE on the emu
+            // thread. Override to ON; debug.litev.softthread=0 forces the inline path
+            // for A/B.
+            { char _tb[8] = {0};
+              if (__system_property_get("debug.litev.softthread", _tb) > 0)
+                  settings.Threaded = (atoi(_tb) != 0);
+              else
+                  settings.Threaded = true; }
             break;
         }
         case Renderer::OpenGl:

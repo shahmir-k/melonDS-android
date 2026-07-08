@@ -73,6 +73,16 @@ android {
                     "-DLITEV_JIT_FIXEDREG=ON",
                     "-DLITEV_JIT_GLOBALREG=ON",
                     "-DLITEV_MEM_SWTABLE=ON",
+                    // DraStic store-side fastmem: the sw pointer-table also fast-paths
+                    // JIT STORES to code-free MainRAM/DTCM (SMC decision folded into the
+                    // table delta). Bit-exact; cooled -3 to -4% ARM9 (unified with loads
+                    // ~-12-13%). Moves SlowWrite9/ARM9Write32 off the hot path.
+                    "-DLITEV_MEM_SWTABLE_STORE=ON",
+                    // DraStic emu opt: condition folding — evaluate guest ARM condition
+                    // codes natively on host NZCV (MSR NZCV + branch = 2 host instrs vs
+                    // the 5-instr flag-table path). Bit-for-bit the same decision;
+                    // frequent in ARM conditional-execution code. Headless bit-exact.
+                    "-DLITEV_JIT_CONDFOLD=ON",
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",
@@ -82,6 +92,11 @@ android {
                     // headless bit-exact vs inline. Removes the GL driver + VRAM->GL +
                     // geometry->GL render-prep from the emu thread when in software mode.
                     "-DLITEV_SOFT2D_THREADED=ON",
+                    // DraStic-style software 3D raster (only active in Software mode):
+                    // banded across cores + approximate fast path (subaffine interp,
+                    // hoisted RenderPixel invariants). FPS-first; not bit-exact.
+                    "-DLITEV_SOFT3D_BANDED=ON",
+                    "-DLITEV_SOFT3D_FAST=ON",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
                     // Aggressive frameskip: compiled in and runtime-controllable

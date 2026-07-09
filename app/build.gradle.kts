@@ -144,6 +144,10 @@ android {
                     // call (-14 indirect calls per raster loop). Bit-exact logic; cool-
                     // neutral but +1.8% sustained + more stable (energy win under throttle).
                     "-DLITEV_SOFT3D_HANDNEON=ON",
+                    // DraStic hand-NEON: 4-wide the per-pixel subaffine interpolation
+                    // ramp (z=int64x2, rgb/st=int32x4) — the last movable raster ALU cost.
+                    // +1.14% sustained, z bit-exact, render clean.
+                    "-DLITEV_SOFT3D_INTERPNEON=ON",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
                     // Aggressive frameskip: compiled in and runtime-controllable

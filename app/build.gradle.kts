@@ -144,6 +144,12 @@ android {
                     // NEON branchless sprite reject-scan in InterleaveSprites (3.5x denser reject path).
 
                     "-DLITEV_SOFT2D_OBJNEON=ON",
+
+
+                    // NEON DrawBG_3D compositor (BG0=3D layer, full-width): 2.8x fewer instrs, 0 branches.
+
+
+                    "-DLITEV_SOFT2D_BG3DNEON=ON",
                     // DraStic-style software 3D raster (only active in Software mode):
                     // banded across cores + approximate fast path (subaffine interp,
                     // hoisted RenderPixel invariants). FPS-first; not bit-exact.

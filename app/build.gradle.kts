@@ -140,6 +140,10 @@ android {
                     // can't auto-vectorize). 3x fewer instrs/px, bit-exact. Unblocks the 2D
                     // render worker (the frame-limiting stage). M3 threaded +59-81%.
                     "-DLITEV_SOFT2D_NEON=ON",
+
+                    // NEON branchless sprite reject-scan in InterleaveSprites (3.5x denser reject path).
+
+                    "-DLITEV_SOFT2D_OBJNEON=ON",
                     // DraStic-style software 3D raster (only active in Software mode):
                     // banded across cores + approximate fast path (subaffine interp,
                     // hoisted RenderPixel invariants). FPS-first; not bit-exact.

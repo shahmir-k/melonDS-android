@@ -134,6 +134,12 @@ android {
                     // headless bit-exact vs inline. Removes the GL driver + VRAM->GL +
                     // geometry->GL render-prep from the emu thread when in software mode.
                     "-DLITEV_SOFT2D_THREADED=ON",
+                    // DraStic-style NEON 2D composite (FUN_001494a4): branchless 4px/iter
+                    // NEON port of ColorComposite (the #1 non-raster hot loop — 256 out-of-
+                    // line 133-instr calls/scanline of blend/window/priority logic clang
+                    // can't auto-vectorize). 3x fewer instrs/px, bit-exact. Unblocks the 2D
+                    // render worker (the frame-limiting stage). M3 threaded +59-81%.
+                    "-DLITEV_SOFT2D_NEON=ON",
                     // DraStic-style software 3D raster (only active in Software mode):
                     // banded across cores + approximate fast path (subaffine interp,
                     // hoisted RenderPixel invariants). FPS-first; not bit-exact.

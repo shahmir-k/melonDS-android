@@ -39,7 +39,13 @@ android {
         }
         externalNativeBuild {
             cmake {
-                cppFlags("-std=c++17 -Wno-write-strings")
+                // -fno-emulated-tls: the app core is a SHARED .so, so the NDK's
+                // default emulated-TLS routes every thread_local access (notably
+                // NDS::Current on the ARM9 JIT slow-path helpers) through a slow
+                // __emutls_get_address PLT call. Native ELF TLS + the initial-exec
+                // model on NDS::Current (see NDS.h) makes it a direct TPIDR_EL0
+                // read. The device runs Android 14 (native TLS fully supported).
+                cppFlags("-std=c++17 -Wno-write-strings -fno-emulated-tls")
                 // The debug variant defaults CMAKE_BUILD_TYPE=Debug (-O0), which
                 // makes the emulator core ~6x too slow. Force the Debug-config
                 // native flags to release-grade optimisation (-O3 -DNDEBUG) so

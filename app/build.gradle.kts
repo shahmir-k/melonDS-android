@@ -79,6 +79,11 @@ android {
                     "-DLITEV_JIT_FIXEDREG=ON",
                     "-DLITEV_JIT_GLOBALREG=ON",
                     "-DLITEV_MEM_SWTABLE=ON",
+                    // DraStic-recompiler density match: emit the sw-table load probe as
+                    // a SHARED BL stub (one per size/sign) instead of inlining the ~7-instr
+                    // probe at every guest load site. Smaller JIT blocks -> less i-cache
+                    // pressure on the in-order A55. Bit-exact vs the inline probe.
+                    "-DLITEV_SWTABLE_STUB=ON",
                     // DraStic store-side fastmem: the sw pointer-table also fast-paths
                     // JIT STORES to code-free MainRAM/DTCM (SMC decision folded into the
                     // table delta). Bit-exact; cooled -3 to -4% ARM9 (unified with loads
@@ -134,6 +139,19 @@ android {
                     // DraStic #3: batched GXFIFO threaded-code interpreter. Headless
                     // A/B: gpu3d dispatch -6% (281->264 ns/cmd), bit-exact.
                     "-DLITEV_GXFIFO_THREADED=ON",
+                    // DraStic-style float reciprocal for the per-vertex geometry
+                    // divides in SubmitPolygon (viewport X/Y transform + Z depth).
+                    // Replaces integer sdiv (non-pipelined ~8-20cy) with one
+                    // frecpe+Newton reciprocal reused across the shared-denominator
+                    // divides. APPROXIMATE (~16-bit), FPS-first; feeds screen
+                    // coords/depth where that precision is visually fine.
+                    "-DLITEV_GEOM_RECIP=ON",
+                    // M6.11: integer-NEON GPU3D geometry math in SubmitVertex
+                    // (position + texcoord transforms, MatrixMult4x4). AArch64
+                    // active, scalar fallback elsewhere; byte-identical scalar
+                    // path when OFF. Attacks the ARM9 geometry bucket alongside
+                    // GEOM_RECIP.
+                    "-DLITEV_NEON_GEOMETRY=ON",
                     // DraStic-model software 2D renderer: whole-frame deferred raster
                     // banded across idle A55 cores (LITEV_SOFT2D_THREADED). Active only
                     // when the Software renderer is selected (debug.litev.software=1);

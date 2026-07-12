@@ -214,7 +214,18 @@ android {
                     // final-composite phase; runtime toggle debug.litev.renderthread
                     // (default ON when compiled). Set OFF here (or drop the line)
                     // for the flag-OFF parity baseline APK.
-                    "-DLITEV_RENDER_THREAD=ON"
+                    "-DLITEV_RENDER_THREAD=ON",
+                    // DIAGNOSTIC: software-render phase profiler. Names the render
+                    // threads and logs LITEV_SOFTPROF (emu barrier/snapshot, 3D
+                    // clear/raster/final + per-band, 2D wall + GetLine block, whole
+                    // render critical path) every 60 frames.
+                    "-DLITEV_SOFTPROF=ON",
+                    // THE 40fps wall: the soft 3D raster needs ~26ms but stock melonDS
+                    // gives it only the ~15ms between VCount215 and the next VBlank,
+                    // where the emu hard-barriers on it (measured: emu stalls 9.4ms
+                    // EVERY frame at Finish3DRendering). Let it span into the next
+                    // frame; barrier only when VBlank actually mutates render state.
+                    "-DLITEV_SOFT3D_ASYNC=ON"
                     // G) geometry-transform offload — temporarily OFF: same-thread
                     // G2 gives ~0 FPS and garbled the device render under the R4
                     // render thread (VCount-215 deferred-raster vs VBlank-flush

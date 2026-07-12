@@ -225,7 +225,12 @@ android {
                     // where the emu hard-barriers on it (measured: emu stalls 9.4ms
                     // EVERY frame at Finish3DRendering). Let it span into the next
                     // frame; barrier only when VBlank actually mutates render state.
-                    "-DLITEV_SOFT3D_ASYNC=ON"
+                    "-DLITEV_SOFT3D_ASYNC=ON",
+                    // Raster may use all 4 cores; emu (nice -10) preempts. Harvests core-3 idle.
+                    "-DLITEV_RENDER_4CORE=OFF",
+                    // Stream 3D scanlines to the 2D as bands produce them (2D was blocked 8.7ms/frame
+                    // behind the full raster barrier). Bit-exact: same neighbour rows.
+                    "-DLITEV_SOFT3D_STREAM=OFF"
                     // G) geometry-transform offload — temporarily OFF: same-thread
                     // G2 gives ~0 FPS and garbled the device render under the R4
                     // render thread (VCount-215 deferred-raster vs VBlank-flush

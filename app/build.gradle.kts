@@ -78,17 +78,17 @@ android {
                     // frees the MemBase reg via the sw-table.
                     "-DLITEV_JIT_FIXEDREG=ON",
                     "-DLITEV_JIT_GLOBALREG=ON",
-                    "-DLITEV_MEM_SWTABLE=ON",
+                    "-DLITEV_MEM_SWTABLE=OFF",
                     // DraStic-recompiler density match: emit the sw-table load probe as
                     // a SHARED BL stub (one per size/sign) instead of inlining the ~7-instr
                     // probe at every guest load site. Smaller JIT blocks -> less i-cache
                     // pressure on the in-order A55. Bit-exact vs the inline probe.
-                    "-DLITEV_SWTABLE_STUB=ON",
+                    "-DLITEV_SWTABLE_STUB=OFF",
                     // DraStic store-side fastmem: the sw pointer-table also fast-paths
                     // JIT STORES to code-free MainRAM/DTCM (SMC decision folded into the
                     // table delta). Bit-exact; cooled -3 to -4% ARM9 (unified with loads
                     // ~-12-13%). Moves SlowWrite9/ARM9Write32 off the hot path.
-                    "-DLITEV_MEM_SWTABLE_STORE=ON",
+                    "-DLITEV_MEM_SWTABLE_STORE=OFF",
                     // DraStic emu opt: condition folding — evaluate guest ARM condition
                     // codes natively on host NZCV (MSR NZCV + branch = 2 host instrs vs
                     // the 5-instr flag-table path). Bit-for-bit the same decision;

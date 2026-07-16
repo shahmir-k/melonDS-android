@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <time.h>
+#include <sched.h>
+#include <sys/system_properties.h>
 #include <MelonDS.h>
 #include <MelonDSAudio.h>
 #include <RomGbaSlotConfig.h>
@@ -257,6 +259,28 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlong deadlineNs, jobject renderFrameCallback)
 {
+    // liteDS: this JNI runs ON the Kotlin Choreographer "FrameRenderThread". It is
+    // NOT pinned by LITEV_PIN_RENDER (that only covers the lib's software raster/2D
+    // workers), so the scheduler leaves it on {0,1,2,3} and it lands on the emu's
+    // dedicated core 3 (~1.85ms/frame measured, ~8.7% of core 3) -- runqueue-wait that
+    // deschedules the emu. Pin it to {0,1,2}, off the emu core. Output-safe (affinity
+    // only). Once, on the first present. Disable for A/B with debug.litev.pinpresent=0.
+    {
+        static bool _pinned = false;
+        if (!_pinned)
+        {
+            _pinned = true;
+            char _pb[8] = {0};
+            bool doPin = !(__system_property_get("debug.litev.pinpresent", _pb) > 0 && atoi(_pb) == 0);
+            if (doPin)
+            {
+                cpu_set_t set; CPU_ZERO(&set);
+                CPU_SET(0, &set); CPU_SET(1, &set); CPU_SET(2, &set);
+                sched_setaffinity(0, sizeof(set), &set);
+            }
+        }
+    }
+
     jclass presentFrameWrapperClass = env->GetObjectClass(renderFrameCallback);
     jmethodID renderFrameMethodId = env->GetMethodID(presentFrameWrapperClass, "renderFrame", "(ZI)V");
 

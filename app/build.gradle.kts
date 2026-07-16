@@ -69,6 +69,13 @@ android {
                     "-DLITEV_LINK_UNCOND=ON",
                     "-DLITEV_LINK_COND=ON",
                     "-DLITEV_LINK_FALLTHROUGH=ON",
+                    // Commit-stub: shared per-CPU per-hop commit for linkable exits
+                    // (block-tail L1I footprint cut). Default OFF: next A/B lever.
+                    "-DLITEV_JIT_COMMIT_STUB=OFF",
+                    // Cycle down-counter: defer the per-hop 64-bit NDS Timestamp RMW
+                    // into a slice register (drops the r6 pin). Bit-exact / MP-safe.
+                    // Default OFF: A/B lever, tested with COMMIT_STUB.
+                    "-DLITEV_JIT_CYCLE_DOWNCOUNTER=OFF",
                     "-DLITEV_EVENT_SLICES=ON",
                     "-DLITEV_MEM_DTCM_BLOCK=ON",
                     "-DLITEV_MEM_MAINRAM_LOAD=ON",
@@ -188,6 +195,38 @@ android {
                     // ramp (z=int64x2, rgb/st=int32x4) — the last movable raster ALU cost.
                     // +1.14% sustained, z bit-exact, render clean.
                     "-DLITEV_SOFT3D_INTERPNEON=ON",
+                    // Per-polygon edge-gradient raster (A/B alternative to EDGENEON,
+                    // mutually exclusive; build one at a time). Replaces the per-scanline
+                    // edge Interpolate for W + colour/texcoord with an incremental sub-affine
+                    // DDA along Y (anchor every SA_SUB_Y=8 rows, ADD between). APPROXIMATE;
+                    // Z stays exact. Default OFF pending device A/B.
+                    "-DLITEV_SOFT3D_GRADIENT=OFF",
+                    // EDGENEON: A/B alternative to GRADIENT (mutually exclusive; build one
+                    // at a time). NEON-vectorizes the EXACT per-scanline EDGE interpolation
+                    // (the perspective mul/shift that stalls the in-order A55) that
+                    // INTERPNEON left scalar. Byte-identical to scalar. Default OFF.
+                    "-DLITEV_SOFT3D_EDGENEON=OFF",
+                    // Branchless per-pixel depth test: the #1 RPS branch-miss
+                    // (if(!DTEST)continue) becomes NEON-batch survivor compaction
+                    // (nb += pass), no extra shade. EXACT (byte-identical framebuffer).
+                    // Stacks with the other levers. Default OFF pending device gate/A-B.
+                    "-DLITEV_SOFT3D_DTEST_BRANCHLESS=OFF",
+                    // DraStic cache-resident raster tiles: rasterize each band into a small
+                    // L2/L1-resident 16-line tile (both AA slots) then copy out to the full
+                    // framebuffer, instead of RMW-ing the ~1.2MB full buffers (DRAM-bound).
+                    // Final pass unchanged on the full fb after copy-out. OUTPUT byte-
+                    // identical (fbhash-gateable). THE DraStic locality lever. Default OFF.
+                    "-DLITEV_SOFT3D_BANDTILE=OFF",
+                    "-DLITEV_SOFT3D_COMPACTVTX=OFF",
+                    "-DLITEV_SOFT3D_UNDERCOLO=OFF",
+                    "-DLITEV_SOFT3D_TEX1B=OFF",
+                    "-DLITEV_SOFT3D_AAFOLD=OFF",
+                    "-DLITEV_SOFT3D_EDGEHOIST=OFF",
+                    // Depth-2 async pipeline scaffolding (steps 1+2): parity-bank the 3D
+                    // planes + 2D snapshots so a depth-2 flip (step 3) can remove the ~4.5ms
+                    // VBlank barrier bubble (~+10fps). Still depth-1 -> OUTPUT byte-identical
+                    // (fbhash-gateable). Mutually exclusive with BANDTILE. Default OFF.
+                    "-DLITEV_SOFT3D_PIPELINE2=OFF",
                     "-DLITEV_NEON_RENDERER=ON",
                     "-DLITEV_ARM7_IDLE=OFF",
                     // Aggressive frameskip: compiled in and runtime-controllable
@@ -230,7 +269,14 @@ android {
                     "-DLITEV_RENDER_4CORE=OFF",
                     // Stream 3D scanlines to the 2D as bands produce them (2D was blocked 8.7ms/frame
                     // behind the full raster barrier). Bit-exact: same neighbour rows.
-                    "-DLITEV_SOFT3D_STREAM=OFF"
+                    "-DLITEV_SOFT3D_STREAM=OFF",
+                    // Overlap the 2D composite with the 3D raster, consumer-driven: the
+                    // async 2D thread's GetLine runs the final pass + returns each line as
+                    // its rows are rastered (no producer-side releaser -> none of STREAM's
+                    // core-stealing spin). 2D thread pinned to emu core 3; bands stay
+                    // {0,1,2}. Double-buffered row flags (parity) for the 2 in-flight
+                    // frames. Bit-exact: same neighbour rows, no cross-row final-pass dep.
+                    "-DLITEV_SOFT3D_OVERLAP=OFF"
                     // G) geometry-transform offload — temporarily OFF: same-thread
                     // G2 gives ~0 FPS and garbled the device render under the R4
                     // render thread (VCount-215 deferred-raster vs VBlank-flush

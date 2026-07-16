@@ -113,6 +113,18 @@ namespace {
         LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
                  frameId, (unsigned long long)htop, (unsigned long long)hbot);
     }
+    // SOFTWARE-renderer FBHASH: GetFramebuffers returns RAM pointers to the final
+    // composited 256x192 RGBA output (top+bottom), so hash them directly on the CPU --
+    // the GL path above only covers accelerated renderers (it reads a GL texture). Same
+    // log format so the OFF-vs-ON diff harness is identical for software-render changes
+    // (e.g. LITEV_SOFT3D_OVERLAP). Enabled by debug.litev.fbhash, same as the GL gate.
+    void litevFbHashRam(const void* top, const void* bottom, int frameId) {
+        const size_t sz = (size_t)256 * 192 * 4;
+        uint64_t htop = top    ? litevFnv1a((const uint8_t*)top,    sz) : 0;
+        uint64_t hbot = bottom ? litevFnv1a((const uint8_t*)bottom, sz) : 0;
+        LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
+                 frameId, (unsigned long long)htop, (unsigned long long)hbot);
+    }
     // GPU TIME_ELAPSED query (GL_EXT_disjoint_timer_query), deferred read.
     typedef void (GL_APIENTRYP LITEV_PFNGENQUERIES)(GLsizei, GLuint*);
     typedef void (GL_APIENTRYP LITEV_PFNBEGINQUERY)(GLenum, GLuint);
@@ -767,6 +779,15 @@ u32 MelonInstance::runFrame()
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbTop);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192 + 2, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbBottom);
             glBindTexture(GL_TEXTURE_2D, 0);
+
+            // FBHASH gate for the SOFTWARE renderer (hash the RAM composite directly).
+            {
+                static int checkCtr = 0;
+                if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); }
+                int fid = litevFbHashFrame++;
+                if (litevFbHashEnabled == 1)
+                    litevFbHashRam(fbTop, fbBottom, fid);
+            }
         }
     }
     else if (fbTop)
@@ -1183,6 +1204,15 @@ Frame* MelonInstance::glSubmitPresent(int bank, bool deferred, bool sleeping, in
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbTop);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192 + 2, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbBottom);
             glBindTexture(GL_TEXTURE_2D, 0);
+
+            // FBHASH gate for the SOFTWARE renderer (hash the RAM composite directly).
+            {
+                static int checkCtr = 0;
+                if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); }
+                int fid = litevFbHashFrame++;
+                if (litevFbHashEnabled == 1)
+                    litevFbHashRam(fbTop, fbBottom, fid);
+            }
         }
     }
     else if (fbTop)

@@ -36,6 +36,9 @@ public:
     void start();
     void reset();
     melonDS::u32 runFrame();
+#ifdef LITEV_AUTO_FRAMESKIP
+    void setFrameskipTarget(int target);
+#endif
     void stop();
 
     void touchScreen(u16 x, u16 y);

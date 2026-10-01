@@ -474,6 +474,16 @@ void MelonInstance::reset()
     nds->Start();
 }
 
+#ifdef LITEV_AUTO_FRAMESKIP
+// Called from the emu loop (same thread as runFrame) by the adaptive frameskip
+// controller. A later change of debug.litev.frameskip still overrides it.
+void MelonInstance::setFrameskipTarget(int target)
+{
+    if (nds)
+        nds->GPU.SetFrameskipTarget(target);
+}
+#endif
+
 u32 MelonInstance::runFrame()
 {
     // Pin the emulator thread to core 3, once. The render workers (lib,

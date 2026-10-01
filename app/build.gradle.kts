@@ -165,6 +165,11 @@ android {
                     // Frameskip lever: compiled in, inert at the default target 0;
                     // driven at runtime by debug.litev.frameskip (MelonInstance).
                     "-DLITEV_AGGRESSIVE_SKIP=ON",
+                    // Adaptive frameskip behind the "Auto frameskip" setting (default off):
+                    // holds real-time pace instead of slow motion when a scene can't hit
+                    // 60 fps. UX only; keep the setting OFF when measuring performance.
+                    // Ignored by lib commits that predate the option.
+                    "-DLITEV_AUTO_FRAMESKIP=ON",
                     // Diagnostic render-phase profiler: names the render threads and logs a
                     // LITEV_SOFTPROF phase line every 60 frames (debug.litev.softprof=1
                     // adds a costly colour-effect census; keep it 0 when measuring).

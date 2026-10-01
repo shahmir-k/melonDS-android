@@ -126,6 +126,13 @@ namespace MelonDSAndroid
         currentConfiguration = sharedConfig;
     }
 
+#ifdef LITEV_AUTO_FRAMESKIP
+    void setFrameskip(int target) {
+        if (instance)
+            instance->setFrameskipTarget(target);
+    }
+#endif
+
     int loadRom(std::string romPath, std::string sramPath, RomGbaSlotConfig* gbaSlotConfig)
     {
         if (!instance->loadRom(std::move(romPath), std::move(sramPath)))

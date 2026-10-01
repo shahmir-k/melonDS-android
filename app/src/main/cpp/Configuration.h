@@ -72,6 +72,7 @@ typedef struct
     char* dsiNandPath;
     char* internalFilesDir;
     float fastForwardSpeedMultiplier;
+    bool autoFrameskipEnabled;
     bool showBootScreen;
     bool useJit;
     int consoleType;

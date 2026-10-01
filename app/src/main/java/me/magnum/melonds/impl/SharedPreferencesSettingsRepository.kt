@@ -167,7 +167,12 @@ class SharedPreferencesSettingsRepository(
             micSource = getMicSource(),
             firmwareConfiguration = getFirmwareConfiguration(),
             rendererConfiguration = renderConfigurationFlow.first(),
+            autoFrameskipEnabled = isAutoFrameskipEnabled(),
         )
+    }
+
+    private fun isAutoFrameskipEnabled(): Boolean {
+        return preferences.getBoolean("enable_auto_frameskip", false)
     }
 
     override fun getTheme(): Theme {

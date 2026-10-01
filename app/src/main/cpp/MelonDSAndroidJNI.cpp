@@ -51,6 +51,15 @@ int targetFps;
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
+#ifdef LITEV_AUTO_FRAMESKIP
+// Adaptive frameskip (user setting) that holds real-time speed instead of slow-mo when a
+// scene can't sustain 60fps. Distinct from fast-forward; only active when FF is OFF.
+bool autoFrameskipEnabled = false;
+static int    autoFsSkip     = 0;    // current adaptive raster-skip level (0..3)
+static double autoFsEmaMs    = 0.0;  // FAST EMA of per-frame wall time (attack signal)
+static int    autoFsCooldown = 0;    // frames to wait after a change (let it settle)
+static int    autoFsHeadroom = 0;    // consecutive low-load frames (slow-release counter)
+#endif
 
 jobject globalCameraManager;
 MelonDSAndroidCameraHandler* androidCameraHandler;
@@ -66,6 +75,11 @@ Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jo
 {
     MelonDSAndroid::EmulatorConfiguration finalEmulatorConfiguration = MelonDSAndroidConfiguration::buildEmulatorConfiguration(env, emulatorConfiguration);
     fastForwardSpeedMultiplier = finalEmulatorConfiguration.fastForwardSpeedMultiplier;
+#ifdef LITEV_AUTO_FRAMESKIP
+    autoFrameskipEnabled = finalEmulatorConfiguration.autoFrameskipEnabled;
+    // New emulator session (the emu thread is not running yet): start from no skip.
+    autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
+#endif
 
     globalCameraManager = env->NewGlobalRef(cameraManager);
 
@@ -571,6 +585,9 @@ Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jo
     MelonDSAndroid::EmulatorConfiguration newConfiguration = MelonDSAndroidConfiguration::buildEmulatorConfiguration(env, emulatorConfiguration);
 
     fastForwardSpeedMultiplier = newConfiguration.fastForwardSpeedMultiplier;
+#ifdef LITEV_AUTO_FRAMESKIP
+    autoFrameskipEnabled = newConfiguration.autoFrameskipEnabled;
+#endif
 
     MelonDSAndroid::updateEmulatorConfiguration(std::make_unique<MelonDSAndroid::EmulatorConfiguration>(std::move(newConfiguration)));
 
@@ -710,6 +727,52 @@ void* emulate(void*)
             frameLimitError = 0;
             lastTick = getCurrentMillis();
         }
+
+#ifdef LITEV_AUTO_FRAMESKIP
+        // Adaptive frameskip to hold REAL-TIME speed, evaluated EVERY frame with a
+        // FAST-ATTACK / SLOW-RELEASE controller so a sudden heavy scene doesn't sit in
+        // slow-motion waiting for a slow average to catch up.
+        //   `delay` = this frame's wall work time (pre-sleep); frameTimeStep = the 60fps
+        //   budget (~16.67ms). The EMA (alpha 0.3) reacts in ~3 frames.
+        //   ATTACK (fast): while behind (EMA > 1.15x budget), raise the skip level now
+        //   (jump 2 if badly behind, >=1.9x), then a 5-frame cooldown lets it settle
+        //   before the next step -> reaches the needed level in ~10 frames, not ~60.
+        //   RELEASE (slow): only lower the skip after ~120 consecutive low-load frames,
+        //   so it doesn't oscillate back into slow-mo at the threshold.
+        // Only runs when fast-forward is off. All frameskip changes happen here, on the
+        // emu thread, so they never race runFrame.
+        if (autoFrameskipEnabled && !isFastForwardEnabled) {
+            autoFsEmaMs = (autoFsEmaMs <= 0.0) ? delay : (autoFsEmaMs * 0.7 + delay * 0.3);
+            if (autoFsCooldown > 0) autoFsCooldown--;
+
+            if (autoFsEmaMs > frameTimeStep * 1.15) {
+                autoFsHeadroom = 0;                        // behind -> attack
+                if (autoFsCooldown == 0 && autoFsSkip < 3) {
+                    int step = (autoFsEmaMs > frameTimeStep * 1.9) ? 2 : 1;
+                    autoFsSkip = (autoFsSkip + step > 3) ? 3 : autoFsSkip + step;
+                    MelonDSAndroid::setFrameskip(autoFsSkip);
+                    LOG_INFO("LITEV_AUTOFS", "skip level %d (ema %.2f ms)", autoFsSkip, autoFsEmaMs);
+                    autoFsCooldown = 5;
+                }
+            } else if (autoFsEmaMs < frameTimeStep * 0.70) {
+                if (++autoFsHeadroom >= 120 && autoFsSkip > 0) {   // sustained headroom -> release
+                    autoFsSkip--;
+                    MelonDSAndroid::setFrameskip(autoFsSkip);
+                    LOG_INFO("LITEV_AUTOFS", "skip level %d (ema %.2f ms)", autoFsSkip, autoFsEmaMs);
+                    autoFsHeadroom = 0;
+                    autoFsCooldown = 5;
+                }
+            } else {
+                autoFsHeadroom = 0;                        // stable band -> hold
+            }
+        } else if (autoFsSkip != 0) {
+            // Setting turned off, or fast-forward engaged, while a skip was applied ->
+            // clear it; the controller restarts from 0 when it next runs.
+            autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
+            MelonDSAndroid::setFrameskip(0);
+            LOG_INFO("LITEV_AUTOFS", "skip level 0 (inactive)");
+        }
+#endif
 
         // Read the property once per 60-frame window.  `work` is the actual
         // MelonDSAndroid::loop duration; `requestedSleep` vs `actualSleep`

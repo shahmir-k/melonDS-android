@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <time.h>
+#include <sched.h>
+#include <sys/system_properties.h>
 #include <MelonDS.h>
 #include <MelonDSAudio.h>
 #include <RomGbaSlotConfig.h>
@@ -257,6 +259,28 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlong deadlineNs, jobject renderFrameCallback)
 {
+    // This runs on the Kotlin "FrameRenderThread". Left unpinned, the scheduler
+    // puts it on the emulator's core 3 as well (~1.85 ms/frame measured), where
+    // its run-queue time deschedules the emulator. Pin it to cores {0,1,2} once,
+    // on the first present. Affinity only, no output change. Escape hatch for
+    // A/B: debug.litev.pinpresent=0.
+    {
+        static bool pinned = false;
+        if (!pinned)
+        {
+            pinned = true;
+            char prop[8] = {0};
+            bool doPin = !(__system_property_get("debug.litev.pinpresent", prop) > 0 && atoi(prop) == 0);
+            if (doPin)
+            {
+                cpu_set_t set;
+                CPU_ZERO(&set);
+                CPU_SET(0, &set); CPU_SET(1, &set); CPU_SET(2, &set);
+                sched_setaffinity(0, sizeof(set), &set);
+            }
+        }
+    }
+
     jclass presentFrameWrapperClass = env->GetObjectClass(renderFrameCallback);
     jmethodID renderFrameMethodId = env->GetMethodID(presentFrameWrapperClass, "renderFrame", "(ZI)V");
 

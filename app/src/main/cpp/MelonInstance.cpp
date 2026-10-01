@@ -1,5 +1,6 @@
 #include <ctime>
 #include <chrono>
+#include <sched.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <filesystem>
@@ -317,6 +318,20 @@ void MelonInstance::reset()
 
 u32 MelonInstance::runFrame()
 {
+    // Pin the emulator thread to core 3, once. The render workers (lib,
+    // LITEV_PIN_RENDER) and the frame-present thread (presentFrame) are kept on
+    // cores 0-2, so the emulator owns a core instead of being time-sliced with
+    // them. runFrame always runs on the emulator thread.
+    static bool emuThreadPinned = false;
+    if (!emuThreadPinned)
+    {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(3, &set);
+        sched_setaffinity(0, sizeof(set), &set);
+        emuThreadPinned = true;
+    }
+
     if (isRenderConfigurationDirty)
     {
         updateRenderer();

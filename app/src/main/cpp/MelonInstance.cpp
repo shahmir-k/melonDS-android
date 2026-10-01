@@ -340,6 +340,29 @@ u32 MelonInstance::runFrame()
         isRenderConfigurationDirty = false;
     }
 
+#ifdef LITEV_AGGRESSIVE_SKIP
+    // Runtime frameskip target (skips 2D/3D rasterisation only; CPU, DMA and
+    // timers keep running, so gameplay and audio stay full speed). Default 0 =
+    // no skip. Polled every 30 frames from: adb shell setprop debug.litev.frameskip <n>
+    {
+        static int cachedSkip = -1;
+        static int checkCounter = 0;
+        if (--checkCounter <= 0)
+        {
+            checkCounter = 30;
+            char buf[8] = {0};
+            int target = 0;
+            if (__system_property_get("debug.litev.frameskip", buf) > 0)
+                target = atoi(buf);
+            if (target != cachedSkip)
+            {
+                cachedSkip = target;
+                nds->GPU.SetFrameskipTarget(target);
+            }
+        }
+    }
+#endif
+
     int screenWidth;
     int screenHeight;
     if (currentRenderer == Renderer::OpenGl)

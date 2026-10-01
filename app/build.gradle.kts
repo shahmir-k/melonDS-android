@@ -162,6 +162,9 @@ android {
                     // Staged deep prefetch in BuildFrameGeom (A; runtime prop
                     // debug.litev.geoprefetch).
                     "-DLITEV_GEOM_PREFETCH2=ON",
+                    // Frameskip lever: compiled in, inert at the default target 0;
+                    // driven at runtime by debug.litev.frameskip (MelonInstance).
+                    "-DLITEV_AGGRESSIVE_SKIP=ON",
                     // Diagnostic render-phase profiler: names the render threads and logs a
                     // LITEV_SOFTPROF phase line every 60 frames (debug.litev.softprof=1
                     // adds a costly colour-effect census; keep it 0 when measuring).

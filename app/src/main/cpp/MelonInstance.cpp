@@ -1,6 +1,8 @@
 #include <ctime>
 #include <chrono>
+#include <cstdlib>
 #include <sched.h>
+#include <sys/system_properties.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <filesystem>
@@ -670,15 +672,37 @@ std::vector<RetroAchievements::RARuntimeAchievement> MelonInstance::getRuntimeAc
 void MelonInstance::updateRenderer()
 {
     Renderer newRenderer = currentConfiguration->renderer;
+    // Use the software renderer regardless of the configured one: on the target
+    // (RK3566, Mali-G52) the GL renderer is GPU-bound around 40 fps, while the
+    // threaded software pipeline is the fast path. Doing this in code (not via a
+    // prop set after boot) keeps it across reboots. debug.litev.software=0
+    // restores the configured renderer (GL/Compute) for A/B. Renderer choice is
+    // downstream of guest state, so emulation is unaffected.
+    {
+        char prop[8] = {0};
+        bool useSoftware = __system_property_get("debug.litev.software", prop) > 0 ? atoi(prop) != 0 : true;
+        if (useSoftware)
+            newRenderer = Renderer::Software;
+    }
 
     RendererSettings settings {};
     switch (newRenderer)
     {
         case Renderer::Software:
         {
-            auto softwareRenderSettings = static_cast<SoftwareRenderSettings&>(*currentConfiguration->renderSettings);
             settings.ScaleFactor = 1;
-            settings.Threaded = softwareRenderSettings.threadedRendering;
+            // Always run the software 3D renderer threaded, ignoring the
+            // "threaded rendering" setting: with it off SoftRenderer3D rasterises
+            // inline on the emulator thread, and LITEV_SOFT3D_ASYNC needs its
+            // render thread. The tile renderer (LITEV_SOFT3D_DRASTIC) has its own
+            // threads and ignores this. debug.litev.softthread=0 forces the inline
+            // path for A/B. (The config's renderSettings is not read here: when
+            // software is forced over a GL config it holds OpenGlRenderSettings.)
+            char prop[8] = {0};
+            if (__system_property_get("debug.litev.softthread", prop) > 0)
+                settings.Threaded = atoi(prop) != 0;
+            else
+                settings.Threaded = true;
             break;
         }
         case Renderer::OpenGl:

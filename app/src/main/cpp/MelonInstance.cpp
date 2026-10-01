@@ -1,6 +1,9 @@
 #include <ctime>
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
+#include <cstdint>
+#include <vector>
 #include <sched.h>
 #include <sys/system_properties.h>
 #include <EGL/egl.h>
@@ -22,6 +25,159 @@
 #include "net/Net_Slirp.h"
 #include "Platform.h"
 #include "SDCardArgsBuilder.h"
+#include "MelonLog.h"
+
+// ---- liteDS frame-phase profiler + correctness gates (runtime-gated by props) ----
+// Enable with:  adb shell setprop debug.litev.prof 1
+// Emits a per-60-frame LITEV_PROF logcat line splitting the emulator frame into
+// present-fence wait / RunFrame / blit / other, plus a GPU TIME_ELAPSED reading
+// on GL renderers. Off by default; then the only cost is a few clock reads per
+// frame and a prop read every 60 frames.
+#include <GLES2/gl2ext.h>
+namespace {
+    // Only gates diagnostic logging; atomic so a reader on another thread is not
+    // a data race.
+    std::atomic_bool litevProfEnabled{false};
+    void litevRefreshProfEnabled() {
+        char buf[8] = {0};
+        litevProfEnabled.store(__system_property_get("debug.litev.prof", buf) > 0 && atoi(buf) != 0,
+                               std::memory_order_relaxed);
+    }
+    inline double litevNowMs() {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+    }
+
+    // ===================== FBHASH correctness gate =====================
+    // Per-frame framebuffer checksum, logged as LITEV_FBHASH. Enable with:
+    //   adb shell setprop debug.litev.fbhash 1
+    // Hashes the final composited output of each frame (top + bottom screen), read
+    // directly from the renderer, so it works where screencap of the secure
+    // hardware-overlay surface does not. Two runs of the same savestate (e.g. flag
+    // OFF vs ON) are compared frame by frame; any divergence, even sub-visible,
+    // shows up as a hash mismatch.
+    int litevFbHashEnabled = -1;
+    void litevRefreshFbHashEnabled() {
+        char buf[8] = {0};
+        litevFbHashEnabled = (__system_property_get("debug.litev.fbhash", buf) > 0 && atoi(buf) != 0) ? 1 : 0;
+    }
+    // Post-savestate-load frame index. Reset to 0 at each loadState so two runs
+    // (each a fresh load of the same savestate) are compared by identical
+    // post-load frame numbers. Also queried by setDateTime to decide whether to
+    // pin the RTC for reload determinism.
+    int  litevFbHashFrame = 0;
+    void litevFbHashResetFrame() { litevFbHashFrame = 0; }
+    bool litevFbHashOn() {
+        if (litevFbHashEnabled < 0) litevRefreshFbHashEnabled();
+        return litevFbHashEnabled == 1;
+    }
+    inline uint64_t litevFnv1a(const uint8_t* p, size_t n) {
+        uint64_t h = 1469598103934665603ULL;      // FNV offset basis
+        for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628257ULL; }
+        return h;
+    }
+    // GL renderers: read+hash both layers of the composited output array texture
+    // on the current (emulator) GL context. Restores the prior read FBO.
+    void litevFbHash(GLuint arrayTex, int w, int perScreenH, int frameId) {
+        static GLuint fbo = 0;
+        if (!fbo) glGenFramebuffers(1, &fbo);
+        GLint prevRead = 0;
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        size_t sz = (size_t)w * (size_t)perScreenH * 4;
+        static std::vector<uint8_t> buf;
+        if (buf.size() < sz) buf.resize(sz);
+        uint64_t htop = 0, hbot = 0;
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arrayTex, 0, 0);
+        if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            glReadPixels(0, 0, w, perScreenH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+            htop = litevFnv1a(buf.data(), sz);
+        }
+        glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arrayTex, 0, 1);
+        if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            glReadPixels(0, 0, w, perScreenH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+            hbot = litevFnv1a(buf.data(), sz);
+        }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
+        LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
+                 frameId, (unsigned long long)htop, (unsigned long long)hbot);
+    }
+    // SOFTWARE-renderer FBHASH: GetFramebuffers returns RAM pointers to the final
+    // composited 256x192 RGBA output (top+bottom), so hash them directly on the CPU --
+    // the GL path above only covers accelerated renderers (it reads a GL texture). Same
+    // log format, so the same OFF-vs-ON diff harness covers software-render changes.
+    void litevFbHashRam(const void* top, const void* bottom, int frameId) {
+        const size_t sz = (size_t)256 * 192 * 4;
+        uint64_t htop = top    ? litevFnv1a((const uint8_t*)top,    sz) : 0;
+        uint64_t hbot = bottom ? litevFnv1a((const uint8_t*)bottom, sz) : 0;
+        LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
+                 frameId, (unsigned long long)htop, (unsigned long long)hbot);
+    }
+    // Bar-scan (debug.litev.barscan): objective black-bar detector for the TOP software framebuffer
+    // (256x192 RGBA). A horizontal black bar = a run of fully-black rows, so we log per frame the
+    // count of fully-black rows and the longest consecutive run. On a static scene the baseline is
+    // steady; a flickering bar shows as a transient spike in maxrun/blackrows. Also logs blackpix so
+    // the pixel-count-jump analysis works directly on the log stream (no secure-display capture).
+    int litevBarScanEnabled = -1;
+    void litevRefreshBarScan() {
+        char buf[8] = {0};
+        litevBarScanEnabled = (__system_property_get("debug.litev.barscan", buf) > 0 && atoi(buf) != 0) ? 1 : 0;
+    }
+    void litevBarScan(const void* top, int frameId) {
+        if (!top) return;
+        const uint8_t* p = (const uint8_t*)top;   // RGBA 256x192, row-major
+        // A "dark row" is >=70% pixels with max(R,G,B) < 32 (catches dark, not just pure-black, and
+        // partial-width bars). A horizontal bar = a run of dark rows.
+        int darkRows = 0, maxRun = 0, run = 0;
+        long darkPix = 0;
+        for (int y = 0; y < 192; y++) {
+            int darkInRow = 0;
+            for (int x = 0; x < 256; x++) {
+                const uint8_t* px = p + (((size_t)y * 256 + x) * 4);
+                int mx = px[0]; if (px[1] > mx) mx = px[1]; if (px[2] > mx) mx = px[2];
+                if (mx < 32) { darkInRow++; darkPix++; }
+            }
+            if (darkInRow >= 179) { darkRows++; if (++run > maxRun) maxRun = run; }
+            else run = 0;
+        }
+        LOG_INFO("LITEV_BARSCAN", "frame=%d darkrows=%d maxrun=%d darkpix=%ld",
+                 frameId, darkRows, maxRun, darkPix);
+    }
+    // GPU TIME_ELAPSED query (GL_EXT_disjoint_timer_query), deferred read.
+    typedef void (GL_APIENTRYP LITEV_PFNGENQUERIES)(GLsizei, GLuint*);
+    typedef void (GL_APIENTRYP LITEV_PFNBEGINQUERY)(GLenum, GLuint);
+    typedef void (GL_APIENTRYP LITEV_PFNENDQUERY)(GLenum);
+    typedef void (GL_APIENTRYP LITEV_PFNGETQOBJUI64)(GLuint, GLenum, GLuint64*);
+    typedef void (GL_APIENTRYP LITEV_PFNGETQOBJUIV)(GLuint, GLenum, GLuint*);
+    LITEV_PFNGENQUERIES  litevGenQueries  = nullptr;
+    LITEV_PFNBEGINQUERY  litevBeginQuery  = nullptr;
+    LITEV_PFNENDQUERY    litevEndQuery    = nullptr;
+    LITEV_PFNGETQOBJUI64 litevGetQObjUI64 = nullptr;
+    LITEV_PFNGETQOBJUIV  litevGetQObjUIV  = nullptr;
+    bool  litevGpuInit = false;
+    bool  litevGpuOk   = false;
+    GLuint litevQ[2] = {0, 0};
+    int    litevQSlot = 0;
+    bool   litevQPending[2] = {false, false};
+    static const GLenum LITEV_TIME_ELAPSED = 0x88BF;
+    static const GLenum LITEV_QUERY_RESULT = 0x8866;
+    static const GLenum LITEV_QUERY_RESULT_AVAILABLE = 0x8867;
+    void litevGpuEnsure() {
+        if (litevGpuInit) return;
+        litevGpuInit = true;
+        litevGenQueries  = (LITEV_PFNGENQUERIES) eglGetProcAddress("glGenQueriesEXT");
+        litevBeginQuery  = (LITEV_PFNBEGINQUERY) eglGetProcAddress("glBeginQueryEXT");
+        litevEndQuery    = (LITEV_PFNENDQUERY)   eglGetProcAddress("glEndQueryEXT");
+        litevGetQObjUI64 = (LITEV_PFNGETQOBJUI64) eglGetProcAddress("glGetQueryObjectui64vEXT");
+        litevGetQObjUIV  = (LITEV_PFNGETQOBJUIV)  eglGetProcAddress("glGetQueryObjectuivEXT");
+        if (litevGenQueries && litevBeginQuery && litevEndQuery && litevGetQObjUI64 && litevGetQObjUIV) {
+            litevGenQueries(2, litevQ);
+            litevGpuOk = (litevQ[0] != 0 && litevQ[1] != 0);
+        }
+    }
+}
+// ---- end profiler ----
 
 using namespace std;
 using namespace melonDS;
@@ -386,6 +542,8 @@ u32 MelonInstance::runFrame()
         screenHeight = 192 + 1;
     }
 
+    double litev_t0 = litevNowMs();
+
     Frame* renderFrame = frameQueue.getRenderFrame();
 
     EGLDisplay currentDisplay = eglGetCurrentDisplay();
@@ -396,14 +554,40 @@ u32 MelonInstance::runFrame()
         renderFrame->renderFence = 0;
     }
 
+    double litev_t_fw0 = litevNowMs();
     // Ensure presentation is finished
     if (renderFrame->presentFence)
     {
         eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
     }
+    double litev_t_fw1 = litevNowMs();
 
     // Validate frame after ensuring that the frame has finished presenting
     frameQueue.validateRenderFrame(renderFrame, screenWidth, screenHeight * 2);
+
+    // --- GPU timer: read previous frame's TIME_ELAPSED (deferred, non-stalling) ---
+    static double litev_gpuMsAccum = 0.0;
+    static int    litev_gpuSamples = 0;
+    if (litevProfEnabled) litevGpuEnsure();
+    if (litevProfEnabled && litevGpuOk) {
+        int prev = litevQSlot ^ 1;
+        if (litevQPending[prev]) {
+            GLuint avail = 0;
+            litevGetQObjUIV(litevQ[prev], LITEV_QUERY_RESULT_AVAILABLE, &avail);
+            if (avail) {
+                GLuint64 ns = 0;
+                litevGetQObjUI64(litevQ[prev], LITEV_QUERY_RESULT, &ns);
+                litev_gpuMsAccum += ns / 1000000.0;
+                litev_gpuSamples++;
+                litevQPending[prev] = false;
+                if (litev_gpuSamples >= 60) {
+                    LOG_INFO("LITEV_GPU", "gpu_hw=%.2fms/frame", litev_gpuMsAccum / litev_gpuSamples);
+                    litev_gpuMsAccum = 0.0; litev_gpuSamples = 0;
+                }
+            }
+        }
+        litevBeginQuery(LITEV_TIME_ELAPSED, litevQ[litevQSlot]);
+    }
 
     [[unlikely]] if (nds->GPU.GetRenderer().NeedsShaderCompile())
     {
@@ -417,7 +601,9 @@ u32 MelonInstance::runFrame()
         while (nds->GPU.GetRenderer().NeedsShaderCompile());
     }
 
+    double litev_t_rf0 = litevNowMs();
     u32 nLines = nds->RunFrame();
+    double litev_t_rf1 = litevNowMs();
     retroAchievementsManager->FrameUpdate();
 
     // Present. Unified renderer API: GetFramebuffers() returns true with RAM
@@ -435,12 +621,41 @@ u32 MelonInstance::runFrame()
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbTop);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 192 + 2, 256, 192, GL_RGBA, GL_UNSIGNED_BYTE, fbBottom);
             glBindTexture(GL_TEXTURE_2D, 0);
+
+            // FBHASH / BARSCAN gates for the software renderer (RAM composite).
+            {
+                static int checkCtr = 0;
+                if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); litevRefreshBarScan(); }
+                int fid = litevFbHashFrame++;
+                if (litevFbHashEnabled == 1)
+                    litevFbHashRam(fbTop, fbBottom, fid);
+                if (litevBarScanEnabled == 1)
+                    litevBarScan(fbTop, fid);
+            }
         }
     }
     else if (fbTop)
     {
         GLuint arrayTex = *(GLuint*) fbTop;
         blitAcceleratedFrame(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight);
+
+        // FBHASH gate for the GL renderers (reads the output array texture).
+        {
+            static int checkCtr = 0;
+            if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); }
+            int fid = litevFbHashFrame++;
+            if (litevFbHashEnabled == 1) {
+                int scale = screenWidth / 256; if (scale < 1) scale = 1;
+                litevFbHash(arrayTex, screenWidth, 192 * scale, fid);
+            }
+        }
+    }
+
+    double litev_t_blit1 = litevNowMs();
+    if (litevProfEnabled && litevGpuOk) {
+        litevEndQuery(LITEV_TIME_ELAPSED);
+        litevQPending[litevQSlot] = true;
+        litevQSlot ^= 1;
     }
 
     bool isSleeping = nds->CPUStop & CPUStop_Sleep;
@@ -475,6 +690,41 @@ u32 MelonInstance::runFrame()
     {
         auto nextRewindState = rewindManager.GetNextRewindSaveState(frame);
         saveRewindState(nextRewindState);
+    }
+
+    double litev_t_end = litevNowMs();
+    // Frame-phase profiler: accumulate and log one LITEV_PROF line per 60 frames
+    // when debug.litev.prof=1 (re-read every 60 frames). `submit` is kept in the
+    // format for log-parser compatibility; it is always 0 without a render thread.
+    {
+        static double a_fw = 0, a_rf = 0, a_blit = 0, a_other = 0, a_total = 0;
+        static int    n = 0;
+        static double lastWall = 0;
+        double wall = litev_t_end;
+        a_fw    += (litev_t_fw1 - litev_t_fw0);
+        a_rf    += (litev_t_rf1 - litev_t_rf0);
+        a_blit  += (litev_t_blit1 - litev_t_rf1);
+        a_other += (litev_t_end - litev_t0) - (litev_t_fw1 - litev_t_fw0)
+                   - (litev_t_rf1 - litev_t_rf0) - (litev_t_blit1 - litev_t_rf1);
+        a_total += (litev_t_end - litev_t0);
+        n++;
+        if (n >= 60) {
+            litevRefreshProfEnabled();
+            if (litevProfEnabled) {
+                double wallSpan = (lastWall > 0) ? (wall - lastWall) : 0;
+                double gpuAvg = (litev_gpuSamples > 0) ? (litev_gpuMsAccum / litev_gpuSamples) : -1.0;
+                LOG_INFO("LITEV_PROF",
+                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f submit=%.2f blit=%.2f other=%.2f) | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
+                    a_total / n, a_fw / n, a_rf / n, 0.0, a_blit / n, a_other / n,
+                    gpuAvg, wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0));
+            }
+            a_fw = a_rf = a_blit = a_other = a_total = 0;
+            litev_gpuMsAccum = 0; litev_gpuSamples = 0;
+            n = 0;
+            lastWall = wall;
+        } else if (lastWall == 0) {
+            lastWall = wall;
+        }
     }
 
     return nLines;
@@ -619,6 +869,9 @@ bool MelonInstance::loadState(Savestate* state)
     {
         setBatteryLevels();
         setDateTime();
+        // FBHASH gate: restart the per-frame index at the load point so two runs
+        // from the same savestate are aligned at frame 0.
+        litevFbHashResetFrame();
         return true;
     }
     else
@@ -783,6 +1036,16 @@ void MelonInstance::setBatteryLevels()
 
 void MelonInstance::setDateTime()
 {
+    // FBHASH gate: the real-time clock is the one per-load nondeterminism source
+    // that survives a savestate load (SetDateTime runs AFTER DoSavestate). Game
+    // content seeded from the RTC (RNG, time-of-day lighting) would differ on every
+    // reload and make runs incomparable, so pin the RTC while the gate is on.
+    if (litevFbHashOn())
+    {
+        nds->RTC.SetDateTime(2026, 1, 1, 0, 0, 0);
+        return;
+    }
+
     std::time_t t = std::time(0);
     std::tm* now = std::localtime(&t);
 

@@ -16,6 +16,7 @@
 #include <android/asset_manager_jni.h>
 #include "UriFileHandler.h"
 #include "JniEnvHandler.h"
+#include "MelonLog.h"
 #include "AndroidMelonEventMessenger.h"
 #include "MelonDSAndroidInterface.h"
 #include "MelonDSAndroidConfiguration.h"
@@ -626,6 +627,15 @@ void* emulate(void*)
     double lastMeasureFpsTick = startTick;
     double frameLimitError = 0.0;
 
+    // Pacing profiler. Only this outer loop sees the 60 fps limiter that spaces
+    // emulation frames apart. Gated by debug.litev.prof (read once per 60
+    // frames); logs one LITEV_PACE aggregate per 60 frames.
+    double paceWorkMs = 0.0, paceRequestedSleepMs = 0.0, paceActualSleepMs = 0.0;
+    double paceIntervalMs = 0.0, paceTargetMs = 0.0;
+    int paceN = 0;
+    int pacePollFrame = 0;
+    bool paceEnabled = false;
+
     MelonDSAndroid::start();
 
     auto manager = PerformanceHintManagerFactory::create(jniEnvHandler);
@@ -662,8 +672,11 @@ void* emulate(void*)
         if (performanceHintSession != nullptr)
             performanceHintSession->reportActualWorkDuration(std::chrono::nanoseconds(frameDuration).count());
 
+        double previousTick = lastTick;
         double currentTick = getCurrentMillis();
         double delay = currentTick - lastTick;
+        double requestedSleepMs = 0.0;
+        double actualSleepMs = 0.0;
 
         // All times are in ms
         double frameTimeStep = (double) nLines / ((float) targetFps * 263.0) * 1000.0;
@@ -680,13 +693,15 @@ void* emulate(void*)
 
             if (round(frameLimitError) > 0.0)
             {
+                requestedSleepMs = frameLimitError;
                 timespec sleepTime = {
                     .tv_sec = 0,
                     .tv_nsec = (long) (frameLimitError * 1000000),
                 };
                 clock_nanosleep(CLOCK_MONOTONIC, 0, &sleepTime, nullptr);
                 double timeAfterSleep = getCurrentMillis();
-                frameLimitError -= timeAfterSleep - currentTick;
+                actualSleepMs = timeAfterSleep - currentTick;
+                frameLimitError -= actualSleepMs;
                 currentTick = timeAfterSleep;
             }
 
@@ -694,6 +709,34 @@ void* emulate(void*)
         } else {
             frameLimitError = 0;
             lastTick = getCurrentMillis();
+        }
+
+        // Read the property once per 60-frame window.  `work` is the actual
+        // MelonDSAndroid::loop duration; `requestedSleep` vs `actualSleep`
+        // exposes kernel wake-up overshoot; `interval` is the job cadence that
+        // the Choreographer/render thread receives.
+        if (pacePollFrame == 0) {
+            char prop[8] = {0};
+            paceEnabled = (__system_property_get("debug.litev.prof", prop) > 0 && atoi(prop) != 0);
+        }
+        pacePollFrame = (pacePollFrame + 1) % 60;
+        if (paceEnabled) {
+            paceWorkMs += std::chrono::duration_cast<std::chrono::nanoseconds>(frameDuration).count() / 1e6;
+            paceRequestedSleepMs += requestedSleepMs;
+            paceActualSleepMs += actualSleepMs;
+            paceIntervalMs += currentTick - previousTick;
+            paceTargetMs += frameTimeStep;
+            if (++paceN >= 60) {
+                LOG_INFO("LITEV_PACE",
+                         "60f: work=%.2fms target=%.2fms requestedSleep=%.2fms actualSleep=%.2fms oversleep=%.2fms interval=%.2fms",
+                         paceWorkMs / paceN, paceTargetMs / paceN,
+                         paceRequestedSleepMs / paceN, paceActualSleepMs / paceN,
+                         (paceActualSleepMs - paceRequestedSleepMs) / paceN,
+                         paceIntervalMs / paceN);
+                paceWorkMs = paceRequestedSleepMs = paceActualSleepMs = 0.0;
+                paceIntervalMs = paceTargetMs = 0.0;
+                paceN = 0;
+            }
         }
 
         observedFrames++;

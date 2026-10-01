@@ -3,7 +3,6 @@ package me.magnum.melonds.ui.emulator.render
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Message
-import androidx.core.os.bundleOf
 import me.magnum.melonds.MelonDSAndroidInterface
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.render.PresentFrameWrapper
@@ -75,7 +74,7 @@ class FrameRenderCoordinator {
             handler = object : Handler(looper) {
                 override fun handleMessage(msg: Message) {
                     when (msg.what) {
-                        MSG_RENDER_FRAME -> renderFrame(msg.data.getLong(MSG_RENDER_FRAME_FRAME_DEADLINE_NS))
+                        MSG_RENDER_FRAME -> renderFrame((msg.arg1.toLong() shl 32) or (msg.arg2.toLong() and 0xFFFFFFFFL))
                         MSG_DESTROY_SURFACES -> destroySurfaces()
                         MSG_STOP -> stopThread()
                     }
@@ -84,11 +83,15 @@ class FrameRenderCoordinator {
         }
 
         fun requestFrameRender(frameDeadlineNanos: Long?) {
-            handler?.removeMessages(MSG_RENDER_FRAME)
-            handler?.obtainMessage(MSG_RENDER_FRAME)?.let {
-                it.data = bundleOf(MSG_RENDER_FRAME_FRAME_DEADLINE_NS to (frameDeadlineNanos ?: 0L))
-                handler?.sendMessage(it)
-            }
+            val h = handler ?: return
+            h.removeMessages(MSG_RENDER_FRAME)
+            // Pack the deadline Long into the pooled Message's primitive arg1/arg2 (hi/lo halves)
+            // instead of allocating a Bundle every frame. This removes ~5 heap allocations/frame
+            // (vararg Pair[], Pair, boxed Long, Bundle, ArrayMap) plus the ArrayMap put/get + box/unbox.
+            // Behaviour identical: same coalescing (removeMessages), same 0 = "no deadline" sentinel,
+            // exact 64-bit round-trip.
+            val d = frameDeadlineNanos ?: 0L
+            h.obtainMessage(MSG_RENDER_FRAME, (d ushr 32).toInt(), (d and 0xFFFFFFFFL).toInt()).sendToTarget()
         }
 
         fun requestSurfaceDestruction() {
@@ -162,7 +165,5 @@ class FrameRenderCoordinator {
         const val MSG_RENDER_FRAME = 1
         const val MSG_DESTROY_SURFACES = 2
         const val MSG_STOP = 3
-
-        const val MSG_RENDER_FRAME_FRAME_DEADLINE_NS = "frame-deadline"
     }
 }

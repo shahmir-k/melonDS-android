@@ -55,15 +55,117 @@ android {
                     "-DCMAKE_CXX_FLAGS_DEBUG=-O3 -DNDEBUG"
                 )
                 // LITEV performance flags. Every option is declared in
-                // melonDS-android-lib/CMakeLists.txt and defaults OFF there; this
-                // list is the shipping set. Exactness classes (see the lib's
+                // melonDS-android-lib/CMakeLists.txt and defaults OFF there (LINK_*
+                // default ON but are inert without JIT_DISPATCH); this list is the
+                // shipping set. Exactness classes (see the lib's
                 // docs/LITEV-OPTIMIZATIONS.md): A = guest byte- and cycle-identical,
                 // B = deterministic timing relaxation, R = emulation identical,
                 // only local video/audio output may differ.
                 arguments(
+                    // --- JIT (A64 backend; all A) ---
+                    // Emitted A64 block dispatcher; static block chaining (LINK_*) needs it.
+                    "-DLITEV_JIT_DISPATCH=ON",
+                    // Chain unconditional / conditional / fall-through block exits directly.
+                    "-DLITEV_LINK_UNCOND=ON",
+                    "-DLITEV_LINK_COND=ON",
+                    "-DLITEV_LINK_FALLTHROUGH=ON",
+                    // DTCM LDM/STM block and MainRAM u32 load emitted inline.
+                    "-DLITEV_MEM_DTCM_BLOCK=ON",
+                    "-DLITEV_MEM_MAINRAM_LOAD=ON",
+                    // Evaluate guest conditions on host NZCV (MSR NZCV + branch).
+                    "-DLITEV_JIT_CONDFOLD=ON",
+                    // Keep guest flags in host NZCV across the ALU hot path.
+                    "-DLITEV_JIT_FIXEDREG=ON",
+                    // Pin the hottest never-banked guest registers to host registers
+                    // across block boundaries.
+                    "-DLITEV_JIT_GLOBALREG=ON",
+                    // Full lazy flags: NZCV in host PSTATE/memory, RCPSR freed for an
+                    // extra register pin. Needs DISPATCH+CONDFOLD+FIXEDREG+GLOBALREG.
+                    "-DLITEV_JIT_LAZYFLAGS=ON",
+                    // Per-site 2-way guest-PC -> host-code cache in the dispatcher.
+                    "-DLITEV_JIT_ICACHE=ON",
+                    // Monomorphic exit sites become direct guarded branches. Needs ICACHE.
+                    "-DLITEV_JIT_DIRECTPATCH=ON",
+                    // simpleperf perf-<pid>.map for JIT blocks. Diagnostic; writes nothing
+                    // unless debug.litev.perfmap names a directory.
+                    "-DLITEV_JIT_PERFMAP=ON",
+                    // LDM/STM via ldp/stp pairs + MainRAM inline block-load tier.
+                    "-DLITEV_JIT_LDMSTM=ON",
+                    // One MRS NZCV merge instead of per-flag CSET+BFI for S-ops.
+                    "-DLITEV_JIT_FLAGMERGE=ON",
+                    // Hoist SlowBlockTransfer9's region dispatch for whole-in-TCM blocks.
+                    "-DLITEV_JIT_BLOCKXFER_FAST=ON",
+                    // Map DTCM into the fastmem window (runtime prop debug.litev.dtcmfastmem).
+                    "-DLITEV_MEM_DTCM_FASTMEM=ON",
+                    // Offset-indexed jump table for ARM9 32-bit I/O register access.
+                    "-DLITEV_IO_DISPATCH_TABLE=ON",
                     // -fno-plt (core) + -Bsymbolic-functions (this app's .so, see
                     // app/CMakeLists.txt). Host linkage only (A).
-                    "-DLITEV_LINKOPT=ON"
+                    "-DLITEV_LINKOPT=ON",
+
+                    // --- Scheduler / timing / audio ---
+                    // Run each CPU to the true next event instead of 64-cycle slices (B).
+                    "-DLITEV_EVENT_SLICES=ON",
+                    // Divider/sqrt results computed at register write; no completion event (B).
+                    "-DLITEV_INSTANT_DIVSQRT=ON",
+                    // Generate 8 SPU samples per scheduler event (B).
+                    "-DLITEV_SPU_BATCH=ON",
+                    // Skip inert 32 kHz RTC ticks while no RTC IRQ is armed (B).
+                    "-DLITEV_COARSE_RTC=ON",
+                    // Cache the next timer-overflow deadline (A).
+                    "-DLITEV_TIMER_FAST=ON",
+                    // Fast-forward register-recurrent poll loops as idle (B).
+                    "-DLITEV_IDLE_AGGRESSIVE=ON",
+                    // Defer DMA unit-timing lookups to the branch that uses them (A).
+                    "-DLITEV_DMA_TIMING_LAZY=ON",
+                    // Linear SPU sample interpolation (R: approximate audio).
+                    "-DLITEV_SPU_FAST_INTERP=ON",
+                    // Integer-NEON 16-channel SPU mix (A).
+                    "-DLITEV_SPU_MIX_NEON=ON",
+
+                    // --- Geometry engine (emu thread; all A) ---
+                    // Batched threaded-code GXFIFO command interpreter.
+                    "-DLITEV_GXFIFO_THREADED=ON",
+                    // Geometry DMA writes straight into the GXFIFO.
+                    "-DLITEV_DMA_GXFIFO_FAST=ON",
+                    // ...with the FIFO producer inlined into the DMA loop
+                    // (runtime prop debug.litev.gxinline).
+                    "-DLITEV_GXFIFO_DMA_INLINE=ON",
+                    // Integer-NEON vertex/matrix math (waves 1-3).
+                    "-DLITEV_NEON_GEOMETRY=ON",
+                    "-DLITEV_GEOM_NEON2=ON",
+                    "-DLITEV_GEOM_NEON3=ON",
+                    // Allocation-free stable radix sort for the polygon Y-sort.
+                    "-DLITEV_POLY_RADIX=ON",
+
+                    // --- Software renderer (all R unless noted) ---
+                    // NEON 2D output conversion (A).
+                    "-DLITEV_NEON_RENDERER=ON",
+                    // Whole-frame deferred 2D raster on worker threads.
+                    "-DLITEV_SOFT2D_THREADED=ON",
+                    // Double-buffered 2D snapshots: emu runs a frame ahead of 2D.
+                    "-DLITEV_SOFT2D_DEPTH2=ON",
+                    // NEON 2D compositor / sprite reject-scan / 3D-layer compositor (A).
+                    "-DLITEV_SOFT2D_NEON=ON",
+                    "-DLITEV_SOFT2D_OBJNEON=ON",
+                    "-DLITEV_SOFT2D_BG3DNEON=ON",
+                    // 3D raster may run into the next frame (no VBlank barrier).
+                    "-DLITEV_SOFT3D_ASYNC=ON",
+                    // Tile-based 3D renderer + coordinator thread with double-buffered
+                    // geometry (the emu no longer waits on the raster).
+                    "-DLITEV_SOFT3D_DRASTIC=ON",
+                    "-DLITEV_TILE_COORD=ON",
+                    // Pin the render worker threads to cores {0,1,2}, off the emu core.
+                    "-DLITEV_PIN_RENDER=ON",
+                    // Dirty-incremental VRAM shadow snapshots instead of full memcpy.
+                    "-DLITEV_SNAP_DIRTY=ON",
+                    // Staged deep prefetch in BuildFrameGeom (A; runtime prop
+                    // debug.litev.geoprefetch).
+                    "-DLITEV_GEOM_PREFETCH2=ON",
+                    // Diagnostic render-phase profiler: names the render threads and logs a
+                    // LITEV_SOFTPROF phase line every 60 frames (debug.litev.softprof=1
+                    // adds a costly colour-effect census; keep it 0 when measuring).
+                    "-DLITEV_SOFTPROF=ON"
                 )
             }
         }

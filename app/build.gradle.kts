@@ -32,11 +32,28 @@ android {
         versionName = AppConfig.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64"))
+            // The LITEV optimisations (A64 JIT dispatcher/linking, fastmem tiers,
+            // NEON paths) are AArch64-only and the target device is arm64, so
+            // build arm64-v8a only.
+            abiFilters.addAll(listOf("arm64-v8a"))
         }
         externalNativeBuild {
             cmake {
-                cppFlags("-std=c++17 -Wno-write-strings")
+                // -fno-emulated-tls: the core is linked into a SHARED .so, where the
+                // NDK's default emulated TLS turns every thread_local access (notably
+                // NDS::Current in the ARM9 JIT slow-path helpers) into an
+                // __emutls_get_address call. Native ELF TLS uses the cheaper
+                // TLS-descriptor sequence instead. Requires Android >= 10 (native
+                // TLS); the target runs Android 14.
+                cppFlags("-std=c++17 -Wno-write-strings -fno-emulated-tls")
+                // The debug (.dev) variant defaults to CMAKE_BUILD_TYPE=Debug (-O0),
+                // which leaves the emulator core several times too slow. Build the
+                // Debug-config native code at release optimisation so the APK stays
+                // debuggable/installable but the core runs at speed.
+                arguments(
+                    "-DCMAKE_C_FLAGS_DEBUG=-O3 -DNDEBUG",
+                    "-DCMAKE_CXX_FLAGS_DEBUG=-O3 -DNDEBUG"
+                )
             }
         }
         vectorDrawables.useSupportLibrary = true

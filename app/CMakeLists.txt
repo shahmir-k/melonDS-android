@@ -71,3 +71,13 @@ target_include_directories(melonDS-android-frontend PUBLIC
         ${RCHEEVOS}/include
 )
 target_link_libraries(melonDS-android-frontend android core net-utils oboe faad enet rcheevos EGL GLESv3)
+
+# LITEV_LINKOPT (app half). The core is a STATIC archive and the final shared
+# object libmelonDS-android-frontend.so is linked here, so the link flag belongs
+# on this target. The core applies -fno-plt to its own TUs; mirror it onto this
+# target's TUs and add -Wl,-Bsymbolic-functions so calls between functions inside
+# the .so bind locally instead of going through the PLT/GOT. Host linkage only.
+if (LITEV_LINKOPT)
+    target_compile_options(melonDS-android-frontend PRIVATE -fno-plt)
+    target_link_options(melonDS-android-frontend PRIVATE -Wl,-Bsymbolic-functions)
+endif()

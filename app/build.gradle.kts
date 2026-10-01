@@ -54,6 +54,17 @@ android {
                     "-DCMAKE_C_FLAGS_DEBUG=-O3 -DNDEBUG",
                     "-DCMAKE_CXX_FLAGS_DEBUG=-O3 -DNDEBUG"
                 )
+                // LITEV performance flags. Every option is declared in
+                // melonDS-android-lib/CMakeLists.txt and defaults OFF there; this
+                // list is the shipping set. Exactness classes (see the lib's
+                // docs/LITEV-OPTIMIZATIONS.md): A = guest byte- and cycle-identical,
+                // B = deterministic timing relaxation, R = emulation identical,
+                // only local video/audio output may differ.
+                arguments(
+                    // -fno-plt (core) + -Bsymbolic-functions (this app's .so, see
+                    // app/CMakeLists.txt). Host linkage only (A).
+                    "-DLITEV_LINKOPT=ON"
+                )
             }
         }
         vectorDrawables.useSupportLibrary = true

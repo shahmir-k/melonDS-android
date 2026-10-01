@@ -99,8 +99,9 @@ class SharedPreferencesSettingsRepository(
             getVideoFiltering(),
             isThreadedRenderingEnabled(),
             getVideoInternalResolutionScaling(),
-        ) { renderer, filtering, threadedRenderingEnabled, resolutionScaling ->
-            RendererConfiguration(renderer, filtering, threadedRenderingEnabled, resolutionScaling)
+            isSoftwareAccurate3DEnabled(),
+        ) { renderer, filtering, threadedRenderingEnabled, resolutionScaling, accurate3d ->
+            RendererConfiguration(renderer, filtering, threadedRenderingEnabled, resolutionScaling, accurate3d)
         }.conflate().shareIn(preferencesCoroutineScope, SharingStarted.Lazily, replay = 1)
     }
 
@@ -306,6 +307,12 @@ class SharedPreferencesSettingsRepository(
         return getOrCreatePreferenceSharedFlow("video_filtering") {
             val filteringPreference = preferences.getString("video_filtering", "none")!!
             VideoFiltering.valueOf(filteringPreference.uppercase())
+        }
+    }
+
+    override fun isSoftwareAccurate3DEnabled(): Flow<Boolean> {
+        return getOrCreatePreferenceSharedFlow("software_accurate_3d") {
+            preferences.getBoolean("software_accurate_3d", false)
         }
     }
 

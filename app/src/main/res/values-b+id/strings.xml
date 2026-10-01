@@ -527,6 +527,7 @@
         <item>Perangkat lunak</item>
         <item>OpenGL</item>
         <item>Compute</item>
+        <item>OpenGL (hi-res 2D)</item>
     </string-array>
 
     <string-array name="video_internal_resolution_options">

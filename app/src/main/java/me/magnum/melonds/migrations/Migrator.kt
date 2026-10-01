@@ -18,6 +18,7 @@ class Migrator(private val context: Context, private val sharedPreferences: Shar
     }
 
     fun performMigrations() {
+        migrateForcedSoftwareRenderer()
         if (!mustPerformMigrations())
             return
 
@@ -26,6 +27,20 @@ class Migrator(private val context: Context, private val sharedPreferences: Shar
         }
         sharedPreferences.edit {
             putLong("last_version", getCurrentVersion())
+        }
+    }
+
+    // One-time, not version-gated: the native code used to force the software renderer
+    // whatever the "video_renderer" setting said. Now that the setting is honoured, move
+    // existing installs to software so nobody silently drops to a slower renderer.
+    private fun migrateForcedSoftwareRenderer() {
+        if (sharedPreferences.getBoolean("renderer_override_migrated", false))
+            return
+
+        sharedPreferences.edit {
+            if (sharedPreferences.contains("video_renderer"))
+                putString("video_renderer", "software")
+            putBoolean("renderer_override_migrated", true)
         }
     }
 

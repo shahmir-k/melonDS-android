@@ -4,4 +4,5 @@ enum class VideoRenderer(val renderer: Int) {
     SOFTWARE(0),
     OPENGL(1),
     COMPUTE(2),
+    OPENGL_HIRES(3),
 }

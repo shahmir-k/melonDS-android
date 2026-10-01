@@ -28,6 +28,13 @@
             app:iconSpaceReserved="false"
             android:defaultValue="true" />
 
+    <SwitchPreference
+            android:key="software_accurate_3d"
+            android:title="@string/software_accurate_3d"
+            android:summary="@string/software_accurate_3d_summary"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false" />
+
     <ListPreference
             android:key="video_filtering"
             android:title="@string/filter"

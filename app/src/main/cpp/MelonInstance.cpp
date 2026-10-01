@@ -18,6 +18,7 @@
 #include "GPU.h"
 #include "GPU_Soft.h"
 #include "GPU_OpenGL.h"
+#include "GPU_Hybrid.h"
 #include "MelonDS.h"
 #include "MelonInstance.h"
 #include "NDS.h"
@@ -529,28 +530,9 @@ u32 MelonInstance::runFrame()
     }
 #endif
 
-    int screenWidth;
-    int screenHeight;
-    if (currentRenderer == Renderer::OpenGl)
-    {
-        // The unified renderer does not expose its scale factor; use the same
-        // value the config feeds into SetRenderSettings.
-        int scale = static_cast<OpenGlRenderSettings&>(*currentConfiguration->renderSettings).scale;
-        screenWidth = 256 * scale;
-        screenHeight = (192 + 1) * scale;
-    }
-    else if (currentRenderer == Renderer::Compute)
-    {
-        auto computeRenderSettings = static_cast<ComputeRenderSettings&>(*currentConfiguration->renderSettings);
-        int scale = computeRenderSettings.scale;
-        screenWidth = 256 * scale;
-        screenHeight = (192 + 1) * scale;
-    }
-    else
-    {
-        screenWidth = 256;
-        screenHeight = 192 + 1;
-    }
+    // presentation size: from the scale the renderer was actually configured with
+    int screenWidth = 256 * currentScale;
+    int screenHeight = (192 + 1) * currentScale;
 
     double litev_t0 = litevNowMs();
 
@@ -840,7 +822,7 @@ void MelonInstance::updateConfiguration(std::shared_ptr<EmulatorConfiguration> n
 
     rewindManager.UpdateRewindSettings(newConfiguration->rewindEnabled, newConfiguration->rewindLengthSeconds, newConfiguration->rewindCaptureSpacingSeconds);
 
-    currentConfiguration = newConfiguration;
+    std::atomic_store(&currentConfiguration, newConfiguration);
     isRenderConfigurationDirty = true;
 }
 
@@ -957,59 +939,78 @@ std::vector<RetroAchievements::RARuntimeAchievement> MelonInstance::getRuntimeAc
 
 void MelonInstance::updateRenderer()
 {
-    Renderer newRenderer = currentConfiguration->renderer;
-    // Use the software renderer regardless of the configured one: on the target
-    // (RK3566, Mali-G52) the GL renderer is GPU-bound around 40 fps, while the
-    // threaded software pipeline is the fast path. Doing this in code (not via a
-    // prop set after boot) keeps it across reboots. debug.litev.software=0
-    // restores the configured renderer (GL/Compute) for A/B. Renderer choice is
-    // downstream of guest state, so emulation is unaffected.
-    {
-        char prop[8] = {0};
-        bool useSoftware = __system_property_get("debug.litev.software", prop) > 0 ? atoi(prop) != 0 : true;
-        if (useSoftware)
-            newRenderer = Renderer::Software;
-    }
+    // updateConfiguration swaps the pointer on the JNI thread
+    std::shared_ptr<EmulatorConfiguration> config = std::atomic_load(&currentConfiguration);
+    const Renderer configRenderer = config->renderer;
+    Renderer newRenderer = configRenderer;
 
+    // A/B overrides (dev props, read when the renderer configuration changes / at launch):
+    //   debug.litev.software=1   force the software renderer
+    //   debug.litev.renderer=N   force renderer N (0 software, 1 OpenGL hybrid, 2 compute,
+    //                            3 OpenGL hi-res 2D)
+    //   debug.litev.glscale=N    force the GL internal scale
+    char prop[PROP_VALUE_MAX] = {0};
+    if (__system_property_get("debug.litev.renderer", prop) > 0)
+    {
+        int r = atoi(prop);
+        if (r >= 0 && r <= 3) newRenderer = static_cast<Renderer>(r);
+    }
+    if (__system_property_get("debug.litev.software", prop) > 0 && atoi(prop) != 0)
+        newRenderer = Renderer::Software;
+
+    // renderSettings is typed by the CONFIGURED renderer; never cast it as another one
+    const bool configIsGl = configRenderer == Renderer::OpenGl || configRenderer == Renderer::OpenGlHiRes;
     RendererSettings settings {};
     switch (newRenderer)
     {
         case Renderer::Software:
         {
             settings.ScaleFactor = 1;
-            // Always run the software 3D renderer threaded, ignoring the
-            // "threaded rendering" setting: with it off SoftRenderer3D rasterises
-            // inline on the emulator thread, and LITEV_SOFT3D_ASYNC needs its
-            // render thread. The tile renderer (LITEV_SOFT3D_DRASTIC) has its own
-            // threads and ignores this. debug.litev.softthread=0 forces the inline
-            // path for A/B. (The config's renderSettings is not read here: when
-            // software is forced over a GL config it holds OpenGlRenderSettings.)
-            char prop[8] = {0};
+            settings.Threaded = true;
+            if (configRenderer == Renderer::Software)
+            {
+                auto& sw = static_cast<SoftwareRenderSettings&>(*config->renderSettings);
+                settings.Threaded = sw.threadedRendering;
+                settings.Accurate3D = sw.accurate3d;
+            }
             if (__system_property_get("debug.litev.softthread", prop) > 0)
                 settings.Threaded = atoi(prop) != 0;
-            else
-                settings.Threaded = true;
             break;
         }
         case Renderer::OpenGl:
+        case Renderer::OpenGlHiRes:
         {
-            auto glRenderSettings = static_cast<OpenGlRenderSettings&>(*currentConfiguration->renderSettings);
-            settings.ScaleFactor = glRenderSettings.scale;
-            settings.BetterPolygons = glRenderSettings.betterPolygons;
+            settings.ScaleFactor = 1;
+            if (configIsGl)
+            {
+                auto& gl = static_cast<OpenGlRenderSettings&>(*config->renderSettings);
+                settings.ScaleFactor = gl.scale;
+                settings.BetterPolygons = gl.betterPolygons;
+            }
             break;
         }
         case Renderer::Compute:
         {
-            auto computeRenderSettings = static_cast<ComputeRenderSettings&>(*currentConfiguration->renderSettings);
-            settings.ScaleFactor = computeRenderSettings.scale;
-            settings.HiresCoordinates = computeRenderSettings.highResCoordinates;
+            settings.ScaleFactor = 1;
+            if (configRenderer == Renderer::Compute)
+            {
+                auto& cs = static_cast<ComputeRenderSettings&>(*config->renderSettings);
+                settings.ScaleFactor = cs.scale;
+                settings.HiresCoordinates = cs.highResCoordinates;
+            }
             break;
         }
         default: __builtin_unreachable();
     }
+    if (newRenderer != Renderer::Software && __system_property_get("debug.litev.glscale", prop) > 0)
+    {
+        int s = atoi(prop);
+        if (s >= 1 && s <= 8) settings.ScaleFactor = s;
+    }
+    if (settings.ScaleFactor < 1) settings.ScaleFactor = 1;
 
     // Unified renderer API (upstream GPU rework): a single Renderer owns both the
-    // 2D and 3D pipelines; the compute renderer is a GLRenderer mode.
+    // 2D and 3D pipelines.
     if (newRenderer != currentRenderer)
     {
         switch (newRenderer)
@@ -1018,6 +1019,9 @@ void MelonInstance::updateRenderer()
                 nds->GPU.SetRenderer(std::make_unique<SoftRenderer>(*nds));
                 break;
             case Renderer::OpenGl:
+                nds->GPU.SetRenderer(std::make_unique<HybridRenderer>(*nds));
+                break;
+            case Renderer::OpenGlHiRes:
                 nds->GPU.SetRenderer(std::make_unique<GLRenderer>(*nds, /*compute=*/false));
                 break;
             case Renderer::Compute:
@@ -1028,6 +1032,9 @@ void MelonInstance::updateRenderer()
         currentRenderer = newRenderer;
     }
     nds->GPU.GetRenderer().SetRenderSettings(settings);
+    currentScale = settings.ScaleFactor;
+    LOG_INFO("LITEV_RENDERER", "renderer=%d scale=%d threaded=%d accurate3d=%d",
+             (int)currentRenderer, currentScale, (int)settings.Threaded, (int)settings.Accurate3D);
 }
 
 void MelonInstance::setBatteryLevels()

@@ -149,10 +149,11 @@ std::unique_ptr<MelonDSAndroid::RenderSettings> MelonDSAndroidConfiguration::bui
     jclass renderSettingsClass = env->GetObjectClass(renderSettings);
     jmethodID getResolutionScalingMethod = env->GetMethodID(renderSettingsClass, "getResolutionScaling", "()I");
     jboolean threadedRendering = env->GetBooleanField(renderSettings, env->GetFieldID(renderSettingsClass, "threadedRendering", "Z"));
+    jboolean accurate3d = env->GetBooleanField(renderSettings, env->GetFieldID(renderSettingsClass, "accurateSoftware3D", "Z"));
     jint internalResolutionScaling = env->CallIntMethod(renderSettings, getResolutionScalingMethod);
 
     std::unique_ptr<MelonDSAndroid::RenderSettings> settings;
-    if (renderer == MelonDSAndroid::Renderer::OpenGl)
+    if (renderer == MelonDSAndroid::Renderer::OpenGl || renderer == MelonDSAndroid::Renderer::OpenGlHiRes)
     {
         settings = std::make_unique<MelonDSAndroid::OpenGlRenderSettings>(
             MelonDSAndroid::OpenGlRenderSettings {
@@ -174,7 +175,8 @@ std::unique_ptr<MelonDSAndroid::RenderSettings> MelonDSAndroidConfiguration::bui
     {
         settings = std::make_unique<MelonDSAndroid::SoftwareRenderSettings>(
             MelonDSAndroid::SoftwareRenderSettings {
-                .threadedRendering = (bool) threadedRendering
+                .threadedRendering = (bool) threadedRendering,
+                .accurate3d = (bool) accurate3d,
             }
         );
     }

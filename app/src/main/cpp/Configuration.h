@@ -14,6 +14,7 @@ struct RenderSettings
 struct SoftwareRenderSettings : public RenderSettings
 {
     bool threadedRendering;
+    bool accurate3d;   // melonDS's SoftRenderer3D instead of the fast tile renderer
 };
 
 struct OpenGlRenderSettings : public RenderSettings

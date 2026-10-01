@@ -42,6 +42,7 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
 
         softwareRendererPreferences.apply {
             add(findPreference("enable_threaded_rendering")!!)
+            add(findPreference("software_accurate_3d")!!)
         }
 
         openGlRendererPreferences.apply {
@@ -102,7 +103,7 @@ class VideoPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTit
                 openGlRendererPreferences.forEach { it.isVisible = false }
                 softwareRendererPreferences.forEach { it.isVisible = true }
             }
-            VideoRenderer.OPENGL -> {
+            VideoRenderer.OPENGL, VideoRenderer.OPENGL_HIRES -> {
                 softwareRendererPreferences.forEach { it.isVisible = false }
                 computeRendererPreferences.forEach { it.isVisible = false }
                 openGlRendererPreferences.forEach { it.isVisible = true }

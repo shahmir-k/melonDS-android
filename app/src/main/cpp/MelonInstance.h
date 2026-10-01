@@ -95,6 +95,9 @@ private:
     std::unique_ptr<ScreenshotRenderer> screenshotRenderer;
     RewindManager rewindManager;
     Renderer currentRenderer;
+    // the scale updateRenderer actually applied (1 for software): the ONLY source for
+    // the presentation size, so the blit can never disagree with what was rendered
+    int currentScale = 1;
     bool isRenderConfigurationDirty;
     int frame;
     // FBOs used to blit the accelerated renderer's array-texture output into

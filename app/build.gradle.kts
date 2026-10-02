@@ -134,6 +134,8 @@ android {
                     // ...with the FIFO producer inlined into the DMA loop
                     // (runtime prop debug.litev.gxinline).
                     "-DLITEV_GXFIFO_DMA_INLINE=ON",
+                    // PIPE and FIFO in one ring (FIFO->PIPE moves are counter updates; exact).
+                    "-DLITEV_GXFIFO_UNIFIED=ON",
                     // Integer-NEON vertex/matrix math (waves 1-3).
                     "-DLITEV_NEON_GEOMETRY=ON",
                     "-DLITEV_GEOM_NEON2=ON",

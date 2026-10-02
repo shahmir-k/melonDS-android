@@ -42,7 +42,7 @@ namespace MelonDSAndroid {
     extern std::string getRichPresenceStatus();
     extern std::vector<RetroAchievements::RARuntimeAchievement> getRuntimeAchievements();
     extern void updateEmulatorConfiguration(std::unique_ptr<EmulatorConfiguration> emulatorConfiguration);
-#ifdef LITEV_AUTO_FRAMESKIP
+#ifdef LITEV_AGGRESSIVE_SKIP
     extern void setFrameskip(int target);
 #endif
 

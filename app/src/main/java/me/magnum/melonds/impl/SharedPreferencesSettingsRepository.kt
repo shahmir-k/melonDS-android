@@ -168,11 +168,16 @@ class SharedPreferencesSettingsRepository(
             firmwareConfiguration = getFirmwareConfiguration(),
             rendererConfiguration = renderConfigurationFlow.first(),
             autoFrameskipEnabled = isAutoFrameskipEnabled(),
+            fastForwardMaxFrameskip = getFastForwardMaxFrameskip(),
         )
     }
 
     private fun isAutoFrameskipEnabled(): Boolean {
         return preferences.getBoolean("enable_auto_frameskip", false)
+    }
+
+    private fun getFastForwardMaxFrameskip(): Int {
+        return preferences.getString("fast_forward_max_frameskip", "0")!!.toInt()
     }
 
     override fun getTheme(): Theme {

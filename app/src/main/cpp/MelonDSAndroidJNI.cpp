@@ -51,6 +51,27 @@ int targetFps;
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
+#ifdef LITEV_AGGRESSIVE_SKIP
+// Frameskip-based fast-forward ("Fast-forward max frameskip" setting, 0..9, default 0).
+// The limiter-only fast-forward can't speed anything up when the device already runs
+// below 60fps (no sleep to reclaim); skipping rasterisation (CPU/DMA/timers keep
+// running) makes each skipped frame cheap, so the game advances several emulated frames
+// per presented frame. 0 = limiter-only fast-forward, every frame rendered.
+int ffMaxFrameskip = 0;
+static int ffSkipApplied = -1;       // FF frameskip target last applied; -1 = FF not driving
+
+// Speed multiplier -> raster-skip target: render ~1 of M frames, capped by the setting;
+// -1 (unlimited) uses the setting. GPU::SetFrameskipTarget renders 1 of N+1 frames
+// (and clamps N to LITEV_FRAMESKIP_MAX, 3 in litev-clean).
+static int ffFrameskipTarget(float m, int max)
+{
+    if (max <= 0) return 0;
+    if (m < 0) return max;
+    int s = (int)(m + 0.5f) - 1;
+    if (s < 1) s = 1;
+    return s < max ? s : max;
+}
+#endif
 #ifdef LITEV_AUTO_FRAMESKIP
 // Adaptive frameskip (user setting) that holds real-time speed instead of slow-mo when a
 // scene can't sustain 60fps. Distinct from fast-forward; only active when FF is OFF.
@@ -79,6 +100,10 @@ Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jo
     autoFrameskipEnabled = finalEmulatorConfiguration.autoFrameskipEnabled;
     // New emulator session (the emu thread is not running yet): start from no skip.
     autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
+#endif
+#ifdef LITEV_AGGRESSIVE_SKIP
+    ffMaxFrameskip = finalEmulatorConfiguration.fastForwardMaxFrameskip;
+    ffSkipApplied = -1;
 #endif
 
     globalCameraManager = env->NewGlobalRef(cameraManager);
@@ -588,6 +613,9 @@ Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jo
 #ifdef LITEV_AUTO_FRAMESKIP
     autoFrameskipEnabled = newConfiguration.autoFrameskipEnabled;
 #endif
+#ifdef LITEV_AGGRESSIVE_SKIP
+    ffMaxFrameskip = newConfiguration.fastForwardMaxFrameskip;
+#endif
 
     MelonDSAndroid::updateEmulatorConfiguration(std::make_unique<MelonDSAndroid::EmulatorConfiguration>(std::move(newConfiguration)));
 
@@ -771,6 +799,25 @@ void* emulate(void*)
             autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
             MelonDSAndroid::setFrameskip(0);
             LOG_INFO("LITEV_AUTOFS", "skip level 0 (inactive)");
+        }
+#endif
+
+#ifdef LITEV_AGGRESSIVE_SKIP
+        // Fast-forward owns the frameskip while engaged: the speed multiplier maps to a
+        // raster-skip target capped by the setting; setting 0 forces 0 (FF only lifts
+        // the limiter, every frame rendered). On release, any FF skip is cleared and
+        // auto frameskip (reset above when FF engaged) restarts from 0. Runs after the
+        // auto controller, on the emu thread, so FF wins and nothing races runFrame.
+        // Re-evaluated every frame: runtime changes of the setting or multiplier apply
+        // at once. The lib clamps targets to GPU::LITEV_FRAMESKIP_MAX.
+        {
+            int ffWant = isFastForwardEnabled ? ffFrameskipTarget(fastForwardSpeedMultiplier, ffMaxFrameskip) : -1;
+            if (ffWant != ffSkipApplied) {
+                if (ffWant >= 0 || ffSkipApplied > 0)
+                    MelonDSAndroid::setFrameskip(ffWant >= 0 ? ffWant : 0);
+                LOG_INFO("LITEV_FFSKIP", "fast-forward skip %d", ffWant);
+                ffSkipApplied = ffWant;
+            }
         }
 #endif
 

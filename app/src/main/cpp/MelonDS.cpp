@@ -126,7 +126,7 @@ namespace MelonDSAndroid
         currentConfiguration = sharedConfig;
     }
 
-#ifdef LITEV_AUTO_FRAMESKIP
+#ifdef LITEV_AGGRESSIVE_SKIP
     void setFrameskip(int target) {
         if (instance)
             instance->setFrameskipTarget(target);

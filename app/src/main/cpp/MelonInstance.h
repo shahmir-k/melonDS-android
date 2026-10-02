@@ -36,7 +36,7 @@ public:
     void start();
     void reset();
     melonDS::u32 runFrame();
-#ifdef LITEV_AUTO_FRAMESKIP
+#ifdef LITEV_AGGRESSIVE_SKIP
     void setFrameskipTarget(int target);
 #endif
     void stop();

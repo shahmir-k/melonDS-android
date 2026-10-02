@@ -474,9 +474,9 @@ void MelonInstance::reset()
     nds->Start();
 }
 
-#ifdef LITEV_AUTO_FRAMESKIP
+#ifdef LITEV_AGGRESSIVE_SKIP
 // Called from the emu loop (same thread as runFrame) by the adaptive frameskip
-// controller. A later change of debug.litev.frameskip still overrides it.
+// controller and the fast-forward frameskip. A later change of debug.litev.frameskip still overrides it.
 void MelonInstance::setFrameskipTarget(int target)
 {
     if (nds)

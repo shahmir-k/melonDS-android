@@ -168,6 +168,7 @@
     <string name="category_system_summary">Firmware settings, custom BIOS, JIT</string>
     <string name="theme">Theme</string>
     <string name="fast_forward_max_speed">Fast-forward max speed</string>
+    <string name="fast_forward_max_frameskip">Fast-forward max frameskip</string>
     <string name="auto_frameskip">Auto frameskip</string>
     <string name="auto_frameskip_summary">Skip rendered frames to keep games at full speed when the device can\'t hit 60 FPS (choppier video instead of slow motion)</string>
     <string name="rewind_description">When enabled, a save-state is periodically saved automatically. Whenever you want to go back on your progress by a short amount of time, just open the rewind screen and select the state that you want to resume from.\n\nBe aware that by enabling this feature, you may experience occasional stutters if your device is not powerful enough. A considerable amount of memory is also used depending on how often you want the state to be captured and for how long it should be kept.</string>

@@ -73,6 +73,7 @@ typedef struct
     char* internalFilesDir;
     float fastForwardSpeedMultiplier;
     bool autoFrameskipEnabled;
+    int fastForwardMaxFrameskip;
     bool showBootScreen;
     bool useJit;
     int consoleType;

@@ -29,6 +29,7 @@ MelonDSAndroid::EmulatorConfiguration MelonDSAndroidConfiguration::buildEmulator
     jstring internalFilesDir = (jstring) env->GetObjectField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "internalDirectory", "Ljava/lang/String;"));
     jfloat fastForwardMaxSpeed = env->GetFloatField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "fastForwardSpeedMultiplier", "F"));
     jboolean autoFrameskipEnabled = env->GetBooleanField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "autoFrameskipEnabled", "Z"));
+    jint fastForwardMaxFrameskip = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "fastForwardMaxFrameskip", "I"));
     jboolean enableRewind = env->GetBooleanField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "rewindEnabled", "Z"));
     jint rewindPeriodSeconds = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "rewindPeriodSeconds", "I"));
     jint rewindWindowSeconds = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "rewindWindowSeconds", "I"));
@@ -76,6 +77,7 @@ MelonDSAndroid::EmulatorConfiguration MelonDSAndroidConfiguration::buildEmulator
     finalEmulatorConfiguration.internalFilesDir = const_cast<char*>(internalDir);
     finalEmulatorConfiguration.fastForwardSpeedMultiplier = fastForwardMaxSpeed;
     finalEmulatorConfiguration.autoFrameskipEnabled = autoFrameskipEnabled;
+    finalEmulatorConfiguration.fastForwardMaxFrameskip = fastForwardMaxFrameskip;
     finalEmulatorConfiguration.showBootScreen = showBootScreen;
     finalEmulatorConfiguration.useJit = useJit;
     finalEmulatorConfiguration.consoleType = consoleType;

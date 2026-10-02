@@ -27,5 +27,6 @@ data class EmulatorConfiguration(
         val micSource: MicSource,
         val firmwareConfiguration: FirmwareConfiguration,
         val rendererConfiguration: RendererConfiguration,
-        val autoFrameskipEnabled: Boolean = false
+        val autoFrameskipEnabled: Boolean = false,
+        val fastForwardMaxFrameskip: Int = 0
 )

@@ -281,6 +281,8 @@ MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfigurati
 
 MelonInstance::~MelonInstance()
 {
+    // an async hybrid present on the GL 3D thread still uses frameQueue
+    if (auto* hybrid = dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer())) hybrid->WaitPresent();
     frameQueue.clear();
     if (blitReadFBO) glDeleteFramebuffers(1, &blitReadFBO);
     if (blitDrawFBO) glDeleteFramebuffers(1, &blitDrawFBO);
@@ -647,9 +649,25 @@ u32 MelonInstance::runFrame()
     void* fbBottom = nullptr;
     auto* hybrid = currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
     bool ramFramebuffers = false;
+    bool presentedAsync = false;
     if (hybrid)
-        // the hybrid merges straight into the frame texture (no output array + blit)
-        hybrid->PresentInto(renderFrame->frameTexture, (192 + 2) * currentScale);
+    {
+        // the hybrid merges straight into the frame texture (no output array + blit), on its
+        // GL 3D thread: that thread also waits for the frame's previous presentation, then
+        // fences the merge and hands the frame to the presenter
+        const bool sleeping = nds->CPUStop & CPUStop_Sleep;
+        hybrid->PresentIntoAsync(renderFrame->frameTexture, (192 + 2) * currentScale,
+            [renderFrame, currentDisplay] {
+                if (renderFrame->presentFence) eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
+            },
+            [this, renderFrame, currentDisplay, sleeping] {
+                if (sleeping) { frameQueue.discardRenderedFrame(renderFrame); return; }
+                renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
+                glFlush();
+                frameQueue.pushRenderedFrame(renderFrame);
+            });
+        presentedAsync = true;
+    }
     else
         ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
     if (ramFramebuffers)
@@ -699,7 +717,8 @@ u32 MelonInstance::runFrame()
     }
 
     bool isSleeping = nds->CPUStop & CPUStop_Sleep;
-    if (!isSleeping) [[likely]]
+    if (presentedAsync) {}   // handed off on the GL 3D thread
+    else if (!isSleeping) [[likely]]
     {
         renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
         glFlush();
@@ -724,7 +743,10 @@ u32 MelonInstance::runFrame()
     bool needsScreenshot = screenshotRenderer->isScreenshotPending();
 
     if (needsRewindCapture || needsScreenshot) [[unlikely]]
+    {
+        if (hybrid) hybrid->WaitPresent();   // the frame texture is written on another thread
         screenshotRenderer->renderScreenshot(&nds->GPU, currentRenderer, renderFrame);
+    }
 
     if (needsRewindCapture)
     {

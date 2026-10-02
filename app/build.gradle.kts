@@ -92,6 +92,8 @@ android {
                     // LDM/STM via ldp/stp pairs + MainRAM inline block-load tier.
                     "-DLITEV_JIT_LDMSTM=ON",
                     "-DLITEV_JIT_LDM_FASTMEM=ON",
+                    // Batch per-instruction cycle adds until the next cycle read (exact).
+                    "-DLITEV_JIT_CYCLE_BATCH=ON",
                     // One MRS NZCV merge instead of per-flag CSET+BFI for S-ops.
                     "-DLITEV_JIT_FLAGMERGE=ON",
                     // Hoist SlowBlockTransfer9's region dispatch for whole-in-TCM blocks.

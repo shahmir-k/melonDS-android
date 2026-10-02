@@ -283,6 +283,7 @@ MelonInstance::~MelonInstance()
 {
     // an async hybrid present on the GL 3D thread still uses frameQueue
     if (auto* hybrid = dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer())) hybrid->WaitPresent();
+    if (auto* gl = dynamic_cast<GLRenderer*>(&nds->GPU.GetRenderer())) gl->WaitPresent();
     frameQueue.clear();
     if (blitReadFBO) glDeleteFramebuffers(1, &blitReadFBO);
     if (blitDrawFBO) glDeleteFramebuffers(1, &blitDrawFBO);
@@ -694,7 +695,25 @@ u32 MelonInstance::runFrame()
     else if (fbTop)
     {
         GLuint arrayTex = *(GLuint*) fbTop;
-        blitAcceleratedFrame(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight);
+        if (auto* gl = dynamic_cast<GLRenderer*>(&nds->GPU.GetRenderer()))
+        {
+            // copied into the frame texture on the renderer's present thread, which also
+            // waits for the frame's previous presentation and hands the frame off
+            const bool sleeping = nds->CPUStop & CPUStop_Sleep;
+            gl->PresentIntoAsync(renderFrame->frameTexture, screenWidth,
+                [renderFrame, currentDisplay] {
+                    if (renderFrame->presentFence) eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
+                },
+                [this, renderFrame, currentDisplay, sleeping] {
+                    if (sleeping) { frameQueue.discardRenderedFrame(renderFrame); return; }
+                    renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
+                    glFlush();
+                    frameQueue.pushRenderedFrame(renderFrame);
+                });
+            presentedAsync = true;
+        }
+        else
+            blitAcceleratedFrame(arrayTex, renderFrame->frameTexture, screenWidth, screenHeight);
 
         // FBHASH gate for the GL renderers (reads the output array texture).
         {
@@ -745,6 +764,7 @@ u32 MelonInstance::runFrame()
     if (needsRewindCapture || needsScreenshot) [[unlikely]]
     {
         if (hybrid) hybrid->WaitPresent();   // the frame texture is written on another thread
+        if (auto* gl = dynamic_cast<GLRenderer*>(&nds->GPU.GetRenderer())) gl->WaitPresent();
         screenshotRenderer->renderScreenshot(&nds->GPU, currentRenderer, renderFrame);
     }
 

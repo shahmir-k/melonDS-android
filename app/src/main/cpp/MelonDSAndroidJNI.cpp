@@ -714,8 +714,28 @@ void* emulate(void*)
         u32 nLines = MelonDSAndroid::loop();
 
         auto frameDuration = std::chrono::steady_clock::now() - frameStart;
-        if (performanceHintSession != nullptr)
-            performanceHintSession->reportActualWorkDuration(std::chrono::nanoseconds(frameDuration).count());
+        // The ADPF report is a binder call into system_server (which wakes the power HAL),
+        // made from the emu thread and landing on its core. Report the mean of every
+        // `adpfEvery` frames instead of every frame. debug.litev.adpfevery: unset = 10,
+        // 1 = every frame (old behaviour), 0 = no reports. Re-read every 120 frames.
+        static int adpfEvery = 10, adpfCtr = 0, adpfN = 0;
+        static int64_t adpfSumNs = 0;
+        if (--adpfCtr <= 0)
+        {
+            adpfCtr = 120;
+            char b[PROP_VALUE_MAX] = {0};
+            adpfEvery = __system_property_get("debug.litev.adpfevery", b) > 0 ? atoi(b) : 10;
+        }
+        if (performanceHintSession != nullptr && adpfEvery > 0)
+        {
+            adpfSumNs += std::chrono::nanoseconds(frameDuration).count();
+            if (++adpfN >= adpfEvery)
+            {
+                performanceHintSession->reportActualWorkDuration(adpfSumNs / adpfN);
+                adpfSumNs = 0;
+                adpfN = 0;
+            }
+        }
 
         double previousTick = lastTick;
         double currentTick = getCurrentMillis();

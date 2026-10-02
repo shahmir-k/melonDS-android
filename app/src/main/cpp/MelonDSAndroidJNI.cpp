@@ -728,7 +728,18 @@ void* emulate(void*)
         if (frameTimeStep < 1)
             frameTimeStep = 1;
 
-        if (limitFps)
+        // debug.litev.nolimit=1: limiter off (frameskip untouched) = the uncapped measurement
+        // mode of TESTING-METHODOLOGY §1 (same effect as unlimited fast-forward). Re-read
+        // every 120 frames.
+        static int noLimit = 0, noLimitCtr = 0;
+        if (--noLimitCtr <= 0)
+        {
+            noLimitCtr = 120;
+            char b[PROP_VALUE_MAX] = {0};
+            noLimit = __system_property_get("debug.litev.nolimit", b) > 0 && atoi(b) != 0;
+        }
+
+        if (limitFps && !noLimit)
         {
             frameLimitError += frameTimeStep - delay;
             if (frameLimitError < -frameTimeStep)

@@ -109,6 +109,10 @@ android {
                     // --- Scheduler / timing / audio ---
                     // Run each CPU to the true next event instead of 64-cycle slices (B).
                     "-DLITEV_EVENT_SLICES=ON",
+                    // Drain DMA9/GXFIFO-stall steps in one scheduler iteration while ARM7 is halted (A).
+                    "-DLITEV_SCHED_DRAIN=ON",
+                    // Dispatcher looks up the last 4 code regions instead of returning to C++ (A).
+                    "-DLITEV_JIT_REGION_CACHE=ON",
                     // Divider/sqrt results computed at register write; no completion event (B).
                     "-DLITEV_INSTANT_DIVSQRT=ON",
                     // Generate 8 SPU samples per scheduler event (B).

@@ -178,6 +178,11 @@ namespace {
         }
     }
 }
+static double litevThreadCpuMs()
+{
+    timespec ts; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
 // ---- end profiler ----
 
 using namespace std;
@@ -593,9 +598,11 @@ u32 MelonInstance::runFrame()
         while (nds->GPU.GetRenderer().NeedsShaderCompile());
     }
 
+    double litev_c_rf0 = litevThreadCpuMs();
     double litev_t_rf0 = litevNowMs();
     u32 nLines = nds->RunFrame();
     double litev_t_rf1 = litevNowMs();
+    double litev_c_rf1 = litevThreadCpuMs();
     retroAchievementsManager->FrameUpdate();
 
     // Present. Unified renderer API: GetFramebuffers() returns true with RAM
@@ -604,7 +611,13 @@ u32 MelonInstance::runFrame()
     // screen, layer 1 = bottom screen) at scaled resolution.
     void* fbTop = nullptr;
     void* fbBottom = nullptr;
-    bool ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
+    auto* hybrid = currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
+    bool ramFramebuffers = false;
+    if (hybrid)
+        // the hybrid merges straight into the frame texture (no output array + blit)
+        hybrid->PresentInto(renderFrame->frameTexture, (192 + 2) * currentScale);
+    else
+        ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
     if (ramFramebuffers)
     {
         if (fbTop && fbBottom)
@@ -644,6 +657,7 @@ u32 MelonInstance::runFrame()
     }
 
     double litev_t_blit1 = litevNowMs();
+    double litev_c_blit1 = litevThreadCpuMs();
     if (litevProfEnabled && litevGpuOk) {
         litevEndQuery(LITEV_TIME_ELAPSED);
         litevQPending[litevQSlot] = true;
@@ -689,7 +703,9 @@ u32 MelonInstance::runFrame()
     // when debug.litev.prof=1 (re-read every 60 frames). `submit` is kept in the
     // format for log-parser compatibility; it is always 0 without a render thread.
     {
-        static double a_fw = 0, a_rf = 0, a_blit = 0, a_other = 0, a_total = 0;
+        static double a_fw = 0, a_rf = 0, a_blit = 0, a_other = 0, a_total = 0, c_rf = 0, c_blit = 0;
+        c_rf += litev_c_rf1 - litev_c_rf0;
+        c_blit += litev_c_blit1 - litev_c_rf1;
         static int    n = 0;
         static double lastWall = 0;
         double wall = litev_t_end;
@@ -706,11 +722,11 @@ u32 MelonInstance::runFrame()
                 double wallSpan = (lastWall > 0) ? (wall - lastWall) : 0;
                 double gpuAvg = (litev_gpuSamples > 0) ? (litev_gpuMsAccum / litev_gpuSamples) : -1.0;
                 LOG_INFO("LITEV_PROF",
-                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f submit=%.2f blit=%.2f other=%.2f) | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
-                    a_total / n, a_fw / n, a_rf / n, 0.0, a_blit / n, a_other / n,
+                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f submit=%.2f blit=%.2f other=%.2f) | thread-cpu runFrame=%.2f blit=%.2f | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
+                    a_total / n, a_fw / n, a_rf / n, 0.0, a_blit / n, a_other / n, c_rf / n, c_blit / n,
                     gpuAvg, wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0));
             }
-            a_fw = a_rf = a_blit = a_other = a_total = 0;
+            a_fw = a_rf = a_blit = a_other = a_total = c_rf = c_blit = 0;
             litev_gpuMsAccum = 0; litev_gpuSamples = 0;
             n = 0;
             lastWall = wall;

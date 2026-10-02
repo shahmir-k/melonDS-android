@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <vector>
 #include <sched.h>
+#include <dirent.h>
+#include <sys/resource.h>
 #include <sys/system_properties.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -182,6 +184,37 @@ static double litevThreadCpuMs()
 {
     timespec ts; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+// Core 3 belongs to the emu thread. Measured on the RG DS (Shrek race): the emu thread
+// spent ~19 % of its time runnable but preempted (schedstat run-queue wait 1.9 s per 10 s,
+// 4.6k involuntary switches/s), mostly by this process's own unpinned threads (Mali driver
+// backend at nice -10, binder, dispatchers, audio). Every 300 frames: move every other
+// thread of the process to cores 0-2 (new threads appear over time), and run the emu
+// thread at nice -10. debug.litev.core3=0 disables it (A/B).
+static void litevKeepCore3()
+{
+    static int ctr = 0, on = -1;
+    if (on < 0)
+    {
+        char b[PROP_VALUE_MAX] = {0};
+        on = (__system_property_get("debug.litev.core3", b) > 0) ? atoi(b) != 0 : 1;
+        if (on) setpriority(PRIO_PROCESS, gettid(), -10);
+    }
+    if (!on || ctr-- > 0) return;
+    ctr = 300;
+    const pid_t self = gettid();
+    cpu_set_t others; CPU_ZERO(&others);
+    CPU_SET(0, &others); CPU_SET(1, &others); CPU_SET(2, &others);
+    if (DIR* d = opendir("/proc/self/task"))
+    {
+        while (dirent* e = readdir(d))
+        {
+            pid_t tid = atoi(e->d_name);
+            if (tid > 0 && tid != self)
+                sched_setaffinity(tid, sizeof(others), &others);
+        }
+        closedir(d);
+    }
 }
 // ---- end profiler ----
 
@@ -505,6 +538,7 @@ u32 MelonInstance::runFrame()
         sched_setaffinity(0, sizeof(set), &set);
         emuThreadPinned = true;
     }
+    litevKeepCore3();
 
     if (isRenderConfigurationDirty)
     {

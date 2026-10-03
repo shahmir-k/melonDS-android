@@ -178,7 +178,7 @@ class SharedPreferencesSettingsRepository(
     }
 
     private fun getFastForwardMaxFrameskip(): Int {
-        return preferences.getString("fast_forward_max_frameskip", "0")!!.toInt()
+        return preferences.getString("fast_forward_max_frameskip", "4")!!.toInt()
     }
 
     override fun getTheme(): Theme {

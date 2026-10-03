@@ -28,7 +28,7 @@
             app:iconSpaceReserved="false"
             android:entries="@array/fast_forward_max_frameskip_options"
             android:entryValues="@array/fast_forward_max_frameskip_values"
-            android:defaultValue="0" />
+            android:defaultValue="4" />
 
     <com.smp.masterswitchpreference.MasterSwitchPreference
             android:key="enable_rewind"

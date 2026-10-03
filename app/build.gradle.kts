@@ -50,9 +50,16 @@ android {
                 // which leaves the emulator core several times too slow. Build the
                 // Debug-config native code at release optimisation so the APK stays
                 // debuggable/installable but the core runs at speed.
+                // The release variant builds CMAKE_BUILD_TYPE=RelWithDebInfo, whose
+                // default is -O2; pin it (and Release) to the same -O3 so the shipped
+                // APK runs the code that was measured on .dev.
                 arguments(
                     "-DCMAKE_C_FLAGS_DEBUG=-O3 -DNDEBUG",
-                    "-DCMAKE_CXX_FLAGS_DEBUG=-O3 -DNDEBUG"
+                    "-DCMAKE_CXX_FLAGS_DEBUG=-O3 -DNDEBUG",
+                    "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -DNDEBUG",
+                    "-DCMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -DNDEBUG",
+                    "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG",
+                    "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG"
                 )
                 // LITEV performance flags. Every option is declared in
                 // melonDS-android-lib/CMakeLists.txt and defaults OFF there (LINK_*

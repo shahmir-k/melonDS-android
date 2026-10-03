@@ -174,7 +174,7 @@ class SharedPreferencesSettingsRepository(
     }
 
     private fun isAutoFrameskipEnabled(): Boolean {
-        return preferences.getBoolean("enable_auto_frameskip", false)
+        return preferences.getBoolean("enable_auto_frameskip", true)
     }
 
     private fun getFastForwardMaxFrameskip(): Int {
@@ -291,15 +291,15 @@ class SharedPreferencesSettingsRepository(
 
     override fun getVideoRenderer(): Flow<VideoRenderer> {
         return getOrCreatePreferenceSharedFlow("video_renderer") {
-            val videoRendererPreference = preferences.getString("video_renderer", "software")!!
+            val videoRendererPreference = preferences.getString("video_renderer", "opengl")!!
             VideoRenderer.valueOf(videoRendererPreference.uppercase())
         }
     }
 
     override fun getVideoInternalResolutionScaling(): Flow<Int> {
         return getOrCreatePreferenceSharedFlow("video_internal_resolution") {
-            val internalResolutionPreference = preferences.getString("video_internal_resolution", "1")!!
-            internalResolutionPreference.toIntOrNull() ?: 1
+            val internalResolutionPreference = preferences.getString("video_internal_resolution", "3")!!
+            internalResolutionPreference.toIntOrNull() ?: 3
         }
     }
 

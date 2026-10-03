@@ -30,13 +30,6 @@
             android:entryValues="@array/fast_forward_max_frameskip_values"
             android:defaultValue="0" />
 
-    <SwitchPreference
-            android:key="enable_auto_frameskip"
-            android:title="@string/auto_frameskip"
-            android:summary="@string/auto_frameskip_summary"
-            app:iconSpaceReserved="false"
-            android:defaultValue="false" />
-
     <com.smp.masterswitchpreference.MasterSwitchPreference
             android:key="enable_rewind"
             android:title="@string/rewind"

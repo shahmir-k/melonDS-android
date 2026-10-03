@@ -203,7 +203,12 @@ android {
     }
     buildTypes {
         getByName("release") {
-            isMinifyEnabled = true
+            // ponytail: R8 full-mode minification throws a ClassCastException in the
+            // Hilt/Compose startup graph at launch, so the QA release ships unminified
+            // (the proven-working .dev build is also unminified). Upgrade path: re-enable
+            // minify and add the missing keep rules (deobfuscate the crash with the R8
+            // mapping) before any Play Store / size-sensitive release.
+            isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }

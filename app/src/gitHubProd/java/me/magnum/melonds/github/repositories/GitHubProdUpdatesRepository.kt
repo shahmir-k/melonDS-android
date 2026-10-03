@@ -28,6 +28,9 @@ class GitHubProdUpdatesRepository(private val context: Context, private val api:
     }
 
     override suspend fun checkNewUpdate(): Result<AppUpdate?> {
+        // ponytail: SereneDS has no release feed yet; GitHubApi polls upstream melonDS Android,
+        // whose APKs are not SereneDS. Point GitHubApi at a SereneDS feed and drop this when one exists.
+        if (true) return Result.success(null)
         if (!shouldCheckUpdates()) {
             return Result.success(null)
         }

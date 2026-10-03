@@ -30,6 +30,7 @@
     <color name="prefSwitchBackground">#FCCC</color>
 
     <color name="melonMain">#5C913B</color>
+    <color name="serenedsIconBg">#FBF7F3</color>
     <color name="melonDark">#49732F</color>
 
     <color name="splashBackground">@color/colorPrimary</color>

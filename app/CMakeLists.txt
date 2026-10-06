@@ -38,9 +38,15 @@ endif()
 
 option(LITEV_PGO_USE "Build the core with the recorded PGO profile" OFF)
 if (LITEV_PGO_USE)
-    add_compile_options(
-        -fprofile-instr-use=${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/pgo/core.profdata
+    # IR-level profile plus a context-sensitive (CSPGO) pass recorded on the ThinLTO build;
+    # the CS part is applied at link time, so the link needs -fprofile-use as well.
+    set(LITEV_PGO_PROFILE ${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/pgo/core-cs.profdata)
+    add_compile_options(-fprofile-use=${LITEV_PGO_PROFILE}
         -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-profile-instr-missing)
+    # The profile comes from liteDS-headless, so functions that differ in this build (main
+    # of the bundled faad_cli, Android-only paths) mismatch; lld warns, and the NDK links
+    # with --fatal-warnings. A mismatched function just gets no profile data.
+    add_link_options(-fprofile-use=${LITEV_PGO_PROFILE} -Wl,--no-lto-pgo-warn-mismatch)
 endif()
 
 add_subdirectory(${CORE-LIB} ./melonDS-android-lib)

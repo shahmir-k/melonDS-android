@@ -14,6 +14,16 @@ set(OBOE ${ANDROID-CPP}/oboe)
 set(FAAD2 ${ANDROID-CPP}/faad2)
 set(RCHEEVOS ${ANDROID-CPP}/rcheevos)
 
+# LITEV_HOT_ORDER: place the emulator thread's hottest C++ functions next to each other
+# in the .so (lld --symbol-ordering-file), so the hot set spans fewer i-cache lines and
+# pages on the in-order A55. Every function gets its own section so the linker can move
+# it; must be set before the core is added. hot-symbols.order is generated from
+# capture.sh cycle + l1i_cache_refill profiles of Pokemon White. Layout only (A).
+option(LITEV_HOT_ORDER "Order hot C++ functions together at link time" OFF)
+if (LITEV_HOT_ORDER)
+    add_compile_options(-ffunction-sections)
+endif()
+
 add_subdirectory(${CORE-LIB} ./melonDS-android-lib)
 add_subdirectory(${OBOE} ./oboe)
 add_subdirectory(${FAAD2} ./faad2)
@@ -80,4 +90,10 @@ target_link_libraries(melonDS-android-frontend android core net-utils oboe faad 
 if (LITEV_LINKOPT)
     target_compile_options(melonDS-android-frontend PRIVATE -fno-plt)
     target_link_options(melonDS-android-frontend PRIVATE -Wl,-Bsymbolic-functions)
+endif()
+
+if (LITEV_HOT_ORDER)
+    target_link_options(melonDS-android-frontend PRIVATE
+        -Wl,--symbol-ordering-file=${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/hot-symbols.order
+        -Wl,--no-warn-symbol-ordering)
 endif()

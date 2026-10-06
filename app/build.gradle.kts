@@ -125,6 +125,8 @@ android {
                     // Linked hops: no PC store, stop check folded into the budget compare, conditions
                     // on host NZCV when it equals the slot (A). Needs BUDGET_REG and the LINK_* set.
                     "-DLITEV_JIT_EXIT_PROTO=ON",
+                    // Hot C++ functions laid out together at link time (app CMakeLists.txt) (A).
+                    "-DLITEV_HOT_ORDER=ON",
                     // Divider/sqrt results computed at register write; no completion event (B).
                     "-DLITEV_INSTANT_DIVSQRT=ON",
                     // Generate 8 SPU samples per scheduler event (B).

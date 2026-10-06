@@ -129,6 +129,8 @@ android {
                     "-DLITEV_HOT_ORDER=ON",
                     // Profile-guided optimisation from a recorded PW/Shrek profile (app CMakeLists.txt) (A).
                     "-DLITEV_PGO_USE=ON",
+                    // ThinLTO across the core and frontend (app CMakeLists.txt) (A).
+                    "-DLITEV_THINLTO=ON",
                     // Divider/sqrt results computed at register write; no completion event (B).
                     "-DLITEV_INSTANT_DIVSQRT=ON",
                     // Generate 8 SPU samples per scheduler event (B).

@@ -27,6 +27,15 @@ endif()
 # LITEV_PGO_USE: clang profile-guided optimisation from a profile recorded by an
 # instrumented liteDS-headless (-fprofile-instr-generate) playing Pokemon White and
 # Shrek on the RG DS. Changes code layout and inlining, not semantics (no fast-math) (A).
+# LITEV_THINLTO: ThinLTO across the core and frontend. The RelWithDebInfo build never got
+# the core's release-only LTO, so cross-file calls (GPU3D, DMA, SPU, NDS IO helpers) were
+# never inlined. Optimisation scope only, no semantic change (A).
+option(LITEV_THINLTO "Build the core and frontend with ThinLTO" OFF)
+if (LITEV_THINLTO)
+    add_compile_options(-flto=thin)
+    add_link_options(-flto=thin)
+endif()
+
 option(LITEV_PGO_USE "Build the core with the recorded PGO profile" OFF)
 if (LITEV_PGO_USE)
     add_compile_options(

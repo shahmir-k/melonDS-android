@@ -189,8 +189,10 @@ static double litevThreadCpuMs()
 // spent ~19 % of its time runnable but preempted (schedstat run-queue wait 1.9 s per 10 s,
 // 4.6k involuntary switches/s), mostly by this process's own unpinned threads (Mali driver
 // backend at nice -10, binder, dispatchers, audio). Every 300 frames: move every other
-// thread of the process to cores 0-2 (new threads appear over time), and run the emu
-// thread at nice -10. debug.litev.core3=0 disables it (A/B).
+// thread of the process to cores 0-2 (new threads appear over time), and pin the emu
+// thread to core 3 at nice -10. The emu pin is re-asserted each time, not set once:
+// a cpuset move (Android reassigns the app's cgroup) resets the thread's affinity, and
+// a recreated emu thread starts unpinned. debug.litev.core3=0 disables it (A/B).
 static void litevKeepCore3()
 {
     static int ctr = 0, on = -1;
@@ -198,11 +200,13 @@ static void litevKeepCore3()
     {
         char b[PROP_VALUE_MAX] = {0};
         on = (__system_property_get("debug.litev.core3", b) > 0) ? atoi(b) != 0 : 1;
-        if (on) setpriority(PRIO_PROCESS, gettid(), -10);
     }
     if (!on || ctr-- > 0) return;
     ctr = 300;
     const pid_t self = gettid();
+    cpu_set_t core3; CPU_ZERO(&core3); CPU_SET(3, &core3);
+    sched_setaffinity(0, sizeof(core3), &core3);
+    setpriority(PRIO_PROCESS, self, -10);
     cpu_set_t others; CPU_ZERO(&others);
     CPU_SET(0, &others); CPU_SET(1, &others); CPU_SET(2, &others);
     if (DIR* d = opendir("/proc/self/task"))
@@ -528,19 +532,8 @@ void MelonInstance::setFrameskipTarget(int target)
 
 u32 MelonInstance::runFrame()
 {
-    // Pin the emulator thread to core 3, once. The render workers (lib,
-    // LITEV_PIN_RENDER) and the frame-present thread (presentFrame) are kept on
-    // cores 0-2, so the emulator owns a core instead of being time-sliced with
-    // them. runFrame always runs on the emulator thread.
-    static bool emuThreadPinned = false;
-    if (!emuThreadPinned)
-    {
-        cpu_set_t set;
-        CPU_ZERO(&set);
-        CPU_SET(3, &set);
-        sched_setaffinity(0, sizeof(set), &set);
-        emuThreadPinned = true;
-    }
+    // Keep core 3 for the emulator thread (runFrame always runs on it): pins it to
+    // core 3 and the process's other threads to cores 0-2, re-asserted every 300 frames.
     litevKeepCore3();
 
     if (isRenderConfigurationDirty)

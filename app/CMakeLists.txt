@@ -24,6 +24,16 @@ if (LITEV_HOT_ORDER)
     add_compile_options(-ffunction-sections)
 endif()
 
+# LITEV_PGO_USE: clang profile-guided optimisation from a profile recorded by an
+# instrumented liteDS-headless (-fprofile-instr-generate) playing Pokemon White and
+# Shrek on the RG DS. Changes code layout and inlining, not semantics (no fast-math) (A).
+option(LITEV_PGO_USE "Build the core with the recorded PGO profile" OFF)
+if (LITEV_PGO_USE)
+    add_compile_options(
+        -fprofile-instr-use=${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/pgo/core.profdata
+        -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-profile-instr-missing)
+endif()
+
 add_subdirectory(${CORE-LIB} ./melonDS-android-lib)
 add_subdirectory(${OBOE} ./oboe)
 add_subdirectory(${FAAD2} ./faad2)

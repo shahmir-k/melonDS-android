@@ -122,6 +122,9 @@ android {
                     "-DLITEV_JIT_REGION_CACHE=ON",
                     // Slice budget in a register across JIT hops; Timestamp written only where C++ reads it (A).
                     "-DLITEV_JIT_BUDGET_REG=ON", "-DLITEV_JIT_IRQMASK_CONT=ON", "-DLITEV_LAZY_SQRT=ON", "-DLITEV_GEOM_CLIP_PLANESKIP=ON", "-DLITEV_HYB_TEXSTAGE=ON", "-DLITEV_GXFIFO_READ_INLINE=ON", "-DLITEV_DMA_ARMED_MASK=ON",
+                    // Linked hops: no PC store, stop check folded into the budget compare, conditions
+                    // on host NZCV when it equals the slot (A). Needs BUDGET_REG and the LINK_* set.
+                    "-DLITEV_JIT_EXIT_PROTO=ON",
                     // Divider/sqrt results computed at register write; no completion event (B).
                     "-DLITEV_INSTANT_DIVSQRT=ON",
                     // Generate 8 SPU samples per scheduler event (B).

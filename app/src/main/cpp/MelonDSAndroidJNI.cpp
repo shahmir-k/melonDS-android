@@ -701,6 +701,21 @@ static bool lanLockParked()
     }
 }
 
+// How long the LAN backend blocks waiting for a peer's MP frame (host: client replies; client:
+// the host's next frame). melonDS's 25 ms is too short over Wi-Fi: a poll/reply round trip plus
+// the peers' frame-pacing phase offset (up to one frame) exceeds it and in-game joins fail with
+// a communication error. Measured on two RG DS units (Shrek): 25 ms fails, 50 and 100 ms join and
+// race. The waiting side's emulated clock is frozen while it waits, so a longer wait does not
+// trip the game's own timeouts. debug.litev.mptimeout overrides it.
+static constexpr int kLanRecvTimeoutMs = 50;
+
+static void lanApplyRecvTimeout()
+{
+    char b[PROP_VALUE_MAX] = {0};
+    int ms = __system_property_get("debug.litev.mptimeout", b) > 0 ? atoi(b) : kLanRecvTimeoutMs;
+    melonDS::MPInterface::Get().SetRecvTimeout(ms > 0 ? ms : kLanRecvTimeoutMs);
+}
+
 static void lanEndAll()
 {
     if (lanMode == LanDiscovering)
@@ -748,6 +763,7 @@ Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring 
     std::string name = lanJString(env, playerName);
     lanEndAll();
     melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
+    lanApplyRecvTimeout();
     bool ok = lan().StartHost(name.c_str(), maxPlayers);
     if (ok)
         lanMode = LanHosting;
@@ -764,6 +780,7 @@ Java_me_magnum_melonds_MelonEmulator_lanStartDiscovery(JNIEnv* env, jobject thiz
         return JNI_FALSE;
     lanEndAll();
     melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
+    lanApplyRecvTimeout();
     bool ok = lan().StartDiscovery();
     if (ok)
         lanMode = LanDiscovering;
@@ -811,6 +828,7 @@ Java_me_magnum_melonds_MelonEmulator_lanJoin(JNIEnv* env, jobject thiz, jstring 
         lanEndAll();
         melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
     }
+    lanApplyRecvTimeout();
     // blocks while ENet connects to the host (the caller runs this off the UI thread)
     bool ok = lan().StartClient(name.c_str(), host.c_str());
     if (ok)

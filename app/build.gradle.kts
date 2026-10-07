@@ -137,6 +137,7 @@ android {
                     "-DLITEV_INSTANT_DIVSQRT=ON",
                     // Generate 8 SPU samples per scheduler event (B).
                     "-DLITEV_SPU_BATCH=ON",
+                    "-DLITEV_WIFI_BATCH=ON",
                     // Skip inert 32 kHz RTC ticks while no RTC IRQ is armed (B).
                     "-DLITEV_COARSE_RTC=ON",
                     // Cache the next timer-overflow deadline (A).

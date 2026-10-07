@@ -450,6 +450,7 @@ namespace MelonDSAndroid
             );
             netplay->remote->getNds()->GPU.Headless = true; // its screens are not shown
             netplay->remote->getNds()->SPU.Silent = true;   // nor its sound heard
+            netplay->remote->getNds()->GPU.GPU3D.Headless = true;
             instance->setInputDeferred(true);
             auto& link = (LockstepMP&) MPInterface::Get();
             NDS* local = instance->getNds();

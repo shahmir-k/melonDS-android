@@ -49,6 +49,7 @@ import androidx.window.layout.WindowInfoTracker
 import com.squareup.picasso.Picasso
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
 import me.magnum.melonds.MelonEmulator
@@ -393,6 +394,11 @@ class EmulatorActivity : AppCompatActivity() {
                 if (showMultiplayerDialog.value) {
                     LanMultiplayerDialog(
                         defaultPlayerName = remember { viewModel.getLanPlayerName() },
+                        onStartNetplay = { player, peer ->
+                            activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
+                            showMultiplayerDialog.value = false
+                            viewModel.startNetplay(player, peer)
+                        },
                         onDismiss = {
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
                             viewModel.resumeEmulator()
@@ -470,11 +476,11 @@ class EmulatorActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.currentFps.collectLatest {
-                    if (it == null) {
+                combine(viewModel.currentFps, viewModel.netplayStatus) { fps, netplay -> fps to netplay }.collectLatest { (fps, netplay) ->
+                    if (fps == null) {
                         binding.textFps.text = null
                     } else {
-                        binding.textFps.text = getString(R.string.info_fps, it)
+                        binding.textFps.text = getString(R.string.info_fps, fps) + if (netplay.isEmpty()) "" else "  ·  $netplay"
                     }
                 }
             }

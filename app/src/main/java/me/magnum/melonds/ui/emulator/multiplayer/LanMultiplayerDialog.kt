@@ -74,7 +74,7 @@ private fun parsePlayers(rows: Array<String>) = rows.mapNotNull { row ->
  * The session outlives the dialog: it ends on "Leave session" or when the emulator stops.
  */
 @Composable
-fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
+fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, peer: String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var playerName by remember { mutableStateOf(defaultPlayerName) }
@@ -86,6 +86,9 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
     var busyText by remember { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var direct by remember { mutableStateOf(false) }
+    // Netplay peer, remembered while both players are connected: once one side restarts into
+    // Netplay it leaves the lobby, and the other side's list then no longer has its address
+    var netplayPeer by remember { mutableStateOf<String?>(null) }
     // a Wi-Fi Direct action waiting on the runtime permission prompt
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -113,6 +116,9 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
             mode = newMode
             sessions = newSessions
             players = newPlayers
+            newPlayers.singleOrNull { !it.isLocal && it.status != PLAYER_CONNECTING }
+                ?.takeIf { newPlayers.size == 2 && it.address != "127.0.0.1" && it.address != "0.0.0.0" }
+                ?.let { netplayPeer = it.address }
             delay(100)
         }
     }
@@ -217,6 +223,17 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
                     }
                 }
                 else -> {
+                    // Netplay: exactly two players; each device restarts the game running both consoles
+                    val peer = netplayPeer
+                    if (peer != null) {
+                        DialogButton(stringResource(R.string.multiplayer_start_netplay), enabled = idle) {
+                            val player = if (mode == MODE_HOSTING) 0 else 1
+                            scope.launch(Dispatchers.IO) {
+                                MelonEmulator.lanLeave()
+                                withContext(Dispatchers.Main) { onStartNetplay(player, peer) }
+                            }
+                        }
+                    }
                     DialogButton(stringResource(R.string.multiplayer_leave), enabled = idle) {
                         scope.launch(Dispatchers.IO) { MelonEmulator.lanLeave() }
                         DirectLink.leave(context)

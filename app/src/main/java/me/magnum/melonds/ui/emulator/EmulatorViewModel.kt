@@ -146,6 +146,9 @@ class EmulatorViewModel @Inject constructor(
 
     private val _currentFps = MutableStateFlow<Int?>(null)
     val currentFps = _currentFps.asStateFlow()
+    // shown next to the FPS counter ("" outside Netplay)
+    private val _netplayStatus = MutableStateFlow("")
+    val netplayStatus = _netplayStatus.asStateFlow()
 
     private val _toastEvent = EventSharedFlow<ToastEvent>()
     val toastEvent = _toastEvent.asSharedFlow()
@@ -375,6 +378,17 @@ class EmulatorViewModel @Inject constructor(
         sessionCoroutineScope.launch {
             emulatorManager.resumeEmulator()
         }
+    }
+
+    /**
+     * Restarts the running game in Netplay: both players' consoles run on every device and only
+     * inputs cross the network. [player] 0 = host, 1 = guest; [peerAddress] = the other device's IP.
+     */
+    fun startNetplay(player: Int, peerAddress: String) {
+        val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
+        MelonEmulator.netplayPrepare(player, peerAddress)
+        stopEmulator()
+        loadRom(rom)
     }
 
     fun resetEmulator() {
@@ -989,6 +1003,7 @@ class EmulatorViewModel @Inject constructor(
         sessionCoroutineScope.launch {
             while (isActive) {
                 delay(1.seconds)
+                _netplayStatus.value = MelonEmulator.netplayStatus()
                 _currentFps.value = emulatorManager.getFps().roundToInt()
             }
         }

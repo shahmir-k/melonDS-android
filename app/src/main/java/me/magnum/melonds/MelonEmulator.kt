@@ -105,6 +105,10 @@ object MelonEmulator {
     external fun lanGetPlayers(): Array<String>
     external fun lanTick()
     external fun lanLeave()
+    // The next game started runs in Netplay (both consoles on every device) as `player`, peer at `peer` (IP)
+    external fun netplayPrepare(player: Int, peer: String)
+    // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
+    external fun netplayStatus(): String
 
     fun saveState(path: Uri): Boolean {
         return saveStateInternal(path.toString())

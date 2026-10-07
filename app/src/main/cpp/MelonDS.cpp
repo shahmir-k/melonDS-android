@@ -26,9 +26,16 @@
 #include <sys/system_properties.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <poll.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
 #include <thread>
+#include <map>
+#include <mutex>
 #include "xxhash/xxhash.h"
 #include "AndroidCameraHandler.h"
 #include "renderer/ScreenshotRenderer.h"
@@ -55,8 +62,8 @@ namespace MelonDSAndroid
     // headless on its own thread. Each console takes its player's input Delay frames after it was
     // sampled (NetplayInput), and the two talk over the deterministic in-process LockstepMP, so
     // both devices compute exactly the same thing.
-    // ponytail: started from the debug.litev.netplay prop ("player=0,peer=IP:PORT[,port=N,delay=D]")
-    // until the lobby UI exists.
+    // Started from the multiplayer lobby (netplayPrepare, then the game restarts), or for testing
+    // from the debug.litev.netplay prop ("player=0,peer=IP:PORT[,port=N,delay=D]").
     struct NetplaySession
     {
         int player = 0, delay = 3, port = 7100;
@@ -67,18 +74,33 @@ namespace MelonDSAndroid
         std::thread thread;
         std::atomic<bool> running {false};
         int frame = 0;
+        // desync check: our copy of the other console, by frame (written by its thread)
+        std::mutex hashLock;
+        std::map<int, u64> remoteHashes;
+        std::atomic<int> desyncFrame {-1};
+        bool waiting = false;
     };
     std::unique_ptr<NetplaySession> netplay;
 
     bool netplayActive() { return netplay != nullptr; }
 
+    static std::string netplayPending; // set by the lobby, used by the next setup()
+
+    void netplayPrepare(int player, std::string peer)
+    {
+        netplayPending = "player=" + std::to_string(player) + ",peer=" + peer + ":7100";
+    }
+
     static std::unique_ptr<NetplaySession> netplayFromProp()
     {
+        std::string spec = std::move(netplayPending);
+        netplayPending.clear();
         char prop[PROP_VALUE_MAX] = {0};
-        if (__system_property_get("debug.litev.netplay", prop) <= 0)
+        if (spec.empty() && __system_property_get("debug.litev.netplay", prop) > 0)
+            spec = prop;
+        if (spec.empty())
             return nullptr;
         auto session = std::make_unique<NetplaySession>();
-        std::string spec = prop;
         for (size_t pos = 0; pos <= spec.size();)
         {
             size_t end = spec.find(',', pos);
@@ -127,25 +149,168 @@ namespace MelonDSAndroid
         fw.macAddress[0] = 0;       // the generated firmware's MAC, + instance id
     }
 
-    // Fresh, empty save per player: identical on both devices.
-    // ponytail: no save exchange yet, so games start from no save.
-    static std::string netplaySavePath(int player)
+    // Scratch save for the other player's console (it starts from their save, sent at session start).
+    // Our own console uses our real save, so progress made in Netplay persists as usual.
+    static std::string netplaySavePath(int player, const std::vector<u8>& data)
     {
         std::string dir = internalFilesDir + "/netplay";
         mkdir(dir.c_str(), 0700);
         std::string path = dir + "/p" + std::to_string(player) + ".sav";
-        if (FILE* f = fopen(path.c_str(), "wb")) fclose(f);
+        if (FILE* f = fopen(path.c_str(), "wb"))
+        {
+            if (!data.empty()) fwrite(data.data(), 1, data.size(), f);
+            fclose(f);
+        }
         return path;
     }
 
-    // Desync check: both devices log the same lines for the same console if they agree.
-    static void netplayLogHash(MelonInstance& console, int player, int frames)
+    static std::vector<u8> netplayReadFile(const std::string& path, size_t maxLen = SIZE_MAX)
+    {
+        std::vector<u8> data;
+        if (Platform::FileHandle* f = Platform::OpenFile(path, Platform::FileMode::Read))
+        {
+            data.resize(std::min<u64>(Platform::FileLength(f), maxLen));
+            Platform::FileRewind(f);
+            if (!data.empty() && Platform::FileRead(data.data(), data.size(), 1, f) != 1) data.clear();
+            Platform::CloseFile(f);
+        }
+        return data;
+    }
+
+    static bool sendAll(int fd, const void* p, size_t n)
+    {
+        for (const u8* b = (const u8*)p; n; )
+        {
+            ssize_t k = send(fd, b, n, MSG_NOSIGNAL);
+            if (k <= 0) return false;
+            b += k; n -= k;
+        }
+        return true;
+    }
+
+    static bool recvAll(int fd, void* p, size_t n)
+    {
+        for (u8* b = (u8*)p; n; )
+        {
+            ssize_t k = recv(fd, b, n, 0);
+            if (k <= 0) return false;
+            b += k; n -= k;
+        }
+        return true;
+    }
+
+    // Session start: both devices check they run the same game and swap saves, so every console
+    // boots from its owner's save. TCP on the Netplay port + 1; player 0 listens, player 1
+    // connects (whoever starts first waits up to 60 s for the other).
+    static bool netplayExchange(const NetplaySession& s, u64 romId, const std::vector<u8>& mine, std::vector<u8>& theirs)
+    {
+        std::string ip = s.peer.substr(0, s.peer.rfind(':'));
+        int fd = -1;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        if (s.player == 0)
+        {
+            int ls = socket(AF_INET, SOCK_STREAM, 0);
+            int one = 1;
+            setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+            sockaddr_in a {};
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_ANY);
+            a.sin_port = htons(s.port + 1);
+            if (bind(ls, (sockaddr*)&a, sizeof(a)) == 0 && listen(ls, 1) == 0)
+            {
+                pollfd pf {ls, POLLIN, 0};
+                if (poll(&pf, 1, 60000) == 1) fd = accept(ls, nullptr, nullptr);
+            }
+            close(ls);
+        }
+        else
+        {
+            while (fd < 0 && std::chrono::steady_clock::now() < deadline)
+            {
+                fd = socket(AF_INET, SOCK_STREAM, 0);
+                sockaddr_in a {};
+                a.sin_family = AF_INET;
+                inet_pton(AF_INET, ip.c_str(), &a.sin_addr);
+                a.sin_port = htons(s.port + 1);
+                if (connect(fd, (sockaddr*)&a, sizeof(a)) != 0)
+                {
+                    close(fd);
+                    fd = -1;
+                    usleep(500000);
+                }
+            }
+        }
+        if (fd < 0)
+        {
+            Platform::Log(Platform::LogLevel::Error, "Netplay: could not reach the other player\n");
+            return false;
+        }
+        timeval tv {30, 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+        u64 theirRom = 0;
+        u32 len = (u32)mine.size(), theirLen = 0;
+        bool ok = sendAll(fd, &romId, 8) && sendAll(fd, &len, 4) && (!len || sendAll(fd, mine.data(), len))
+               && recvAll(fd, &theirRom, 8) && recvAll(fd, &theirLen, 4) && theirLen <= (32u << 20);
+        if (ok)
+        {
+            theirs.resize(theirLen);
+            ok = !theirLen || recvAll(fd, theirs.data(), theirLen);
+        }
+        close(fd);
+        if (!ok)
+            Platform::Log(Platform::LogLevel::Error, "Netplay: save exchange failed\n");
+        else if (theirRom != romId)
+        {
+            Platform::Log(Platform::LogLevel::Error, "Netplay: the other player runs a different game\n");
+            ok = false;
+        }
+        else
+            Platform::Log(Platform::LogLevel::Info, "Netplay: saves exchanged (ours %u bytes, theirs %u bytes)\n", len, theirLen);
+        return ok;
+    }
+
+    // Desync check, every 60 frames: each device sends the hash of its own console; the other
+    // compares it with its copy of that console. Also logged (NETPLAY_HASH) for offline diffs.
+    static void netplayHash(MelonInstance& console, int player, int frames)
     {
         if (frames % 60) return;
         NDS* nds = console.getNds();
+        u64 hash = XXH3_64bits(nds->MainRAM, nds->MainRAMMask + 1) ^ nds->GetSysTimestamp();
         Platform::Log(Platform::LogLevel::Info, "NETPLAY_HASH p%d f%d sys=%llu ram=%016llx\n", player, frames,
                       (unsigned long long)nds->GetSysTimestamp(),
                       (unsigned long long)XXH3_64bits(nds->MainRAM, nds->MainRAMMask + 1));
+        NetplaySession& s = *netplay;
+        if (player == s.player)
+        {
+            s.input->SendHash(frames, hash);
+            return;
+        }
+        std::lock_guard<std::mutex> lk(s.hashLock);
+        s.remoteHashes[frames] = hash;
+        while (s.remoteHashes.size() > 64) s.remoteHashes.erase(s.remoteHashes.begin());
+    }
+
+    static void netplayCheck(NetplaySession& s)
+    {
+        std::lock_guard<std::mutex> lk(s.hashLock);
+        for (auto& [f, mine] : s.remoteHashes)
+        {
+            u64 theirs;
+            if (s.desyncFrame < 0 && s.input->PeerHash(f, theirs) && theirs != mine)
+            {
+                s.desyncFrame = f;
+                Platform::Log(Platform::LogLevel::Error, "Netplay: DESYNC at frame %d\n", f);
+            }
+        }
+        s.waiting = s.input->MsSincePeer() > 500;   // the peer went quiet (it re-sends every 10 ms)
+    }
+
+    std::string netplayStatus()
+    {
+        if (!netplay) return "";
+        if (netplay->desyncFrame >= 0) return "DESYNC";
+        return netplay->waiting ? "waiting for other player" : "Netplay";
     }
 
     static void netplayRemoteLoop()
@@ -167,7 +332,7 @@ namespace MelonDSAndroid
             if (!s.running) break;
             netplayApply(*s.remote, in);
             s.remote->runFrameHeadless();
-            netplayLogHash(*s.remote, other, f + 1);
+            netplayHash(*s.remote, other, f + 1);
         }
     }
 
@@ -316,9 +481,13 @@ namespace MelonDSAndroid
     {
         if (netplay)
         {
-            if (!netplay->remote->loadRom(romPath, netplaySavePath(1 - netplay->player)))
+            std::vector<u8> head = netplayReadFile(romPath, 0x1000);
+            u64 romId = XXH3_64bits(head.data(), head.size());
+            std::vector<u8> mine = netplayReadFile(sramPath), theirs;
+            if (head.empty() || !netplayExchange(*netplay, romId, mine, theirs))
                 return 2;
-            sramPath = netplaySavePath(netplay->player);
+            if (!netplay->remote->loadRom(romPath, netplaySavePath(1 - netplay->player, theirs)))
+                return 2;
         }
         if (!instance->loadRom(std::move(romPath), std::move(sramPath)))
             return 2;
@@ -402,8 +571,14 @@ namespace MelonDSAndroid
             netplay->input->SubmitLocal(netplay->frame, local);
             netplayApply(*instance, netplay->input->Get(netplay->player, netplay->frame));
             netplay->frame++;
+            if (netplay->frame % 60 == 0)
+            {   // TEMP diagnostic: debug.litev.npnodraw=1 stops the local console drawing (A/B mid-race)
+                char p[PROP_VALUE_MAX] = {0};
+                instance->getNds()->GPU.Headless = __system_property_get("debug.litev.npnodraw", p) > 0 && atoi(p) == 1;
+            }
             u32 lines = instance->runFrame();
-            netplayLogHash(*instance, netplay->player, netplay->frame);
+            netplayHash(*instance, netplay->player, netplay->frame);
+            if (netplay->frame % 60 == 0) netplayCheck(*netplay);
             return lines;
         }
         return instance->runFrame();

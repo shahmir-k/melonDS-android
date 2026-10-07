@@ -879,6 +879,20 @@ Java_me_magnum_melonds_MelonEmulator_lanTick(JNIEnv* env, jobject thiz)
     pthread_mutex_unlock(&emuThreadMutex);
 }
 
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
+{
+    return env->NewStringUTF(MelonDSAndroid::netplayStatus().c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jstring peer)
+{
+    const char* p = env->GetStringUTFChars(peer, nullptr);
+    MelonDSAndroid::netplayPrepare(player, p);
+    env->ReleaseStringUTFChars(peer, p);
+}
+
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanLeave(JNIEnv* env, jobject thiz)
 {

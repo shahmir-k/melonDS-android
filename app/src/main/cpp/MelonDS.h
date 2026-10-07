@@ -36,6 +36,10 @@ namespace MelonDSAndroid {
 
     // Netplay: this device also emulates the other player's console; only inputs cross the network.
     extern bool netplayActive();
+    // The next game started runs in Netplay as `player` (0 host, 1 guest) with the peer at `peer` (IP).
+    extern void netplayPrepare(int player, std::string peer);
+    // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
+    extern std::string netplayStatus();
     extern void setConfiguration(EmulatorConfiguration emulatorConfiguration);
     extern void setup(AndroidCameraHandler* androidCameraHandler, std::shared_ptr<MelonEventMessenger> androidEventMessenger, u32* screenshotBufferPointer, int instanceId);
     extern void setCodeList(std::list<Cheat> cheats);

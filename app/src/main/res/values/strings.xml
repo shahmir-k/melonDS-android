@@ -670,5 +670,6 @@
     <string name="multiplayer_player_lost">Connection lost</string>
     <string name="multiplayer_player_you">You</string>
     <string name="multiplayer_same_version_hint">All players must be on the same Wi-Fi network and run the same SereneDS version.</string>
-    <string name="multiplayer_lobby_hint">Resume the game and use its wireless mode (for example the Union Room) on every device to connect.</string>
+    <string name="multiplayer_lobby_hint">Resume the game and use its wireless mode (for example the Union Room) on every device to connect. With two players, Start Netplay on both devices for smoother play: the game restarts and every device runs both consoles, so only button presses cross the network. Each device plays on its own save; save states are off in that mode.</string>
+    <string name="multiplayer_start_netplay">Start Netplay</string>
 </resources>

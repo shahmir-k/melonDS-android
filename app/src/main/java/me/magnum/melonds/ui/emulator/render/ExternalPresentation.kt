@@ -1,6 +1,5 @@
 package me.magnum.melonds.ui.emulator.render
 
-import android.app.Activity
 import android.app.Presentation
 import android.content.Context
 import android.graphics.Color
@@ -165,11 +164,11 @@ class ExternalPresentation(
 
     // Controller input belongs to the emulator, whichever screen has focus.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        return (ownerActivity ?: context as? Activity)?.dispatchKeyEvent(event) ?: super.dispatchKeyEvent(event)
+        return ownerActivity?.dispatchKeyEvent(event) ?: super.dispatchKeyEvent(event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        return (ownerActivity ?: context as? Activity)?.dispatchGenericMotionEvent(event) ?: super.dispatchGenericMotionEvent(event)
+        return ownerActivity?.dispatchGenericMotionEvent(event) ?: super.dispatchGenericMotionEvent(event)
     }
 
     override fun onStop() {

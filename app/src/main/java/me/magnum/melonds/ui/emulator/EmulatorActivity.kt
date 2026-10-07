@@ -668,6 +668,9 @@ class EmulatorActivity : AppCompatActivity() {
                 display = secondaryDisplay,
                 frameRenderCoordinator = frameRenderCoordinator,
             ).apply {
+                // Its context is a presentation wrapper, not this activity: set the owner so the
+                // controller events it forwards reach the emulator.
+                setOwnerActivity(this@EmulatorActivity)
                 layoutView.apply {
                     setLayoutComponentViewBuilderFactory(RuntimeLayoutComponentViewBuilderFactory())
                     setFrontendInputHandler(frontendInputHandler)

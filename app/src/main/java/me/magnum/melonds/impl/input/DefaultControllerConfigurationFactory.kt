@@ -11,22 +11,24 @@ import me.magnum.melonds.domain.model.InputConfig
  * Default button mapping. Android names face buttons by Xbox position (BUTTON_A = bottom), so for
  * an ordinary controller the DS buttons are mapped by position: DS A (right) = BUTTON_B, and so on.
  * Handhelds with Nintendo-labelled buttons instead send codes by label (the A button, on the right,
- * sends BUTTON_A), so on those the DS buttons are mapped by label, A to A. The AYN Thor's D-pad
- * sends key events rather than the hat axis, so it gets the D-pad keys too.
+ * sends BUTTON_A), so on those the DS buttons are mapped by label, A to A. Both report the D-pad as
+ * the hat axis (the Thor's key layout also lists D-pad keys, but its controller sends HAT_X/HAT_Y).
  */
 class DefaultControllerConfigurationFactory : ControllerConfigurationFactory {
 
     private val isNintendoLabelledHandheld =
         (Build.MANUFACTURER == "Anbernic" && Build.MODEL == "RG DS") || (Build.MANUFACTURER == "AYN" && Build.MODEL == "AYN Thor")
-    private val dpadSendsKeys = Build.MANUFACTURER == "AYN" && Build.MODEL == "AYN Thor"
 
     override fun buildDefaultControllerConfiguration(): ControllerConfiguration {
-        return if (isNintendoLabelledHandheld) buildConfiguration(byLabel = true, dpadKeys = dpadSendsKeys) else buildPositional()
+        return if (isNintendoLabelledHandheld) buildConfiguration(byLabel = true, dpadKeys = false) else buildPositional()
     }
 
     override fun isReplaceableDefault(configuration: ControllerConfiguration): Boolean {
-        // Saved before these handhelds got their own default and never changed: replace it.
-        return isNintendoLabelledHandheld && configuration.inputMapper == buildPositional().inputMapper
+        // Saved from an earlier default and never changed: the position-based one, or the short-lived
+        // Thor default that mapped D-pad keys instead of the hat axis (its D-pad then did nothing).
+        if (!isNintendoLabelledHandheld) return false
+        return configuration.inputMapper == buildPositional().inputMapper ||
+            configuration.inputMapper == buildConfiguration(byLabel = true, dpadKeys = true).inputMapper
     }
 
     private fun buildPositional() = buildConfiguration(byLabel = false, dpadKeys = false)

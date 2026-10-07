@@ -131,6 +131,8 @@ android {
                     "-DLITEV_PGO_USE=ON",
                     // ThinLTO across the core and frontend (app CMakeLists.txt) (A).
                     "-DLITEV_THINLTO=ON",
+                    // Instruction scheduling tuned for the A55 (app CMakeLists.txt) (A).
+                    "-DLITEV_MTUNE_A55=ON",
                     // Divider/sqrt results computed at register write; no completion event (B).
                     "-DLITEV_INSTANT_DIVSQRT=ON",
                     // Generate 8 SPU samples per scheduler event (B).

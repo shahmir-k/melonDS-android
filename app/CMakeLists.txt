@@ -36,6 +36,15 @@ if (LITEV_THINLTO)
     add_link_options(-flto=thin)
 endif()
 
+# LITEV_MTUNE_A55: schedule instructions for the Cortex-A55 (the RG DS's in-order core)
+# instead of the NDK's generic armv8-a model. Scheduling only: no new instructions, so the
+# APK still runs on any arm64 device; no semantic change (A).
+option(LITEV_MTUNE_A55 "Tune instruction scheduling for Cortex-A55" OFF)
+if (LITEV_MTUNE_A55)
+    add_compile_options(-mtune=cortex-a55)
+    add_link_options(-mtune=cortex-a55)
+endif()
+
 option(LITEV_PGO_USE "Build the core with the recorded PGO profile" OFF)
 if (LITEV_PGO_USE)
     # IR-level profile plus a context-sensitive (CSPGO) pass recorded on the ThinLTO build;

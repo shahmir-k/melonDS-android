@@ -4,12 +4,23 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import me.magnum.melonds.domain.model.ControllerConfiguration
+import me.magnum.melonds.domain.model.Input
 import me.magnum.melonds.domain.model.InputConfig
 import kotlin.math.absoluteValue
 
 class InputProcessor(private val controllerConfiguration: ControllerConfiguration, private val systemInputListener: IInputListener, private val frontendInputListener: IInputListener) : INativeInputListener {
 
     private val axisStates: Map<Axis, AxisState>
+
+    // A D-pad that sends key events (AYN Thor) always drives the DS D-pad unless its keys are
+    // assigned to something else: a saved mapping made for the hat-axis D-pad lacks them.
+    private fun unassignedDpadKey(keyCode: Int): Input? = when (keyCode) {
+        KeyEvent.KEYCODE_DPAD_UP -> Input.UP
+        KeyEvent.KEYCODE_DPAD_DOWN -> Input.DOWN
+        KeyEvent.KEYCODE_DPAD_LEFT -> Input.LEFT
+        KeyEvent.KEYCODE_DPAD_RIGHT -> Input.RIGHT
+        else -> null
+    }
 
     init {
         val axis = controllerConfiguration.inputMapper.flatMap { inputConfig ->
@@ -24,7 +35,7 @@ class InputProcessor(private val controllerConfiguration: ControllerConfiguratio
     }
 
     override fun onKeyEvent(keyEvent: KeyEvent): Boolean {
-        val input = controllerConfiguration.keyToInput(keyEvent.keyCode) ?: return false
+        val input = controllerConfiguration.keyToInput(keyEvent.keyCode) ?: unassignedDpadKey(keyEvent.keyCode) ?: return false
         if (input.isSystemInput) {
             when (keyEvent.action) {
                 KeyEvent.ACTION_DOWN -> {

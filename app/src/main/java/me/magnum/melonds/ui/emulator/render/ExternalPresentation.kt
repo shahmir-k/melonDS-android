@@ -1,13 +1,19 @@
 package me.magnum.melonds.ui.emulator.render
 
+import android.app.Activity
 import android.app.Presentation
 import android.content.Context
 import android.graphics.Color
 import android.os.Build
 import android.view.Display
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModelStoreOwner
@@ -40,10 +46,12 @@ class ExternalPresentation(
     private var currentRendererConfiguration: RuntimeRendererConfiguration? = null
 
     init {
-        window?.setFlags(
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-        )
+        // Focusable, because only the focused window on a display can hide that display's system
+        // bars: on a dual-screen handheld (AYN Thor) the bottom screen has its own navigation bar,
+        // which otherwise covers the DS bottom screen for good. Touching this screen can then move
+        // input focus here, so controller events are forwarded to the activity (see below).
+        window?.setFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+        setCancelable(false)
 
         val layoutChangeListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateRendererScreenAreas()
@@ -134,6 +142,34 @@ class ExternalPresentation(
     fun updateRendererConfiguration(newRendererConfiguration: RuntimeRendererConfiguration?) {
         currentRendererConfiguration = newRendererConfiguration
         surfaceView.updateRendererConfiguration(newRendererConfiguration)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        hideSystemBars()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
+    }
+
+    private fun hideSystemBars() {
+        val window = window ?: return
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    // Controller input belongs to the emulator, whichever screen has focus.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        return (ownerActivity ?: context as? Activity)?.dispatchKeyEvent(event) ?: super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        return (ownerActivity ?: context as? Activity)?.dispatchGenericMotionEvent(event) ?: super.dispatchGenericMotionEvent(event)
     }
 
     override fun onStop() {

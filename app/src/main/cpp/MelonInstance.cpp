@@ -233,6 +233,17 @@ namespace MelonDSAndroid
 const int kRewindBufferSize = 1024 * 1024 * 20; // Use 20MB per savestate
 const int kRewindScreenshotSize = 256 * 384 * 4;
 
+// Netplay: every copy of a console renders identically on every device (rendering changes the
+// emulated timing slightly, so a copy rendered differently would drift apart).
+static RendererSettings netplayRenderSettings()
+{
+    RendererSettings settings {};
+    settings.ScaleFactor = 1;
+    settings.Threaded = true;
+    settings.Accurate3D = false;
+    return settings;
+}
+
 MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfiguration> configuration, std::unique_ptr<melonDS::NDSArgs> args, std::shared_ptr<Net> net, std::unique_ptr<ScreenshotRenderer> screenshotRenderer, int consoleType) :
     instanceId(instanceId),
     currentConfiguration(configuration),
@@ -527,7 +538,7 @@ void MelonInstance::reset()
 void MelonInstance::setFrameskipTarget(int target)
 {
     if (nds)
-        nds->GPU.SetFrameskipTarget(target);
+        nds->GPU.SetFrameskipTarget(MelonDSAndroid::netplayActive() ? 0 : target);
 }
 #endif
 
@@ -555,7 +566,7 @@ u32 MelonInstance::runFrame()
             checkCounter = 30;
             char buf[8] = {0};
             int target = 0;
-            if (__system_property_get("debug.litev.frameskip", buf) > 0)
+            if (__system_property_get("debug.litev.frameskip", buf) > 0 && !MelonDSAndroid::netplayActive())
                 target = atoi(buf);
             if (target != cachedSkip)
             {
@@ -814,14 +825,31 @@ void MelonInstance::stop()
     screenshotRenderer->cleanup();
 }
 
+void MelonInstance::runFrameHeadless()
+{
+    if (!headlessRendererSet)
+    {
+        RendererSettings settings = netplayRenderSettings();
+        nds->GPU.GetRenderer().SetRenderSettings(settings);
+        headlessRendererSet = true;
+    }
+    nds->RunFrame();
+}
+
 void MelonInstance::touchScreen(u16 x, u16 y)
 {
-    nds->TouchScreen(x, y);
+    touching = true;
+    touchX = x;
+    touchY = y;
+    if (!inputDeferred)
+        nds->TouchScreen(x, y);
 }
 
 void MelonInstance::releaseScreen()
 {
-    nds->ReleaseScreen();
+    touching = false;
+    if (!inputDeferred)
+        nds->ReleaseScreen();
 }
 
 void MelonInstance::pressKey(u32 key)
@@ -834,7 +862,8 @@ void MelonInstance::pressKey(u32 key)
     else
     {
         inputMask &= ~(1 << key);
-        nds->SetKeyMask(inputMask);
+        if (!inputDeferred)
+            nds->SetKeyMask(inputMask);
     }
 }
 
@@ -848,7 +877,8 @@ void MelonInstance::releaseKey(u32 key)
     else
     {
         inputMask |= (1 << key);
-        nds->SetKeyMask(inputMask);
+        if (!inputDeferred)
+            nds->SetKeyMask(inputMask);
     }
 }
 
@@ -1094,6 +1124,11 @@ void MelonInstance::updateRenderer()
         if (s >= 1 && s <= 8) settings.ScaleFactor = s;
     }
     if (settings.ScaleFactor < 1) settings.ScaleFactor = 1;
+    if (MelonDSAndroid::netplayActive())
+    {
+        newRenderer = Renderer::Software;
+        settings = netplayRenderSettings();
+    }
 
     // Unified renderer API (upstream GPU rework): a single Renderer owns both the
     // 2D and 3D pipelines.
@@ -1143,7 +1178,7 @@ void MelonInstance::setDateTime()
     // that survives a savestate load (SetDateTime runs AFTER DoSavestate). Game
     // content seeded from the RTC (RNG, time-of-day lighting) would differ on every
     // reload and make runs incomparable, so pin the RTC while the gate is on.
-    if (litevFbHashOn())
+    if (litevFbHashOn() || MelonDSAndroid::netplayActive())
     {
         nds->RTC.SetDateTime(2026, 1, 1, 0, 0, 0);
         return;

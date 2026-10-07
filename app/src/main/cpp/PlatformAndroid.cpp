@@ -584,6 +584,8 @@ namespace Platform
 
     int Mic_ReadInput(s16* data, int maxlength, void* userdata)
     {
+        // Netplay: both consoles would hear this device's microphone, the other device's copies not
+        if (MelonDSAndroid::netplayActive()) return 0;
         return MelonDSAndroid::readMic(data, maxlength);
     }
 

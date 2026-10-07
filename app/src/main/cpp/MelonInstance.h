@@ -41,6 +41,17 @@ public:
 #endif
     void stop();
 
+    melonDS::NDS* getNds() { return nds; }
+
+    // Netplay: input is only recorded here; the session applies every player's input to every
+    // console a few frames later, identically on every device.
+    void setInputDeferred(bool deferred) { inputDeferred = deferred; }
+    melonDS::u32 getInputMask() { return inputMask; }
+    bool getTouch(u16& x, u16& y) { x = touchX; y = touchY; return touching; }
+    // Netplay: another player's console. Emulates a frame with no presentation (its screens are
+    // not shown), rendering exactly like the local console so both stay identical.
+    void runFrameHeadless();
+
     void touchScreen(u16 x, u16 y);
     void releaseScreen();
     void pressKey(u32 key);
@@ -89,6 +100,10 @@ private:
     std::unique_ptr<SaveManager> gbaSave;
     std::unique_ptr<SaveManager> firmwareSave;
     u32 inputMask;
+    bool inputDeferred = false;
+    bool touching = false;
+    u16 touchX = 0, touchY = 0;
+    bool headlessRendererSet = false;
 
     std::shared_ptr<EmulatorConfiguration> currentConfiguration;
     FrameQueue frameQueue;

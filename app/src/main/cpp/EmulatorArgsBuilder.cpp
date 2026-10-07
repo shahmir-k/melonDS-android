@@ -9,6 +9,7 @@
 #include "PlatformAndroid.h"
 #include "SDCardArgsBuilder.h"
 #include "SPU.h"
+#include "MelonDS.h"
 
 using namespace melonDS;
 using namespace melonDS::Platform;
@@ -197,7 +198,8 @@ Firmware generateFirmware(const EmulatorConfiguration& configuration, int type, 
     // Wi-fi access point data includes Nintendo WFC settings,
     // and if we didn't keep them then the player would have to reset them in each session.
     // We don't need to save the whole firmware, just the part that may actually change.
-    if (FileHandle* f = OpenInternalFile(kWifiSettingsPath, Read))
+    // (not in Netplay: every device must generate the same firmware)
+    if (FileHandle* f = MelonDSAndroid::netplayActive() ? nullptr : OpenInternalFile(kWifiSettingsPath, Read))
     {// If we have Wi-fi settings to load...
         constexpr unsigned TOTAL_WFC_SETTINGS_SIZE = 3 * (sizeof(Firmware::WifiAccessPoint) + sizeof(Firmware::ExtendedWifiAccessPoint));
 

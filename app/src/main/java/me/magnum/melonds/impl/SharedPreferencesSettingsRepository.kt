@@ -79,6 +79,8 @@ class SharedPreferencesSettingsRepository(
             configFile.inputStream().use {
                 val loadedConfiguration = json.decodeFromStream<ControllerConfigurationDto>(it)
                 loadedConfiguration.toControllerConfiguration()
+            }.let {
+                if (controllerConfigurationFactory.isReplaceableDefault(it)) controllerConfigurationFactory.buildDefaultControllerConfiguration() else it
             }
         } catch (_: Exception) {
             controllerConfigurationFactory.buildDefaultControllerConfiguration()

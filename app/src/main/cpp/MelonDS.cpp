@@ -25,6 +25,7 @@
 #include "LitevCores.h"
 #include <sys/system_properties.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <pthread.h>
 #include <sched.h>
 #include <thread>
@@ -149,15 +150,13 @@ namespace MelonDSAndroid
 
     static void netplayRemoteLoop()
     {
-        // off the emulator's core (it competes there with the tile workers)
+        // Off the emulator's core, above the render threads (nice -10): the local console waits
+        // for this one every frame, so it must not queue behind rendering.
         const auto& cores = LitevCores::Get();
-        if (!cores.Others.empty())
-        {
-            cpu_set_t set;
-            CPU_ZERO(&set);
-            CPU_SET(cores.Others[0], &set);
-            sched_setaffinity(0, sizeof(set), &set);
-        }
+        sched_setaffinity(0, sizeof(cores.OtherSet), &cores.OtherSet);
+        int nice = -16;
+        while (setpriority(PRIO_PROCESS, 0, nice) != 0 && nice < 0) nice++;
+        Platform::Log(Platform::LogLevel::Info, "Netplay: remote console thread at nice %d\n", nice);
         pthread_setname_np(pthread_self(), "NetplayRemote");
 
         NetplaySession& s = *netplay;
@@ -253,6 +252,7 @@ namespace MelonDSAndroid
                 std::make_unique<ScreenshotRenderer>(netplay->remoteScreenshot.data()),
                 0
             );
+            netplay->remote->getNds()->GPU.Headless = true; // its screens are not shown
             instance->setInputDeferred(true);
             auto& link = (LockstepMP&) MPInterface::Get();
             NDS* local = instance->getNds();

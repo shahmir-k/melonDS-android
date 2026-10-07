@@ -233,8 +233,7 @@ namespace MelonDSAndroid
 const int kRewindBufferSize = 1024 * 1024 * 20; // Use 20MB per savestate
 const int kRewindScreenshotSize = 256 * 384 * 4;
 
-// Netplay: every copy of a console renders identically on every device (rendering changes the
-// emulated timing slightly, so a copy rendered differently would drift apart).
+// Netplay, once the game uses display capture: every copy of a console renders identically.
 static RendererSettings netplayRenderSettings()
 {
     RendererSettings settings {};
@@ -548,6 +547,8 @@ u32 MelonInstance::runFrame()
     // core 3 and the process's other threads to cores 0-2, re-asserted every 300 frames.
     litevKeepCore3();
 
+    if (MelonDSAndroid::netplayActive() && nds->GPU.CaptureSeen && currentRenderer != Renderer::Software)
+        isRenderConfigurationDirty = true;
     if (isRenderConfigurationDirty)
     {
         updateRenderer();
@@ -1124,7 +1125,10 @@ void MelonInstance::updateRenderer()
         if (s >= 1 && s <= 8) settings.ScaleFactor = s;
     }
     if (settings.ScaleFactor < 1) settings.ScaleFactor = 1;
-    if (MelonDSAndroid::netplayActive())
+    // Netplay: the other player's console draws nothing, so rendering may differ, until the game
+    // uses display capture (rendered pixels then land in VRAM): from then on every copy renders
+    // the same way.
+    if (MelonDSAndroid::netplayActive() && nds->GPU.CaptureSeen)
     {
         newRenderer = Renderer::Software;
         settings = netplayRenderSettings();

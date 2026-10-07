@@ -5,6 +5,7 @@ import me.magnum.melonds.ui.emulator.PauseMenuOption
 
 enum class FirmwarePauseMenuOption(override val textResource: Int) : PauseMenuOption {
     SETTINGS(R.string.settings),
+    MULTIPLAYER(R.string.multiplayer_role_title),
     RESET(R.string.reset),
     EXIT(R.string.exit)
 }

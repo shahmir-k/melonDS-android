@@ -459,6 +459,7 @@ class EmulatorViewModel @Inject constructor(
             is FirmwarePauseMenuOption -> {
                 when (option) {
                     FirmwarePauseMenuOption.SETTINGS -> _uiEvent.tryEmit(EmulatorUiEvent.OpenScreen.SettingsScreen)
+                    FirmwarePauseMenuOption.MULTIPLAYER -> _uiEvent.tryEmit(EmulatorUiEvent.ShowMultiplayer)
                     FirmwarePauseMenuOption.RESET -> resetEmulator()
                     FirmwarePauseMenuOption.EXIT -> {
                         emulatorManager.stopEmulator()

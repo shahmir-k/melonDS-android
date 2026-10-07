@@ -58,6 +58,12 @@ if (LITEV_PGO_USE)
     add_link_options(-fprofile-use=${LITEV_PGO_PROFILE} -Wl,--no-lto-pgo-warn-mismatch)
 endif()
 
+# LITEV_LAN_STATS: measurement-only LAN multiplayer wait statistics (core src/net/LAN.cpp).
+option(LITEV_LAN_STATS "Log LAN multiplayer wait statistics" OFF)
+if (LITEV_LAN_STATS)
+    add_compile_definitions(LITEV_LAN_STATS)
+endif()
+
 add_subdirectory(${CORE-LIB} ./melonDS-android-lib)
 add_subdirectory(${OBOE} ./oboe)
 add_subdirectory(${FAAD2} ./faad2)

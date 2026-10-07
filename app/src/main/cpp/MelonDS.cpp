@@ -1,3 +1,4 @@
+#include <ctime>
 #include <cstring>
 #include <utility>
 #include <android/asset_manager.h>
@@ -69,7 +70,14 @@ namespace MelonDSAndroid
         int player = 0, delay = 3, port = 7100;
         std::string peer;
         bool exchange = true;                       // swap saves at start (exchange=0: testing)
-        std::map<int, NetplayFrameInput> script;    // debug.litev.npscript: scripted local input
+        // Test/replay input, by applied frame: debug.litev.npscript (local player),
+        // debug.litev.npscript2 (other player: replaces the network)
+        std::map<int, NetplayFrameInput> script, script2;
+        // Every session records both players' applied inputs (netplay/rec_pN.txt) in the same
+        // format, so a failure can be replayed on one device: frame-exact, no network.
+        FILE* rec[2] {};
+        long recId = (long)time(nullptr);           // one recording per session
+        NetplayFrameInput recLast[2];
         std::unique_ptr<NetplayInput> input;
         std::shared_ptr<MelonInstance> remote;
         std::vector<u32> remoteScreenshot = std::vector<u32>(256 * 384);
@@ -127,10 +135,11 @@ namespace MelonDSAndroid
 
     // Test input: the harness script format, "FRAME KEY[,KEY...]" / "FRAME NONE" / "FRAME T:x:y"
     // per line, each held until the next line.
-    static void netplayLoadScript(NetplaySession& s)
+    // Also reads the recording format: "FRAME 0xKEYS TX TY".
+    static void netplayLoadScript(const char* prop, std::map<int, NetplayFrameInput>& script)
     {
         char path[PROP_VALUE_MAX] = {0};
-        if (__system_property_get("debug.litev.npscript", path) <= 0 || !path[0]) return;
+        if (__system_property_get(prop, path) <= 0 || !path[0]) return;
         FILE* f = fopen(path, "r");
         if (!f) return;
         static const char* names[12] = {"A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN", "R", "L", "X", "Y"};
@@ -142,14 +151,38 @@ namespace MelonDSAndroid
             if (sscanf(line, "%d %199s", &frame, rest) != 2) continue;
             NetplayFrameInput in;
             int x, y;
-            if (sscanf(rest, "T:%d:%d", &x, &y) == 2) { in.TouchX = x; in.TouchY = y; }
+            unsigned keys;
+            if (sscanf(line, "%*d 0x%x %d %d", &keys, &x, &y) == 3) { in.Keys = keys; in.TouchX = x; in.TouchY = y; }
+            else if (sscanf(rest, "T:%d:%d", &x, &y) == 2) { in.TouchX = x; in.TouchY = y; }
             else for (char* k = strtok(rest, ","); k; k = strtok(nullptr, ","))
                 for (int b = 0; b < 12; b++)
                     if (!strcmp(k, names[b])) in.Keys &= ~(1u << b);
-            s.script[frame] = in;
+            script[frame] = in;
         }
         fclose(f);
-        Platform::Log(Platform::LogLevel::Info, "Netplay: scripted input, %zu lines from %s\n", s.script.size(), path);
+        Platform::Log(Platform::LogLevel::Info, "Netplay: scripted input, %zu lines from %s\n", script.size(), path);
+    }
+
+    static NetplayFrameInput netplayScriptAt(const std::map<int, NetplayFrameInput>& script, int frame)
+    {
+        auto it = script.upper_bound(frame);
+        return it == script.begin() ? NetplayFrameInput {} : std::prev(it)->second;
+    }
+
+    static void netplayRecord(NetplaySession& s, int player, int frame, const NetplayFrameInput& in)
+    {
+        NetplayFrameInput& last = s.recLast[player];
+        if (frame > 0 && in.Keys == last.Keys && in.TouchX == last.TouchX && in.TouchY == last.TouchY) return;
+        last = in;
+        if (!s.rec[player])
+        {
+            std::string dir = internalFilesDir + "/netplay";
+            mkdir(dir.c_str(), 0700);
+            s.rec[player] = fopen((dir + "/rec_" + std::to_string(s.recId) + "_p" + std::to_string(player) + ".txt").c_str(), "w");
+            if (!s.rec[player]) return;
+        }
+        fprintf(s.rec[player], "%d 0x%03x %d %d\n", frame, in.Keys, in.TouchX, in.TouchY);
+        fflush(s.rec[player]);
     }
 
     static void netplayApply(MelonInstance& console, const NetplayFrameInput& in)
@@ -358,8 +391,9 @@ namespace MelonDSAndroid
         int other = 1 - s.player;
         for (int f = 0; s.running; f++)
         {
-            NetplayFrameInput in = s.input->Get(other, f);
+            NetplayFrameInput in = s.script2.empty() ? s.input->Get(other, f) : netplayScriptAt(s.script2, f);
             if (!s.running) break;
+            netplayRecord(s, other, f, in);
             netplayApply(*s.remote, in);
             s.remote->runFrameHeadless();
             netplayHash(*s.remote, other, f + 1);
@@ -377,6 +411,7 @@ namespace MelonDSAndroid
             netplay->thread.join();
         if (netplay->remote)
             netplay->remote->stop();
+        for (FILE* f : netplay->rec) if (f) fclose(f);
         netplay = nullptr;
         MPInterface::Set(MPInterface_Dummy);
     }
@@ -410,7 +445,8 @@ namespace MelonDSAndroid
         {
             netplayFixConfiguration(*currentConfiguration);
             instanceId = netplay->player;
-            netplayLoadScript(*netplay);
+            netplayLoadScript("debug.litev.npscript", netplay->script);
+            netplayLoadScript("debug.litev.npscript2", netplay->script2);
             netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port, netplay->peer);
             MPInterface::Set(MPInterface_Netplay);
             Platform::Log(Platform::LogLevel::Info, "Netplay: player %d, peer %s, port %d, delay %d frames%s\n",
@@ -601,13 +637,12 @@ namespace MelonDSAndroid
             local.Keys = instance->getInputMask() & 0xFFF;
             u16 x, y;
             if (instance->getTouch(x, y)) { local.TouchX = x; local.TouchY = y; }
-            if (!netplay->script.empty())
-            {
-                auto it = netplay->script.upper_bound(netplay->frame);
-                local = it == netplay->script.begin() ? NetplayFrameInput {} : std::prev(it)->second;
-            }
+            if (!netplay->script.empty())   // by applied frame: what is submitted now applies Delay frames later
+                local = netplayScriptAt(netplay->script, netplay->frame + netplay->delay);
             netplay->input->SubmitLocal(netplay->frame, local);
-            netplayApply(*instance, netplay->input->Get(netplay->player, netplay->frame));
+            NetplayFrameInput applied = netplay->input->Get(netplay->player, netplay->frame);
+            netplayRecord(*netplay, netplay->player, netplay->frame, applied);
+            netplayApply(*instance, applied);
             netplay->frame++;
             if (netplay->frame % 60 == 0)
             {   // TEMP diagnostic: debug.litev.npnodraw=1 stops the local console drawing (A/B mid-race)

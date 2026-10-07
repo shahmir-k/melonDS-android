@@ -1,7 +1,10 @@
 package me.magnum.melonds.ui.emulator.multiplayer
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.Checkbox
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
@@ -29,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -80,6 +85,9 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
     var players by remember { mutableStateOf(emptyList<LanPlayer>()) }
     var busyText by remember { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    var direct by remember { mutableStateOf(false) }
+    // a Wi-Fi Direct action waiting on the runtime permission prompt
+    var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // Wi-Fi drivers drop broadcast packets (session discovery beacons) unless a multicast lock is held.
     DisposableEffect(Unit) {
@@ -109,7 +117,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
         }
     }
 
-    fun runAction(progress: String, failure: String, action: () -> Boolean) {
+    fun runAction(progress: String, failure: String, action: suspend () -> Boolean) {
         scope.launch {
             errorText = null
             busyText = progress
@@ -119,12 +127,33 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
         }
     }
 
+    val permissionDenied = stringResource(R.string.multiplayer_error_permission_denied)
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val next = afterPermission
+        afterPermission = null
+        if (granted) next?.invoke() else errorText = permissionDenied
+    }
+
+    // Runs `action` once Wi-Fi Direct may be used (asking for the permission first if needed).
+    fun withDirectPermission(action: () -> Unit) {
+        val permission = DirectLink.requiredPermission
+        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+            action()
+        } else {
+            afterPermission = action
+            permissionLauncher.launch(permission)
+        }
+    }
+
     val connectionFailed = stringResource(R.string.multiplayer_error_connection_failed)
     val lanInitFailed = stringResource(R.string.multiplayer_error_lan_init_failed)
     val discoveryFailed = stringResource(R.string.multiplayer_error_discovery_failed)
     val starting = stringResource(R.string.multiplayer_starting)
     val connecting = stringResource(R.string.multiplayer_connecting)
     val discovering = stringResource(R.string.multiplayer_discovering)
+    val directStarting = stringResource(R.string.multiplayer_direct_starting)
+    val directJoining = stringResource(R.string.multiplayer_direct_joining)
+    val directFailed = stringResource(R.string.multiplayer_error_direct_failed)
 
     fun join(address: String) = runAction(connecting, connectionFailed) {
         MelonEmulator.lanJoin(playerName.ifBlank { defaultPlayerName }, address.trim()).also { ok ->
@@ -143,6 +172,8 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
                         onPlayerNameChange = { playerName = it.take(10) },
                         maxPlayers = maxPlayers,
                         onMaxPlayersChange = { maxPlayers = it.coerceIn(2, 16) },
+                        direct = direct,
+                        onDirectChange = { direct = it },
                     )
                     MODE_DISCOVERING -> DiscoveryContent(
                         sessions = sessions,
@@ -160,13 +191,21 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
             val idle = busyText == null
             when (mode) {
                 MODE_NONE -> {
+                    val name = playerName.ifBlank { defaultPlayerName }
                     DialogButton(stringResource(R.string.multiplayer_role_host), enabled = idle) {
-                        runAction(starting, lanInitFailed) {
-                            MelonEmulator.lanHost(playerName.ifBlank { defaultPlayerName }, maxPlayers)
-                        }
+                        if (direct) withDirectPermission {
+                            runAction(directStarting, directFailed) {
+                                DirectLink.host(context) && MelonEmulator.lanHost(name, maxPlayers)
+                            }
+                        } else runAction(starting, lanInitFailed) { MelonEmulator.lanHost(name, maxPlayers) }
                     }
                     DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle) {
-                        runAction(discovering, discoveryFailed) { MelonEmulator.lanStartDiscovery() }
+                        if (direct) withDirectPermission {
+                            runAction(directJoining, directFailed) {
+                                val host = DirectLink.join(context)
+                                host != null && MelonEmulator.lanJoin(name, host)
+                            }
+                        } else runAction(discovering, discoveryFailed) { MelonEmulator.lanStartDiscovery() }
                     }
                 }
                 MODE_DISCOVERING -> {
@@ -180,6 +219,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onDismiss: () -> Unit) {
                 else -> {
                     DialogButton(stringResource(R.string.multiplayer_leave), enabled = idle) {
                         scope.launch(Dispatchers.IO) { MelonEmulator.lanLeave() }
+                        DirectLink.leave(context)
                     }
                 }
             }
@@ -194,6 +234,8 @@ private fun StartContent(
     onPlayerNameChange: (String) -> Unit,
     maxPlayers: Int,
     onMaxPlayersChange: (Int) -> Unit,
+    direct: Boolean,
+    onDirectChange: (Boolean) -> Unit,
 ) {
     OutlinedTextField(
         value = playerName,
@@ -207,6 +249,15 @@ private fun StartContent(
         TextButton(onClick = { onMaxPlayersChange(maxPlayers - 1) }) { Text("−") }
         Text(maxPlayers.toString())
         TextButton(onClick = { onMaxPlayersChange(maxPlayers + 1) }) { Text("+") }
+    }
+    if (DirectLink.isSupported) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onDirectChange(!direct) }) {
+            Checkbox(checked = direct, onCheckedChange = onDirectChange)
+            Column {
+                Text(stringResource(R.string.multiplayer_direct), style = MaterialTheme.typography.body2)
+                Text(stringResource(R.string.multiplayer_direct_hint), style = MaterialTheme.typography.caption)
+            }
+        }
     }
     Text(stringResource(R.string.multiplayer_same_version_hint), style = MaterialTheme.typography.caption)
 }

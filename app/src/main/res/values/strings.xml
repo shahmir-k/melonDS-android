@@ -649,6 +649,11 @@
     <string name="multiplayer_error_lan_init_failed">Failed to initialize LAN session</string>
     <string name="multiplayer_error_permission_denied">Required permissions not granted</string>
     <string name="multiplayer_lan_title">LAN multiplayer</string>
+    <string name="multiplayer_direct">Direct connection (host hotspot)</string>
+    <string name="multiplayer_direct_hint">The host starts its own hotspot and everyone joins it, skipping the router: lower lag. The host is off your Wi-Fi during the session. Everyone must tick this.</string>
+    <string name="multiplayer_direct_starting">Creating direct connection…</string>
+    <string name="multiplayer_direct_joining">Joining direct connection…</string>
+    <string name="multiplayer_error_direct_failed">Direct connection failed. Make sure the host started first and Wi-Fi is on.</string>
     <string name="multiplayer_player_name">Player name</string>
     <string name="multiplayer_max_players">Max players</string>
     <string name="multiplayer_host_address">Host IP address</string>

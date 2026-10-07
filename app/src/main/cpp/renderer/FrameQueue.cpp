@@ -30,9 +30,10 @@ Frame* FrameQueue::getRenderFrame()
     return frame;
 }
 
-Frame* FrameQueue::getPresentFrame(std::optional<std::chrono::time_point<std::chrono::steady_clock>> deadline)
+Frame* FrameQueue::getPresentFrame(std::optional<std::chrono::time_point<std::chrono::steady_clock>> deadline, bool* isNew)
 {
     std::unique_lock lock(frameLock);
+    if (isNew) *isNew = false;
 
     if (presentQueue.empty()) {
         bool hasNewFrame = false;
@@ -59,6 +60,7 @@ Frame* FrameQueue::getPresentFrame(std::optional<std::chrono::time_point<std::ch
 
     presentQueue.clear();
     previousFrame = frame;
+    if (isNew) *isNew = true;
     return frame;
 }
 

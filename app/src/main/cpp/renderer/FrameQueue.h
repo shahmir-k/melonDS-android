@@ -28,7 +28,8 @@ class FrameQueue
 public:
     FrameQueue();
     Frame* getRenderFrame();
-    Frame* getPresentFrame(std::optional<std::chrono::time_point<std::chrono::steady_clock>> deadline);
+    // isNew (optional): false when it returns the frame it already returned last time
+    Frame* getPresentFrame(std::optional<std::chrono::time_point<std::chrono::steady_clock>> deadline, bool* isNew = nullptr);
     void validateRenderFrame(Frame* frame, int requiredWidth, int requiredHeight);
     void pushRenderedFrame(Frame* frame);
     void discardRenderedFrame(Frame* frame);

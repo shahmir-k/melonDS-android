@@ -29,6 +29,7 @@
 #include "Platform.h"
 #include "SDCardArgsBuilder.h"
 #include "MelonLog.h"
+#include "LitevCores.h"
 
 // ---- liteDS frame-phase profiler + correctness gates (runtime-gated by props) ----
 // Enable with:  adb shell setprop debug.litev.prof 1
@@ -185,12 +186,13 @@ static double litevThreadCpuMs()
     timespec ts; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
 }
-// Core 3 belongs to the emu thread. Measured on the RG DS (Shrek race): the emu thread
+// The fastest core belongs to the emu thread (LitevCores: core 3 on the RG DS, the prime core on
+// big.LITTLE devices). Measured on the RG DS (Shrek race): the emu thread
 // spent ~19 % of its time runnable but preempted (schedstat run-queue wait 1.9 s per 10 s,
 // 4.6k involuntary switches/s), mostly by this process's own unpinned threads (Mali driver
 // backend at nice -10, binder, dispatchers, audio). Every 300 frames: move every other
-// thread of the process to cores 0-2 (new threads appear over time), and pin the emu
-// thread to core 3 at nice -10. The emu pin is re-asserted each time, not set once:
+// thread of the process to the other cores (new threads appear over time), and pin the emu
+// thread to its core at nice -10. The emu pin is re-asserted each time, not set once:
 // a cpuset move (Android reassigns the app's cgroup) resets the thread's affinity, and
 // a recreated emu thread starts unpinned. debug.litev.core3=0 disables it (A/B).
 static void litevKeepCore3()
@@ -204,11 +206,10 @@ static void litevKeepCore3()
     if (!on || ctr-- > 0) return;
     ctr = 300;
     const pid_t self = gettid();
-    cpu_set_t core3; CPU_ZERO(&core3); CPU_SET(3, &core3);
-    sched_setaffinity(0, sizeof(core3), &core3);
+    const melonDS::LitevCores& cores = melonDS::LitevCores::Get();
+    sched_setaffinity(0, sizeof(cores.EmuSet), &cores.EmuSet);
     setpriority(PRIO_PROCESS, self, -10);
-    cpu_set_t others; CPU_ZERO(&others);
-    CPU_SET(0, &others); CPU_SET(1, &others); CPU_SET(2, &others);
+    const cpu_set_t& others = cores.OtherSet;
     if (DIR* d = opendir("/proc/self/task"))
     {
         while (dirent* e = readdir(d))

@@ -28,6 +28,7 @@
 #include "Platform.h"
 #include "net/MPInterface.h"
 #include "net/LAN.h"
+#include "LitevCores.h"
 
 enum GbaSlotType {
     NONE = 0,
@@ -303,8 +304,8 @@ JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlong deadlineNs, jobject renderFrameCallback)
 {
     // This runs on the Kotlin "FrameRenderThread". Left unpinned, the scheduler
-    // puts it on the emulator's core 3 as well (~1.85 ms/frame measured), where
-    // its run-queue time deschedules the emulator. Pin it to cores {0,1,2} once,
+    // puts it on the emulator's core as well (~1.85 ms/frame measured on the RG DS), where
+    // its run-queue time deschedules the emulator. Pin it to the other cores once,
     // on the first present. Affinity only, no output change. Escape hatch for
     // A/B: debug.litev.pinpresent=0.
     {
@@ -316,9 +317,7 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
             bool doPin = !(__system_property_get("debug.litev.pinpresent", prop) > 0 && atoi(prop) == 0);
             if (doPin)
             {
-                cpu_set_t set;
-                CPU_ZERO(&set);
-                CPU_SET(0, &set); CPU_SET(1, &set); CPU_SET(2, &set);
+                const cpu_set_t& set = melonDS::LitevCores::Get().OtherSet;
                 sched_setaffinity(0, sizeof(set), &set);
             }
         }

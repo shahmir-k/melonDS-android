@@ -31,6 +31,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <poll.h>
+#include <netinet/tcp.h>
+#include <cmath>
+#include <algorithm>
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
@@ -70,6 +73,7 @@ namespace MelonDSAndroid
         int player = 0, delay = 3, port = 7100;
         std::string peer;
         bool exchange = true;                       // swap saves at start (exchange=0: testing)
+        bool autoDelay = true;                      // input delay from the measured round trip
         // Test/replay input, by applied frame: debug.litev.npscript (local player),
         // debug.litev.npscript2 (other player: replaces the network)
         std::map<int, NetplayFrameInput> script, script2;
@@ -121,7 +125,7 @@ namespace MelonDSAndroid
             {
                 std::string k = kv.substr(0, eq), v = kv.substr(eq + 1);
                 if (k == "player") session->player = atoi(v.c_str()) & 1;
-                else if (k == "delay") session->delay = atoi(v.c_str());
+                else if (k == "delay") { session->delay = atoi(v.c_str()); session->autoDelay = false; }
                 else if (k == "port") session->port = atoi(v.c_str());
                 else if (k == "peer") session->peer = v;
                 else if (k == "exchange") session->exchange = atoi(v.c_str()) != 0;
@@ -265,7 +269,7 @@ namespace MelonDSAndroid
     // Session start: both devices check they run the same game and swap saves, so every console
     // boots from its owner's save. TCP on the Netplay port + 1; player 0 listens, player 1
     // connects (whoever starts first waits up to 60 s for the other).
-    static bool netplayExchange(const NetplaySession& s, u64 romId, const std::vector<u8>& mine, std::vector<u8>& theirs)
+    static bool netplayExchange(NetplaySession& s, u64 romId, const std::vector<u8>& mine, std::vector<u8>& theirs)
     {
         std::string ip = s.peer.substr(0, s.peer.rfind(':'));
         int fd = -1;
@@ -310,6 +314,8 @@ namespace MelonDSAndroid
         }
         timeval tv {30, 0};
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        int one = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
         u64 theirRom = 0;
         u32 len = (u32)mine.size(), theirLen = 0;
@@ -320,6 +326,41 @@ namespace MelonDSAndroid
             theirs.resize(theirLen);
             ok = !theirLen || recvAll(fd, theirs.data(), theirLen);
         }
+        // Input delay: the host times a few round trips and picks the smallest delay that covers
+        // one way (90th percentile) plus a frame of margin, then tells the guest, so both use the
+        // same one. (A late input only stalls; a too-long delay only adds input lag.)
+        constexpr int kPings = 12;
+        u8 delay = (u8)s.delay;
+        if (ok && s.player == 0)
+        {
+            std::vector<double> rtt;
+            for (int i = 0; ok && i < kPings; i++)
+            {
+                u8 b = (u8)i;
+                auto t0 = std::chrono::steady_clock::now();
+                ok = sendAll(fd, &b, 1) && recvAll(fd, &b, 1);
+                rtt.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+            }
+            if (ok && s.autoDelay)
+            {
+                std::sort(rtt.begin(), rtt.end());
+                double p90 = rtt[rtt.size() * 9 / 10];
+                delay = (u8)std::clamp((int)std::ceil(p90 / 2 / (1000.0 / 60)) + 1, 1, 8);
+                Platform::Log(Platform::LogLevel::Info, "Netplay: round trip median %.1f ms, p90 %.1f ms -> input delay %d frames\n",
+                              rtt[rtt.size() / 2], p90, delay);
+            }
+            ok = ok && sendAll(fd, &delay, 1);
+        }
+        else if (ok)
+        {
+            for (int i = 0; ok && i < kPings; i++)
+            {
+                u8 b;
+                ok = recvAll(fd, &b, 1) && sendAll(fd, &b, 1);
+            }
+            ok = ok && recvAll(fd, &delay, 1) && delay >= 1 && delay <= 8;
+        }
+        if (ok) s.delay = delay;
         close(fd);
         if (!ok)
             Platform::Log(Platform::LogLevel::Error, "Netplay: save exchange failed\n");
@@ -447,10 +488,9 @@ namespace MelonDSAndroid
             instanceId = netplay->player;
             netplayLoadScript("debug.litev.npscript", netplay->script);
             netplayLoadScript("debug.litev.npscript2", netplay->script2);
-            netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port, netplay->peer);
             MPInterface::Set(MPInterface_Netplay);
-            Platform::Log(Platform::LogLevel::Info, "Netplay: player %d, peer %s, port %d, delay %d frames%s\n",
-                          netplay->player, netplay->peer.c_str(), netplay->port, netplay->delay, netplay->input->Ok() ? "" : " (SOCKET FAILED)");
+            Platform::Log(Platform::LogLevel::Info, "Netplay: player %d, peer %s, port %d\n",
+                          netplay->player, netplay->peer.c_str(), netplay->port);
         }
 
         auto instanceArgs = BuildArgsFromConfiguration(*currentConfiguration, instanceId);
@@ -555,6 +595,10 @@ namespace MelonDSAndroid
             std::vector<u8> mine = netplayReadFile(sramPath), theirs;
             if (head.empty() || (netplay->exchange && !netplayExchange(*netplay, romId, mine, theirs)))
                 return 2;
+            // created only now: both devices have agreed on the input delay
+            netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port, netplay->peer);
+            Platform::Log(Platform::LogLevel::Info, "Netplay: input delay %d frames%s\n", netplay->delay,
+                          netplay->input->Ok() ? "" : " (SOCKET FAILED)");
             if (!netplay->remote->loadRom(romPath, netplaySavePath(1 - netplay->player, theirs)))
                 return 2;
         }

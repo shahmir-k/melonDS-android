@@ -1031,7 +1031,9 @@ void* emulate(void*)
         //   so it doesn't oscillate back into slow-mo at the threshold.
         // Only runs when fast-forward is off. All frameskip changes happen here, on the
         // emu thread, so they never race runFrame.
-        if (autoFrameskipEnabled && !isFastForwardEnabled) {
+        // Never during LAN multiplayer: there the frame time is spent waiting on the network,
+        // which skipping rendering cannot shorten, and the skips show up as multi-second freezes.
+        if (autoFrameskipEnabled && !isFastForwardEnabled && lanMode == LanNone) {
             autoFsEmaMs = (autoFsEmaMs <= 0.0) ? delay : (autoFsEmaMs * 0.7 + delay * 0.3);
             if (autoFsCooldown > 0) autoFsCooldown--;
 

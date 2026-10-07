@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.hardware.display.DisplayManager
 import android.hardware.input.InputManager
+import android.app.ActivityOptions
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -286,6 +287,10 @@ class EmulatorActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null && moveToMainScreenOfDualScreenDevice()) {
+            replacedOnMainScreen = true
+            return
+        }
         handler = Handler(mainLooper)
         lifecycleOwnerProvider.setCurrentLifecycleOwner(this)
         binding = ActivityEmulatorBinding.inflate(layoutInflater)
@@ -1042,8 +1047,31 @@ class EmulatorActivity : AppCompatActivity() {
         frameRenderCoordinator.removeSurface(binding.surfaceMain)
     }
 
+    /**
+     * On a dual-screen handheld the emulator must run on the main screen, so the other built-in
+     * screen is free for the second DS screen: Android only allows presentation windows on a
+     * display flagged for presentations, and on the AYN Thor that is only the bottom screen.
+     * When the emulator is started on the bottom screen (from a launcher running there), restart
+     * it on the main screen instead of falling back to a single-screen layout. Returns true if
+     * this instance is being replaced.
+     */
+    // Set when this instance only restarted the emulator on the main screen: it never initialised
+    // anything, so onDestroy must not touch it.
+    private var replacedOnMainScreen = false
+
+    private fun moveToMainScreenOfDualScreenDevice(): Boolean {
+        if (Build.MANUFACTURER != "AYN" || Build.MODEL != "AYN Thor") return false
+        if (ContextCompat.getDisplayOrDefault(this).displayId == Display.DEFAULT_DISPLAY) return false
+
+        val options = ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY)
+        finish()
+        startActivity(Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options.toBundle())
+        return true
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        if (replacedOnMainScreen) return
         frameRenderCoordinator.stop()
         presentation?.dismiss()
     }

@@ -441,6 +441,16 @@ namespace MelonDSAndroid
         }
     }
 
+    void netplayAbort()
+    {
+        if (!netplay)
+            return;
+        netplay->running = false;
+        ((LockstepMP&) MPInterface::Get()).Stop();
+        if (netplay->input)
+            netplay->input->Abort();
+    }
+
     static void netplayStop()
     {
         if (!netplay)

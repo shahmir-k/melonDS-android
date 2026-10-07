@@ -536,6 +536,8 @@ Java_me_magnum_melonds_MelonEmulator_stopEmulation(JNIEnv* env, jobject thiz)
         pthread_cond_broadcast(&emuThreadCond);
         pthread_mutex_unlock(&emuThreadMutex);
 
+        // Netplay: the emulator thread may be waiting for a player who has left
+        MelonDSAndroid::netplayAbort();
         pthread_join(emuThread, NULL);
         pthread_mutex_destroy(&emuThreadMutex);
         pthread_cond_destroy(&emuThreadCond);

@@ -40,6 +40,8 @@ namespace MelonDSAndroid {
     extern void netplayPrepare(int player, std::string peer);
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     extern std::string netplayStatus();
+    // Ends every Netplay wait (stopping: the emulator thread may be waiting on a player who left)
+    extern void netplayAbort();
     extern void setConfiguration(EmulatorConfiguration emulatorConfiguration);
     extern void setup(AndroidCameraHandler* androidCameraHandler, std::shared_ptr<MelonEventMessenger> androidEventMessenger, u32* screenshotBufferPointer, int instanceId);
     extern void setCodeList(std::list<Cheat> cheats);

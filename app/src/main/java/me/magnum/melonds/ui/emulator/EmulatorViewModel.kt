@@ -369,6 +369,8 @@ class EmulatorViewModel @Inject constructor(
         }
     }
 
+    fun getLanPlayerName(): String = settingsRepository.getFirmwareConfiguration().nickname
+
     fun resumeEmulator() {
         sessionCoroutineScope.launch {
             emulatorManager.resumeEmulator()
@@ -448,6 +450,7 @@ class EmulatorViewModel @Inject constructor(
                             }
                         }
                     }
+                    RomPauseMenuOption.MULTIPLAYER -> _uiEvent.tryEmit(EmulatorUiEvent.ShowMultiplayer)
                     RomPauseMenuOption.VIEW_ACHIEVEMENTS -> _uiEvent.tryEmit(EmulatorUiEvent.ShowAchievementList)
                     RomPauseMenuOption.RESET -> resetEmulator()
                     RomPauseMenuOption.EXIT -> exitEmulator(force = false)

@@ -26,6 +26,8 @@
 #include "performancehint/PerformanceHintManagerFactory.h"
 
 #include "Platform.h"
+#include "net/MPInterface.h"
+#include "net/LAN.h"
 
 enum GbaSlotType {
     NONE = 0,
@@ -35,6 +37,7 @@ enum GbaSlotType {
 };
 
 void* emulate(void*);
+static void lanEndAll();
 MelonDSAndroid::RomGbaSlotConfig* buildGbaSlotConfig(GbaSlotType slotType, const char* romPath, const char* savePath);
 
 pthread_t emuThread;
@@ -530,6 +533,9 @@ Java_me_magnum_melonds_MelonEmulator_stopEmulation(JNIEnv* env, jobject thiz)
         pthread_cond_destroy(&emuThreadCond);
     }
 
+    // The emulator thread is gone, so the LAN backend can be torn down without the lock.
+    lanEndAll();
+
     MelonDSAndroid::cleanup();
 
     env->DeleteGlobalRef(globalCameraManager);
@@ -657,6 +663,213 @@ MelonDSAndroid::RomGbaSlotConfig* buildGbaSlotConfig(GbaSlotType slotType, const
     {
         return (MelonDSAndroid::RomGbaSlotConfig*) new MelonDSAndroid::RomGbaSlotConfigNone;
     }
+}
+
+// ---- LAN multiplayer -------------------------------------------------------------------------
+// The LAN backend (melonDS's net/LAN, ENet over UDP; discovery on 7063, session on 7064) is
+// driven from the in-game multiplayer lobby. Every call below runs with the emulator thread
+// parked on emuThreadCond and emuThreadMutex held, so it never races the emulator loop's
+// MPInterface::Get().Process(), and MPInterface::Set() never frees a backend that thread is
+// using. The lobby is opened from the pause menu, so the game is already paused; while it is
+// open, lanTick() pumps the backend in place of the emulator loop.
+enum LanMode { LanNone = 0, LanDiscovering = 1, LanHosting = 2, LanJoined = 3 };
+static LanMode lanMode = LanNone;
+
+#define lan() ((melonDS::LAN&) melonDS::MPInterface::Get())
+
+// Returns with emuThreadMutex held and the emulator thread parked, or false (mutex not held)
+// if no game is running or it is not paused.
+static bool lanLockParked()
+{
+    if (!started)
+        return false;
+
+    pthread_mutex_lock(&emuThreadMutex);
+    for (;;)
+    {
+        if (stop || !paused)
+        {
+            pthread_mutex_unlock(&emuThreadMutex);
+            return false;
+        }
+        if (isThreadReallyPaused)
+            return true;
+        // the emulator thread sets isThreadReallyPaused under this mutex; let it get there
+        pthread_mutex_unlock(&emuThreadMutex);
+        usleep(1000);
+        pthread_mutex_lock(&emuThreadMutex);
+    }
+}
+
+static void lanEndAll()
+{
+    if (lanMode == LanDiscovering)
+        lan().EndDiscovery();
+    else if (lanMode == LanHosting || lanMode == LanJoined)
+        lan().EndSession();
+    if (lanMode != LanNone)
+        melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+    lanMode = LanNone;
+}
+
+static std::string lanJString(JNIEnv* env, jstring s)
+{
+    const char* c = env->GetStringUTFChars(s, nullptr);
+    std::string r(c);
+    env->ReleaseStringUTFChars(s, c);
+    return r;
+}
+
+static jobjectArray lanStringArray(JNIEnv* env, const std::vector<std::string>& rows)
+{
+    jobjectArray arr = env->NewObjectArray((jsize) rows.size(), env->FindClass("java/lang/String"), nullptr);
+    for (size_t i = 0; i < rows.size(); i++)
+    {
+        jstring s = env->NewStringUTF(rows[i].c_str());
+        env->SetObjectArrayElement(arr, (jsize) i, s);
+        env->DeleteLocalRef(s);
+    }
+    return arr;
+}
+
+extern "C"
+{
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanGetMode(JNIEnv* env, jobject thiz)
+{
+    return lanMode;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring playerName, jint maxPlayers)
+{
+    if (!lanLockParked())
+        return JNI_FALSE;
+    std::string name = lanJString(env, playerName);
+    lanEndAll();
+    melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
+    bool ok = lan().StartHost(name.c_str(), maxPlayers);
+    if (ok)
+        lanMode = LanHosting;
+    else
+        melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+    pthread_mutex_unlock(&emuThreadMutex);
+    return ok;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanStartDiscovery(JNIEnv* env, jobject thiz)
+{
+    if (!lanLockParked())
+        return JNI_FALSE;
+    lanEndAll();
+    melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
+    bool ok = lan().StartDiscovery();
+    if (ok)
+        lanMode = LanDiscovering;
+    else
+        melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+    pthread_mutex_unlock(&emuThreadMutex);
+    return ok;
+}
+
+// One row per discovered session: "ip \t name \t numPlayers \t maxPlayers \t status(0 idle, 1 playing)"
+JNIEXPORT jobjectArray JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanGetSessions(JNIEnv* env, jobject thiz)
+{
+    std::vector<std::string> rows;
+    if (lanLockParked())
+    {
+        if (lanMode == LanDiscovering)
+        {
+            for (const auto& [key, data] : lan().GetDiscoveryList())
+            {
+                // discovery keys are host-order addresses (first octet in the top byte)
+                char row[160];
+                snprintf(row, sizeof(row), "%u.%u.%u.%u\t%.64s\t%u\t%u\t%u",
+                         key >> 24, (key >> 16) & 0xFF, (key >> 8) & 0xFF, key & 0xFF,
+                         data.SessionName, data.NumPlayers, data.MaxPlayers, data.Status);
+                rows.emplace_back(row);
+            }
+        }
+        pthread_mutex_unlock(&emuThreadMutex);
+    }
+    return lanStringArray(env, rows);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanJoin(JNIEnv* env, jobject thiz, jstring playerName, jstring hostAddress)
+{
+    if (!lanLockParked())
+        return JNI_FALSE;
+    std::string name = lanJString(env, playerName);
+    std::string host = lanJString(env, hostAddress);
+    if (lanMode == LanDiscovering)
+        lan().EndDiscovery();
+    else
+    {
+        lanEndAll();
+        melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
+    }
+    // blocks while ENet connects to the host (the caller runs this off the UI thread)
+    bool ok = lan().StartClient(name.c_str(), host.c_str());
+    if (ok)
+        lanMode = LanJoined;
+    else
+    {
+        melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+        lanMode = LanNone;
+    }
+    pthread_mutex_unlock(&emuThreadMutex);
+    return ok;
+}
+
+// One row per player: "id \t maxPlayers \t name \t status \t ping \t isLocal \t ip"
+// status: 1 client, 2 host, 3 connecting, 4 disconnected (LAN::PlayerStatus)
+JNIEXPORT jobjectArray JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanGetPlayers(JNIEnv* env, jobject thiz)
+{
+    std::vector<std::string> rows;
+    if (lanLockParked())
+    {
+        if (lanMode == LanHosting || lanMode == LanJoined)
+        {
+            int maxPlayers = lan().GetMaxPlayers();
+            for (const auto& p : lan().GetPlayerList())
+            {
+                // player addresses are network-order (first octet in the low byte)
+                uint32_t ip = p.Address;
+                char row[160];
+                snprintf(row, sizeof(row), "%d\t%d\t%.32s\t%d\t%u\t%d\t%u.%u.%u.%u",
+                         p.ID, maxPlayers, p.Name, (int) p.Status, p.Ping, p.IsLocalPlayer ? 1 : 0,
+                         ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, ip >> 24);
+                rows.emplace_back(row);
+            }
+        }
+        pthread_mutex_unlock(&emuThreadMutex);
+    }
+    return lanStringArray(env, rows);
+}
+
+// Pumps discovery beacons and ENet events while the lobby holds the game paused.
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanTick(JNIEnv* env, jobject thiz)
+{
+    if (!lanLockParked())
+        return;
+    if (lanMode != LanNone)
+        melonDS::MPInterface::Get().Process();
+    pthread_mutex_unlock(&emuThreadMutex);
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanLeave(JNIEnv* env, jobject thiz)
+{
+    if (!lanLockParked())
+        return;
+    lanEndAll();
+    pthread_mutex_unlock(&emuThreadMutex);
+}
 }
 
 double getCurrentMillis() {

@@ -23,6 +23,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
@@ -81,6 +82,7 @@ import me.magnum.melonds.ui.emulator.input.INativeInputListener
 import me.magnum.melonds.ui.emulator.input.InputProcessor
 import me.magnum.melonds.ui.emulator.input.MelonTouchHandler
 import me.magnum.melonds.ui.emulator.model.EmulatorOverlay
+import me.magnum.melonds.ui.emulator.multiplayer.LanMultiplayerDialog
 import me.magnum.melonds.ui.emulator.model.EmulatorState
 import me.magnum.melonds.ui.emulator.model.EmulatorUiEvent
 import me.magnum.melonds.ui.emulator.model.LaunchArgs
@@ -269,6 +271,7 @@ class EmulatorActivity : AppCompatActivity() {
     }
     private val showAchievementList = mutableStateOf(false)
     private val showPendingSubmissionsDialog = mutableStateOf(false)
+    private val showMultiplayerDialog = mutableStateOf(false)
 
     private val activeOverlays = EmulatorOverlayTracker(
         onOverlaysCleared = {
@@ -378,6 +381,17 @@ class EmulatorActivity : AppCompatActivity() {
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.ACHIEVEMENTS_DIALOG)
                             viewModel.resumeEmulator()
                             showAchievementList.value = false
+                        }
+                    )
+                }
+
+                if (showMultiplayerDialog.value) {
+                    LanMultiplayerDialog(
+                        defaultPlayerName = remember { viewModel.getLanPlayerName() },
+                        onDismiss = {
+                            activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
+                            viewModel.resumeEmulator()
+                            showMultiplayerDialog.value = false
                         }
                     )
                 }
@@ -516,6 +530,10 @@ class EmulatorActivity : AppCompatActivity() {
                         EmulatorUiEvent.ShowAchievementList -> {
                             activeOverlays.addActiveOverlay(EmulatorOverlay.ACHIEVEMENTS_DIALOG)
                             showAchievementList.value = true
+                        }
+                        EmulatorUiEvent.ShowMultiplayer -> {
+                            activeOverlays.addActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
+                            showMultiplayerDialog.value = true
                         }
                         EmulatorUiEvent.ShowPendingSubmissionsDialog -> {
                             activeOverlays.addActiveOverlay(EmulatorOverlay.PENDING_SUBMISSION_CONFIRM_EXIT)

@@ -95,6 +95,17 @@ object MelonEmulator {
 
 	external fun stopEmulation()
 
+    // LAN multiplayer (MelonDSAndroidJNI.cpp). Only acts while emulation is paused: the native
+    // side parks the emulator thread around every call; otherwise these return false / empty.
+    external fun lanGetMode(): Int
+    external fun lanHost(playerName: String, maxPlayers: Int): Boolean
+    external fun lanStartDiscovery(): Boolean
+    external fun lanGetSessions(): Array<String>
+    external fun lanJoin(playerName: String, hostAddress: String): Boolean
+    external fun lanGetPlayers(): Array<String>
+    external fun lanTick()
+    external fun lanLeave()
+
     fun saveState(path: Uri): Boolean {
         return saveStateInternal(path.toString())
     }

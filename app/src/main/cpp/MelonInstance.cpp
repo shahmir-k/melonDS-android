@@ -574,6 +574,14 @@ u32 MelonInstance::runFrame()
                 cachedSkip = target;
                 nds->GPU.SetFrameskipTarget(target);
             }
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+            // skip drawing/presenting frames whose 3D repeats the last (30 Hz 3D): in Netplay,
+            // where every console is emulated and CPU is short. debug.litev.skiprepeat: 0 off,
+            // 2 always (also outside Netplay)
+            buf[0] = 0;
+            int sr = __system_property_get("debug.litev.skiprepeat", buf) > 0 ? atoi(buf) : 1;
+            nds->GPU.SkipRepeatEnabled = sr == 2 || (sr == 1 && MelonDSAndroid::netplayActive());
+#endif
         }
     }
 #endif
@@ -654,7 +662,12 @@ u32 MelonInstance::runFrame()
     // screen, layer 1 = bottom screen) at scaled resolution.
     void* fbTop = nullptr;
     void* fbBottom = nullptr;
-    auto* hybrid = currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+    const bool skipPresent = nds->GPU.SkipRepeat;   // nothing drawn this frame: keep the last one on screen
+#else
+    const bool skipPresent = false;
+#endif
+    auto* hybrid = !skipPresent && currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
     bool ramFramebuffers = false;
     bool presentedAsync = false;
     if (hybrid)
@@ -675,7 +688,7 @@ u32 MelonInstance::runFrame()
             });
         presentedAsync = true;
     }
-    else
+    else if (!skipPresent)
         ramFramebuffers = nds->GPU.GetFramebuffers(&fbTop, &fbBottom);
     if (ramFramebuffers)
     {
@@ -743,7 +756,7 @@ u32 MelonInstance::runFrame()
 
     bool isSleeping = nds->CPUStop & CPUStop_Sleep;
     if (presentedAsync) {}   // handed off on the GL 3D thread
-    else if (!isSleeping) [[likely]]
+    else if (!isSleeping && !skipPresent) [[likely]]
     {
         renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
         glFlush();

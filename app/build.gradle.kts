@@ -142,6 +142,7 @@ android {
                     // Netplay: other players' consoles skip render/audio-only work (the app
                     // sets GPU/GPU3D::Headless and SPU::Silent on them in MelonDS.cpp).
                     "-DLITEV_NETPLAY_HEADLESS=ON",
+                    "-DLITEV_NETPLAY_CAPTURE=ON",
                     // LockstepMP: host frames 2 ms late; MP host collects replies at the
                     // first reply slot (fewer thread hand-offs per CMD).
                     "-DLITEV_MP_HOSTDELAY=ON",
@@ -150,6 +151,7 @@ android {
                     "-DLITEV_JIT_ARM7_CPUARG=ON",
                     // 2D hybrid composite uses the NEON line compositor (needs SOFT2D_NEON).
                     "-DLITEV_HYB_COMPOSITE_NEON=ON",
+                    "-DLITEV_SKIP_REPEAT_FRAMES=ON",
                     // Skip inert 32 kHz RTC ticks while no RTC IRQ is armed (B).
                     "-DLITEV_COARSE_RTC=ON",
                     // Cache the next timer-overflow deadline (A).

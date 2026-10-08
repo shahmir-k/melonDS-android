@@ -223,6 +223,12 @@ class SharedPreferencesSettingsRepository(
         // Cache size is 128MB * (cacheSizeStepPreference ^ 2)
         return SizeUnit.MB(128) * 2.toDouble().pow(cacheSizeStepPreference).toLong()
     }
+
+    override fun getNetplayRomCacheMaxSize(): SizeUnit {
+        // 256MB * 2^step; default step 3 = 2GB
+        val step = preferences.getInt("netplay_rom_cache_max_size", 3)
+        return SizeUnit.MB(256) * 2.toDouble().pow(step).toLong()
+    }
     override fun getDefaultConsoleType(): ConsoleType {
         val consoleTypePreference = preferences.getString("console_type", "ds")!!
         return enumValueOfIgnoreCase(consoleTypePreference)

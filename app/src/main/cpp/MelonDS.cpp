@@ -124,10 +124,16 @@ namespace MelonDSAndroid
     static std::string netplayPending; // set by the lobby, used by the next setup()
     // the user's ROM library: where another player's console finds that player's game
     static std::vector<std::string> netplayLibrary;
+    // where ROMs received from the other players go, and its size cap
+    static std::string netplayCacheDir;
+    static u64 netplayCacheMax = 2ull << 30;
 
-    void netplayPrepare(int player, int players, std::string host, bool hosted, std::vector<std::string> library)
+    void netplayPrepare(int player, int players, std::string host, bool hosted, std::vector<std::string> library,
+                        std::string cacheDir, u64 cacheMaxBytes)
     {
         netplayLibrary = std::move(library);
+        netplayCacheDir = std::move(cacheDir);
+        netplayCacheMax = cacheMaxBytes;
         netplayPending = "player=" + std::to_string(player) + ",players=" + std::to_string(players);
         if (!host.empty()) netplayPending += ",peer=" + host + ":7100";
         if (hosted) netplayPending += ",hosted=1";
@@ -300,12 +306,14 @@ namespace MelonDSAndroid
     }
 
     // Scratch save for another player's console (it starts from their save, sent at session start).
-    // Our own console uses our real save, so progress made in Netplay persists as usual.
-    static std::string netplaySavePath(int player, const std::vector<u8>& data)
+    // Our own console uses our real save, so progress made in Netplay persists as usual. Named
+    // after the console's game too (`tag`: the start of its ROM's SHA-256), so one game's scratch
+    // save is never another's.
+    static std::string netplaySavePath(int player, const std::vector<u8>& data, const std::string& tag)
     {
         std::string dir = internalFilesDir + "/netplay";
         mkdir(dir.c_str(), 0700);
-        std::string path = dir + "/p" + std::to_string(player) + ".sav";
+        std::string path = dir + "/p" + std::to_string(player) + (tag.empty() ? "" : "-" + tag) + ".sav";
         if (FILE* f = fopen(path.c_str(), "wb"))
         {
             if (!data.empty()) fwrite(data.data(), 1, data.size(), f);
@@ -408,6 +416,7 @@ namespace MelonDSAndroid
 
     void netplayAbort()
     {
+        NetplayCancelSetup();   // stopping during session setup (a ROM transfer, a consent question)
         if (!netplay)
             return;
         netplay->running = false;
@@ -518,7 +527,7 @@ namespace MelonDSAndroid
     }
 
     // Another player's console, booting `romPath` from that player's save.
-    static bool netplayAddRemote(int player, const std::string& romPath, const std::vector<u8>& save)
+    static bool netplayAddRemote(int player, const std::string& romPath, const std::vector<u8>& save, const std::string& tag)
     {
         auto r = std::make_unique<NetplayRemote>();
         r->player = player;
@@ -539,7 +548,7 @@ namespace MelonDSAndroid
         nds->GPU.GPU3D.Headless = true;
         netplaySetClock(player, [nds] { return nds->GetSysTimestamp(); });
         netplayLoadScript("debug.litev.npscript2", r->script, player);
-        bool ok = r->console->loadRom(romPath, netplaySavePath(player, save));
+        bool ok = r->console->loadRom(romPath, netplaySavePath(player, save, tag));
         netplay->remotes.push_back(std::move(r));   // even on failure: netplayStop stops it
         return ok;
     }
@@ -601,6 +610,7 @@ namespace MelonDSAndroid
             std::vector<std::pair<int, std::string>> peers {{1 - netplay->player, netplay->peer}};
             std::map<int, std::vector<u8>> saves;
             std::map<int, std::string> roms;    // each other console's ROM (cross-game: that player's game)
+            std::map<int, std::string> tags;    // each console's ROM, short (scratch save names)
             if (netplay->exchange)
             {
                 NetplaySetup setup;
@@ -608,14 +618,18 @@ namespace MelonDSAndroid
                 setup.NumPlayers = netplay->players;
                 setup.Port = netplay->port;
                 setup.Host = netplay->peer;
+                setup.RomPath = romPath;
                 setup.Rom = NetplayDescribeRom(romPath);
                 if (!setup.Rom.Size)
                     return 2;
                 std::vector<std::string> library {romPath};
                 library.insert(library.end(), netplayLibrary.begin(), netplayLibrary.end());
-                // ponytail: only uncompressed .nds files in the library are searched; a zipped one
-                // needs extracting first (CompressedRomFileProcessor) or ROM transfer (phase 2)
+                // only uncompressed .nds files in the library are searched; a game found nowhere
+                // here (zipped ones included) is received from its player, with consent
                 setup.FindRom = [library](const NetplayRom& rom) { return NetplayFindRom(rom, library); };
+                setup.CacheDir = netplayCacheDir;
+                setup.CacheMaxBytes = netplayCacheMax;
+                setup.Consent = NetplayAskUser;     // the UI polls the status and answers
                 setup.Save = netplayReadFile(sramPath);
                 setup.Delay = netplay->autoDelay ? 0 : netplay->delay;
                 setup.Hosted = netplay->hosted;
@@ -630,6 +644,7 @@ namespace MelonDSAndroid
                 peers = std::move(setup.Peers);
                 saves = std::move(setup.Saves);
                 roms = std::move(setup.RomPaths);
+                for (auto& [player, rom] : setup.Roms) tags[player] = rom.Hex().substr(0, 8);
             }
             // created only now: every device has agreed on the players and the input delay
 #ifdef LITEV_HOSTED_NETPLAY
@@ -644,7 +659,7 @@ namespace MelonDSAndroid
                     netplay->server->DrainMs = 500;   // stopping: the guests may have left
                     netplay->input->DropAfterMs = 3000; // a guest silent this long is dropped: its console plays on with no input
                     for (auto& [player, addr] : peers)
-                        if (!netplayAddRemote(player, roms.count(player) ? roms[player] : romPath, saves[player]))
+                        if (!netplayAddRemote(player, roms.count(player) ? roms[player] : romPath, saves[player], tags[player]))
                             return 2;
                 }
                 else
@@ -671,7 +686,7 @@ namespace MelonDSAndroid
             Platform::Log(Platform::LogLevel::Info, "Netplay: %d players, input delay %d frames%s\n", netplay->players,
                           netplay->delay, netplay->input->Ok() ? "" : " (SOCKET FAILED)");
             for (auto& [player, addr] : peers)
-                if (!netplayAddRemote(player, roms.count(player) ? roms[player] : romPath, saves[player]))
+                if (!netplayAddRemote(player, roms.count(player) ? roms[player] : romPath, saves[player], tags[player]))
                     return 2;
 #ifdef LITEV_HOSTED_NETPLAY
             }

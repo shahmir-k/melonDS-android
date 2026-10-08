@@ -36,4 +36,19 @@
             android:title="@string/clear_extracted_rom_cache"
             android:summary="@string/cache_size_calculating"
             app:iconSpaceReserved="false" />
+
+    <!-- Games received from other players in Netplay. Real size = 256MB * (2 ^ netplay_rom_cache_max_size) -->
+    <SeekBarPreference
+            android:key="netplay_rom_cache_max_size"
+            android:title="@string/netplay_rom_cache_max_size"
+            app:iconSpaceReserved="false"
+            app:updatesContinuously="true"
+            android:defaultValue="3"
+            app:min="0"
+            android:max="4" />
+
+    <Preference
+            android:key="netplay_rom_cache_clear"
+            android:title="@string/netplay_rom_cache_clear"
+            app:iconSpaceReserved="false" />
 </PreferenceScreen>

@@ -1,5 +1,7 @@
 package me.magnum.melonds.ui.emulator
 
+import me.magnum.melonds.ui.emulator.model.NetplayTransfer
+import kotlinx.coroutines.withTimeoutOrNull
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -150,6 +152,9 @@ class EmulatorViewModel @Inject constructor(
     // shown next to the FPS counter ("" outside Netplay)
     private val _netplayStatus = MutableStateFlow("")
     val netplayStatus = _netplayStatus.asStateFlow()
+    // Netplay session setup's ROM transfer (consent question, then progress); null = none
+    private val _netplayTransfer = MutableStateFlow<NetplayTransfer?>(null)
+    val netplayTransfer = _netplayTransfer.asStateFlow()
 
     private val _toastEvent = EventSharedFlow<ToastEvent>()
     val toastEvent = _toastEvent.asSharedFlow()
@@ -386,7 +391,7 @@ class EmulatorViewModel @Inject constructor(
      * inputs cross the network. [player] = the LAN lobby id (0 = host) of [players];
      * [hostAddress] = the host's IP (guests), "" on the host.
      */
-    fun startNetplay(player: Int, players: Int, hostAddress: String, hosted: Boolean = false) {
+    fun startNetplay(player: Int, players: Int, hostAddress: String, hosted: Boolean = false, romCacheDir: String) {
         val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
         viewModelScope.launch {
             // another player may run a different game: its console boots that game, found in the
@@ -394,11 +399,32 @@ class EmulatorViewModel @Inject constructor(
             val library = romsRepository.getRoms().first()
                 .filter { it.fileName.endsWith(".nds", ignoreCase = true) }
                 .map { it.uri.toString() }
-            MelonEmulator.netplayPrepare(player, players, hostAddress, hosted, library.toTypedArray())
+            // a game found nowhere here is received from its player (with consent) into romCacheDir
+            MelonEmulator.netplayPrepare(player, players, hostAddress, hosted, library.toTypedArray(),
+                romCacheDir, settingsRepository.getNetplayRomCacheMaxSize().toBytes())
             stopEmulator()
             loadRom(rom)
+            pollNetplayTransfer()
         }
     }
+
+    // Session setup runs inside the native loadRom: until the game runs (or fails to), report what
+    // its ROM transfer is doing
+    private suspend fun pollNetplayTransfer() {
+        val ended = { s: EmulatorState -> s is EmulatorState.RunningRom || s is EmulatorState.RomLoadError || s is EmulatorState.RomNotFoundError }
+        withTimeoutOrNull(5.seconds) { _emulatorState.first { !ended(it) } }
+        while (!ended(_emulatorState.value)) {
+            _netplayTransfer.value = NetplayTransfer.parse(MelonEmulator.netplayTransferStatus()).takeIf { it.active }
+            delay(250)
+        }
+        _netplayTransfer.value = null
+    }
+
+    fun answerNetplayTransfer(yes: Boolean) = MelonEmulator.netplayAnswer(yes)
+
+    fun cancelNetplayTransfer() = MelonEmulator.netplayCancelSetup()
+
+    fun getNetplayRomCacheMaxSize() = settingsRepository.getNetplayRomCacheMaxSize()
 
     fun resetEmulator() {
         if (_emulatorState.value.isRunning()) {

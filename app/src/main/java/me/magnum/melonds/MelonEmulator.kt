@@ -108,8 +108,17 @@ object MelonEmulator {
     // The next game started runs in Netplay (every player's console on every device) as `player`
     // (the LAN lobby id, 0 = host) of `players`; guests pass the host's IP as `host`, the host "".
     // hosted: Hosted Netplay (the host runs every console, each guest only its own)
-    // library: ROM paths/URIs where another player's console finds that player's game (cross-game)
-    external fun netplayPrepare(player: Int, players: Int, host: String, hosted: Boolean, library: Array<String>)
+    // library: ROM paths/URIs where another player's console finds that player's game (cross-game);
+    // cacheDir: where a game received from another player goes (cacheMaxBytes: its size cap)
+    external fun netplayPrepare(player: Int, players: Int, host: String, hosted: Boolean, library: Array<String>,
+                                cacheDir: String, cacheMaxBytes: Long)
+    // Session setup's ROM transfer, polled by the UI: "state\nbytes\ntotal\ntitle\nquestion"
+    // (state: NetplayTransfer.STATE_*)
+    external fun netplayTransferStatus(): String
+    // the answer to the transfer's consent question
+    external fun netplayAnswer(yes: Boolean)
+    // ends session setup (and a ROM transfer) on this device
+    external fun netplayCancelSetup()
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     external fun netplayStatus(): String
 

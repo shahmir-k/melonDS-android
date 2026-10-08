@@ -22,6 +22,7 @@ interface SettingsRepository {
     fun clearRomSearchDirectories()
     fun getRomIconFiltering(): RomIconFiltering
     fun getRomCacheMaxSize(): SizeUnit
+    fun getNetplayRomCacheMaxSize(): SizeUnit
 
     fun getDefaultConsoleType(): ConsoleType
     fun getFirmwareConfiguration(): FirmwareConfiguration

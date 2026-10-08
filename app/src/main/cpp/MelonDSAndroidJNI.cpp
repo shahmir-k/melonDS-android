@@ -28,6 +28,7 @@
 #include "Platform.h"
 #include "net/MPInterface.h"
 #include "net/LAN.h"
+#include "net/NetplayInput.h"
 #include "LitevCores.h"
 
 enum GbaSlotType {
@@ -902,7 +903,8 @@ Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
 }
 
 JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jint players, jstring host, jboolean hosted, jobjectArray library)
+Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jint players, jstring host, jboolean hosted, jobjectArray library,
+                                                    jstring cacheDir, jlong cacheMaxBytes)
 {
     std::vector<std::string> paths;
     for (jsize i = 0, n = env->GetArrayLength(library); i < n; i++)
@@ -914,8 +916,31 @@ Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, j
         env->DeleteLocalRef(path);
     }
     const char* h = env->GetStringUTFChars(host, nullptr);
-    MelonDSAndroid::netplayPrepare(player, players, h, hosted, std::move(paths));
+    const char* c = env->GetStringUTFChars(cacheDir, nullptr);
+    MelonDSAndroid::netplayPrepare(player, players, h, hosted, std::move(paths), c, (u64)cacheMaxBytes);
+    env->ReleaseStringUTFChars(cacheDir, c);
     env->ReleaseStringUTFChars(host, h);
+}
+
+// session setup's ROM transfer: "state\nbytes\ntotal\ntitle\nquestion" (NetplayXferStatus)
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayTransferStatus(JNIEnv* env, jobject thiz)
+{
+    melonDS::NetplayXferStatus st = melonDS::NetplayGetXferStatus();
+    std::string s = std::to_string(st.State) + "\n" + std::to_string(st.Bytes) + "\n" + std::to_string(st.Total) + "\n" + st.Title + "\n" + st.Question;
+    return env->NewStringUTF(s.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayAnswer(JNIEnv* env, jobject thiz, jboolean yes)
+{
+    melonDS::NetplayAnswer(yes);
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayCancelSetup(JNIEnv* env, jobject thiz)
+{
+    melonDS::NetplayCancelSetup();
 }
 
 JNIEXPORT void JNICALL

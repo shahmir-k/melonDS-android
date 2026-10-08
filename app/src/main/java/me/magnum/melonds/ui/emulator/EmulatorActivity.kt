@@ -1,5 +1,9 @@
 package me.magnum.melonds.ui.emulator
 
+import me.magnum.melonds.ui.emulator.model.NetplayTransfer
+import me.magnum.melonds.impl.NetplayRomCache
+import me.magnum.melonds.utils.SizeUtils
+import android.widget.ProgressBar
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
@@ -398,7 +402,7 @@ class EmulatorActivity : AppCompatActivity() {
                         onStartNetplay = { player, players, host, hosted ->
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
                             showMultiplayerDialog.value = false
-                            viewModel.startNetplay(player, players, host, hosted)
+                            viewModel.startNetplay(player, players, host, hosted, NetplayRomCache.dir(this@EmulatorActivity).path)
                         },
                         onDismiss = {
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
@@ -484,6 +488,11 @@ class EmulatorActivity : AppCompatActivity() {
                         binding.textFps.text = getString(R.string.info_fps, fps) + if (netplay.isEmpty()) "" else "  ·  $netplay"
                     }
                 }
+            }
+        }
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.netplayTransfer.collectLatest { showNetplayTransfer(it) }
             }
         }
         lifecycleScope.launch {
@@ -1086,5 +1095,54 @@ class EmulatorActivity : AppCompatActivity() {
         presentation?.dismiss()
         // remove the multiplayer game network (Wi-Fi Direct group / hotspot) and unbind from it
         if (isFinishing) DirectLink.leave(this)
+    }
+
+    private var netplayTransferDialog: AlertDialog? = null
+    private var netplayTransferProgress: ProgressBar? = null
+    private var netplayTransferAsking = false
+
+    // Netplay session setup's ROM transfer: the consent question, then progress with Cancel
+    private fun showNetplayTransfer(transfer: NetplayTransfer?) {
+        val asking = transfer?.state == NetplayTransfer.STATE_ASKING
+        if (transfer == null || asking != netplayTransferAsking) {
+            netplayTransferDialog?.dismiss()
+            netplayTransferDialog = null
+        }
+        netplayTransferAsking = asking
+        if (transfer == null) return
+        if (asking) {
+            if (netplayTransferDialog == null) {
+                val cap = SizeUtils.getBestSizeStringRepresentation(this, viewModel.getNetplayRomCacheMaxSize())
+                netplayTransferDialog = AlertDialog.Builder(this)
+                    .setTitle(R.string.netplay_transfer_title)
+                    .setMessage(getString(R.string.netplay_transfer_consent, transfer.question, cap))
+                    .setPositiveButton(R.string.netplay_transfer_allow) { _, _ -> viewModel.answerNetplayTransfer(true) }
+                    .setNegativeButton(R.string.netplay_transfer_decline) { _, _ -> viewModel.answerNetplayTransfer(false) }
+                    .setCancelable(false)
+                    .show()
+            }
+            return
+        }
+        val text = getString(
+            if (transfer.state == NetplayTransfer.STATE_RECEIVING) R.string.netplay_transfer_receiving else R.string.netplay_transfer_sending,
+            transfer.title, (transfer.bytes shr 20).toInt(), (transfer.total shr 20).toInt()
+        )
+        val dialog = netplayTransferDialog ?: run {
+            val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                setPadding(64, 0, 64, 0)
+            }
+            netplayTransferProgress = progress
+            AlertDialog.Builder(this)
+                .setTitle(R.string.netplay_transfer_title)
+                .setMessage(text)
+                .setView(progress)
+                .setNegativeButton(android.R.string.cancel) { _, _ -> viewModel.cancelNetplayTransfer() }
+                .setCancelable(false)
+                .show()
+                .also { netplayTransferDialog = it }
+        }
+        dialog.setMessage(text)
+        netplayTransferProgress?.progress = if (transfer.total > 0) (transfer.bytes * 1000 / transfer.total).toInt() else 0
     }
 }

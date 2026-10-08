@@ -15,6 +15,7 @@ import me.magnum.melonds.R
 import me.magnum.melonds.common.DirectoryAccessValidator
 import me.magnum.melonds.common.UriPermissionManager
 import me.magnum.melonds.domain.model.SizeUnit
+import me.magnum.melonds.impl.NetplayRomCache
 import me.magnum.melonds.ui.settings.PreferenceFragmentHelper
 import me.magnum.melonds.ui.settings.PreferenceFragmentTitleProvider
 import me.magnum.melonds.ui.settings.viewmodel.RomPreferencesViewModel
@@ -51,6 +52,25 @@ class RomsPreferencesFragment : BasePreferenceFragment(), PreferenceFragmentTitl
             if (!viewModel.clearRomCache()) {
                 Toast.makeText(requireContext(), R.string.error_clear_rom_cache, Toast.LENGTH_LONG).show()
             }
+            true
+        }
+
+        val netplayCacheSizePreference = findPreference<SeekBarPreference>("netplay_rom_cache_max_size")!!
+        val netplayCacheClearPreference = findPreference<Preference>("netplay_rom_cache_clear")!!
+        fun netplayCacheSummaries(step: Int) {
+            netplayCacheSizePreference.summary = SizeUtils.getBestSizeStringRepresentation(requireContext(), SizeUnit.MB(256) * 2.toDouble().pow(step).toLong())
+            netplayCacheClearPreference.summary = getString(R.string.cache_size, SizeUtils.getBestSizeStringRepresentation(requireContext(), SizeUnit.Bytes(NetplayRomCache.size(requireContext()))))
+        }
+        netplayCacheSummaries(netplayCacheSizePreference.value)
+        netplayCacheSizePreference.setOnPreferenceChangeListener { _, newValue ->
+            netplayCacheSummaries(newValue as Int)
+            true
+        }
+        netplayCacheClearPreference.setOnPreferenceClickListener {
+            if (!NetplayRomCache.clear(requireContext())) {
+                Toast.makeText(requireContext(), R.string.error_clear_rom_cache, Toast.LENGTH_LONG).show()
+            }
+            netplayCacheSummaries(netplayCacheSizePreference.value)
             true
         }
     }

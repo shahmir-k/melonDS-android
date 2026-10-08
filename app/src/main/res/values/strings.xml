@@ -183,6 +183,14 @@
     <string name="rom_icon_filtering">Icon filtering</string>
     <string name="max_rom_cache_size">Max. ROM cache size</string>
     <string name="clear_extracted_rom_cache">Clear extracted ROM cache</string>
+    <string name="netplay_rom_cache_max_size">Max. Netplay ROM cache size (games received from other players)</string>
+    <string name="netplay_rom_cache_clear">Clear Netplay ROM cache</string>
+    <string name="netplay_transfer_title">Netplay: share a game</string>
+    <string name="netplay_transfer_consent">%1$s\n\nGames received are kept in the Netplay ROM cache (at most %2$s), not added to your ROM list.</string>
+    <string name="netplay_transfer_allow">Allow</string>
+    <string name="netplay_transfer_decline">Decline</string>
+    <string name="netplay_transfer_receiving">Receiving %1$s: %2$d of %3$d MB</string>
+    <string name="netplay_transfer_sending">Sending %1$s: %2$d of %3$d MB</string>
     <string name="cache_size">Cache size: %s</string>
     <string name="cache_size_calculating">Cache size: calculating…</string>
     <string name="rom_search_directory">Search directory</string>

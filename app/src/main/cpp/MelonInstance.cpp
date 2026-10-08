@@ -352,32 +352,15 @@ void MelonInstance::blitAcceleratedFrame(u32 srcArrayTex, u32 dstTex, int dstWid
 
 bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
 {
-    unique_ptr<u8[]> romData;
     unique_ptr<u8[]> sramData;
     u32 romFileLength = 0;
     u32 sramFileLength = 0;
 
-    // ROM file loading
-    Platform::FileHandle* romFile = Platform::OpenFile(romPath, FileMode::Read);
-    if (!romFile)
+    // ROM file loading: shared with every other console in this process running the same file
+    // (Netplay runs all players' consoles here)
+    auto romData = NDSCart::AcquireSharedROM(romPath, romFileLength);
+    if (!romData)
         return false;
-
-    u64 length = Platform::FileLength(romFile);
-    if (length > 0x40000000)
-    {
-        Platform::CloseFile(romFile);
-        return false;
-    }
-
-    romFileLength = (u32) length;
-    Platform::FileRewind(romFile);
-    romData = make_unique<u8[]>(romFileLength);
-    size_t nread = Platform::FileRead(romData.get(), (size_t) romFileLength, 1, romFile);
-    Platform::CloseFile(romFile);
-    if (nread != 1)
-    {
-        return false;
-    }
 
     // SRAM file loading
     FileHandle* sramFile = Platform::OpenFile(sramPath, FileMode::Read);

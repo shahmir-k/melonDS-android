@@ -612,6 +612,12 @@ namespace MelonDSAndroid
             instance->setFrameskipTarget(target);
     }
 #endif
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+    void setSkipRepeatAuto(bool on) {
+        if (instance)
+            instance->skipRepeatAuto = on;
+    }
+#endif
 
     int loadRom(std::string romPath, std::string sramPath, RomGbaSlotConfig* gbaSlotConfig)
     {

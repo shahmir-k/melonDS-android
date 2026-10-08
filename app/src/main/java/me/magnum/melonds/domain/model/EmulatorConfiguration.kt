@@ -28,5 +28,7 @@ data class EmulatorConfiguration(
         val firmwareConfiguration: FirmwareConfiguration,
         val rendererConfiguration: RendererConfiguration,
         val autoFrameskipEnabled: Boolean = false,
-        val fastForwardMaxFrameskip: Int = 0
+        val fastForwardMaxFrameskip: Int = 0,
+        // debug.litev.skiprepeat values: 3 auto, 2 always, 1 off (Netplay/LAN keep it on)
+        val skipRepeatMode: Int = 2
 )

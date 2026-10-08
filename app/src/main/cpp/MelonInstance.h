@@ -39,6 +39,7 @@ public:
 #ifdef LITEV_AGGRESSIVE_SKIP
     void setFrameskipTarget(int target);
 #endif
+    bool skipRepeatAuto = false;   // set by the "Skip repeated frames: Auto" controller (emu thread)
     void stop();
 
     melonDS::NDS* getNds() { return nds; }
@@ -90,6 +91,8 @@ private:
     void saveRewindState(RewindSaveState* rewindSaveState);
 
 private:
+    int skipRepeatMode = 1;        // debug.litev.skiprepeat value in force (polled in runFrame)
+    bool skipRepeatMp = false;     // Netplay or LAN running
     int instanceId;
     int consoleType;
     NDS* nds;

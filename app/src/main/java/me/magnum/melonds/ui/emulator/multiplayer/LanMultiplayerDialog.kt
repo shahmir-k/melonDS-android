@@ -74,7 +74,7 @@ private fun parsePlayers(rows: Array<String>) = rows.mapNotNull { row ->
  * The session outlives the dialog: it ends on "Leave session" or when the emulator stops.
  */
 @Composable
-fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, peer: String) -> Unit, onDismiss: () -> Unit) {
+fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, players: Int, host: String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var playerName by remember { mutableStateOf(defaultPlayerName) }
@@ -86,9 +86,10 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
     var busyText by remember { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var direct by remember { mutableStateOf(false) }
-    // Netplay peer, remembered while both players are connected: once one side restarts into
-    // Netplay it leaves the lobby, and the other side's list then no longer has its address
-    var netplayPeer by remember { mutableStateOf<String?>(null) }
+    // Netplay players: the largest complete lobby seen (everyone connected, addresses known).
+    // Once a device restarts into Netplay it leaves the lobby (the host leaving ends it), so the
+    // others' lists shrink: a smaller list never replaces it.
+    var netplayPlayers by remember { mutableStateOf<List<LanPlayer>?>(null) }
     // a Wi-Fi Direct action waiting on the runtime permission prompt
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -116,9 +117,14 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
             mode = newMode
             sessions = newSessions
             players = newPlayers
-            newPlayers.singleOrNull { !it.isLocal && it.status != PLAYER_CONNECTING }
-                ?.takeIf { newPlayers.size == 2 && it.address != "127.0.0.1" && it.address != "0.0.0.0" }
-                ?.let { netplayPeer = it.address }
+            if (newMode != MODE_HOSTING && newMode != MODE_JOINED) {
+                netplayPlayers = null
+            } else if (newPlayers.size >= 2 && newPlayers.size >= (netplayPlayers?.size ?: 0) &&
+                newPlayers.count { it.isLocal } == 1 &&
+                newPlayers.all { it.isLocal || (it.status != PLAYER_CONNECTING && it.address != "127.0.0.1" && it.address != "0.0.0.0") }
+            ) {
+                netplayPlayers = newPlayers
+            }
             delay(100)
         }
     }
@@ -223,14 +229,17 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                     }
                 }
                 else -> {
-                    // Netplay: exactly two players; each device restarts the game running both consoles
-                    val peer = netplayPeer
-                    if (peer != null) {
+                    // Netplay: every player (as in the lobby) presses Start Netplay; each device
+                    // restarts the game running every player's console. Player = lobby id (host 0);
+                    // the host waits for the others, guests connect to the host.
+                    val netplay = netplayPlayers
+                    if (netplay != null) {
                         DialogButton(stringResource(R.string.multiplayer_start_netplay), enabled = idle) {
-                            val player = if (mode == MODE_HOSTING) 0 else 1
-                            scope.launch(Dispatchers.IO) {
+                            val player = netplay.first { it.isLocal }.id
+                            val host = if (mode == MODE_HOSTING) "" else netplay.firstOrNull { it.status == PLAYER_HOST }?.address
+                            if (host != null) scope.launch(Dispatchers.IO) {
                                 MelonEmulator.lanLeave()
-                                withContext(Dispatchers.Main) { onStartNetplay(player, peer) }
+                                withContext(Dispatchers.Main) { onStartNetplay(player, netplay.size, host) }
                             }
                         }
                     }

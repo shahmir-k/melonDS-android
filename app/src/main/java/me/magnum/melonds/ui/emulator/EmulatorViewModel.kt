@@ -381,12 +381,13 @@ class EmulatorViewModel @Inject constructor(
     }
 
     /**
-     * Restarts the running game in Netplay: both players' consoles run on every device and only
-     * inputs cross the network. [player] 0 = host, 1 = guest; [peerAddress] = the other device's IP.
+     * Restarts the running game in Netplay: every player's console runs on every device and only
+     * inputs cross the network. [player] = the LAN lobby id (0 = host) of [players];
+     * [hostAddress] = the host's IP (guests), "" on the host.
      */
-    fun startNetplay(player: Int, peerAddress: String) {
+    fun startNetplay(player: Int, players: Int, hostAddress: String) {
         val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
-        MelonEmulator.netplayPrepare(player, peerAddress)
+        MelonEmulator.netplayPrepare(player, players, hostAddress)
         stopEmulator()
         loadRom(rom)
     }

@@ -3,6 +3,8 @@ package me.magnum.melonds.ui.common.component.dialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import me.magnum.melonds.ui.common.DetachedDialog
 import me.magnum.melonds.ui.common.melonTextButtonColors
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BaseDialog(
     title: String,
@@ -63,7 +66,8 @@ fun BaseDialog(
                     }
 
                     buttons?.let {
-                        Row(
+                        // wraps when the buttons don't fit one line (the 640x480 RG DS lobby has four)
+                        FlowRow(
                             modifier = Modifier.fillMaxWidth()
                                 .padding(start = 24.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)

@@ -311,8 +311,12 @@ namespace MelonDSAndroid
     {
         // Off the emulator's core, above the render threads (nice -10): the local console waits
         // for this one every frame, so it must not queue behind rendering.
+#ifdef LITEV_TOPO_PIN
+        LitevTopo::PinSelf(LitevTopo::CoreRole::RemoteConsole);
+#else
         const auto& cores = LitevCores::Get();
         sched_setaffinity(0, sizeof(cores.OtherSet), &cores.OtherSet);
+#endif
         int nice = -16;
         while (setpriority(PRIO_PROCESS, 0, nice) != 0 && nice < 0) nice++;
         Platform::Log(Platform::LogLevel::Info, "Netplay: player %d's console thread at nice %d\n", r->player, nice);

@@ -317,8 +317,12 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
             bool doPin = !(__system_property_get("debug.litev.pinpresent", prop) > 0 && atoi(prop) == 0);
             if (doPin)
             {
+#ifdef LITEV_TOPO_PIN
+                melonDS::LitevTopo::PinSelf(melonDS::LitevTopo::CoreRole::RenderCritical);
+#else
                 const cpu_set_t& set = melonDS::LitevCores::Get().OtherSet;
                 sched_setaffinity(0, sizeof(set), &set);
+#endif
             }
         }
     }

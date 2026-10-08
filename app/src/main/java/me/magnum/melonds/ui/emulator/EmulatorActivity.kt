@@ -84,6 +84,7 @@ import me.magnum.melonds.ui.emulator.input.INativeInputListener
 import me.magnum.melonds.ui.emulator.input.InputProcessor
 import me.magnum.melonds.ui.emulator.input.MelonTouchHandler
 import me.magnum.melonds.ui.emulator.model.EmulatorOverlay
+import me.magnum.melonds.ui.emulator.multiplayer.DirectLink
 import me.magnum.melonds.ui.emulator.multiplayer.LanMultiplayerDialog
 import me.magnum.melonds.ui.emulator.model.EmulatorState
 import me.magnum.melonds.ui.emulator.model.EmulatorUiEvent
@@ -1083,5 +1084,7 @@ class EmulatorActivity : AppCompatActivity() {
         if (replacedOnMainScreen) return
         frameRenderCoordinator.stop()
         presentation?.dismiss()
+        // remove the multiplayer game network (Wi-Fi Direct group / hotspot) and unbind from it
+        if (isFinishing) DirectLink.leave(this)
     }
 }

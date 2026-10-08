@@ -1,8 +1,10 @@
 package me.magnum.melonds.ui.emulator.multiplayer
 
+import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.Checkbox
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
@@ -67,16 +68,28 @@ private fun parsePlayers(rows: Array<String>) = rows.mapNotNull { row ->
     }
 }
 
+// Screens before a LAN session exists; once hosting/joined the lobby replaces them
+private enum class Screen { MENU, USB, LAN, HOTSPOT, HOST_HOTSPOT, WIFI }
+
 /**
- * LAN multiplayer lobby, opened from the pause menu. The game stays paused while it is open, so
- * it pumps the native LAN backend itself; once connected, players use their game's own wireless
- * features (e.g. Union Room) and the emulator routes the DS wireless traffic over the network.
- * The session outlives the dialog: it ends on "Leave session" or when the emulator stops.
+ * Multiplayer dialog, opened from the pause menu: USB | Netplay | LAN, LAN = Hotspot | Wi-Fi.
+ * Hotspot: one device creates a game network ([DirectLink]) and the others join it, then join the
+ * LAN session by the host's address (session discovery does not cross these networks). Wi-Fi: the
+ * LAN session over the current network, with discovery. Netplay starts from a connected 2-player
+ * LAN session (Start Netplay on both devices), so the Netplay entry runs the same connect flow and
+ * only changes the hints.
+ *
+ * The game stays paused while it is open, so it pumps the native LAN backend itself; once
+ * connected, players use their game's own wireless features (e.g. Union Room) and the emulator
+ * routes the DS wireless traffic over the network. The session outlives the dialog: it ends on
+ * "Leave session" or when the emulator stops.
  */
 @Composable
 fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, peer: String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var screen by remember { mutableStateOf(Screen.MENU) }
+    var netplayGoal by remember { mutableStateOf(false) }
     var playerName by remember { mutableStateOf(defaultPlayerName) }
     var maxPlayers by remember { mutableIntStateOf(2) }
     var hostAddress by remember { mutableStateOf("") }
@@ -85,12 +98,22 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
     var players by remember { mutableStateOf(emptyList<LanPlayer>()) }
     var busyText by remember { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
-    var direct by remember { mutableStateOf(false) }
+    var hotspotName by remember { mutableStateOf(DirectLink.randomName()) }
+    var nearbyNetworks by remember { mutableStateOf(emptyList<String>()) }
+    var manualSsid by remember { mutableStateOf("") }
+    var manualPassword by remember { mutableStateOf(DirectLink.PASSPHRASE) }
+    var canScan by remember { mutableStateOf(false) }
     // Netplay peer, remembered while both players are connected: once one side restarts into
     // Netplay it leaves the lobby, and the other side's list then no longer has its address
     var netplayPeer by remember { mutableStateOf<String?>(null) }
-    // a Wi-Fi Direct action waiting on the runtime permission prompt
+    // a hotspot action waiting on the runtime permission prompt
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    // Wi-Fi Direct / local-only hotspot: NEARBY_WIFI_DEVICES on Android 13+, location before
+    fun hasNetworkPermission() = granted(
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
+    )
 
     // Wi-Fi drivers drop broadcast packets (session discovery beacons) unless a multicast lock is held.
     DisposableEffect(Unit) {
@@ -123,6 +146,19 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
         }
     }
 
+    // Nearby SereneDS networks, while the Hotspot screen is open
+    LaunchedEffect(screen, mode) {
+        if (screen != Screen.HOTSPOT || mode != MODE_NONE) return@LaunchedEffect
+        var polls = 0
+        while (true) {
+            canScan = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+            // Android throttles scan requests (4 per 2 minutes); results also arrive from system scans
+            if (polls++ % 15 == 0) DirectLink.requestScan(context)
+            nearbyNetworks = withContext(Dispatchers.IO) { DirectLink.nearbyNetworks(context) }
+            delay(2000)
+        }
+    }
+
     fun runAction(progress: String, failure: String, action: suspend () -> Boolean) {
         scope.launch {
             errorText = null
@@ -134,20 +170,24 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
     }
 
     val permissionDenied = stringResource(R.string.multiplayer_error_permission_denied)
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        canScan = granted(Manifest.permission.ACCESS_FINE_LOCATION)
         val next = afterPermission
         afterPermission = null
-        if (granted) next?.invoke() else errorText = permissionDenied
+        if (next != null) {
+            if (hasNetworkPermission()) next() else errorText = permissionDenied
+        }
     }
 
-    // Runs `action` once Wi-Fi Direct may be used (asking for the permission first if needed).
-    fun withDirectPermission(action: () -> Unit) {
-        val permission = DirectLink.requiredPermission
-        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+    // Asks for the hotspot permissions that are still missing, then runs `action` (if any) when the
+    // ones it needs were granted.
+    fun withNetworkPermission(action: (() -> Unit)?) {
+        val missing = DirectLink.permissions.filterNot(::granted)
+        if (action != null && hasNetworkPermission()) {
             action()
-        } else {
+        } else if (missing.isNotEmpty()) {
             afterPermission = action
-            permissionLauncher.launch(permission)
+            permissionLauncher.launch(missing.toTypedArray())
         }
     }
 
@@ -160,34 +200,116 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
     val directStarting = stringResource(R.string.multiplayer_direct_starting)
     val directJoining = stringResource(R.string.multiplayer_direct_joining)
     val directFailed = stringResource(R.string.multiplayer_error_direct_failed)
+    val name = playerName.ifBlank { defaultPlayerName }
 
     fun join(address: String) = runAction(connecting, connectionFailed) {
-        MelonEmulator.lanJoin(playerName.ifBlank { defaultPlayerName }, address.trim()).also { ok ->
+        MelonEmulator.lanJoin(name, address.trim()).also { ok ->
             if (!ok) MelonEmulator.lanStartDiscovery()
         }
     }
 
+    fun hostHotspot() = withNetworkPermission {
+        runAction(directStarting, directFailed) {
+            DirectLink.host(context, hotspotName) != null &&
+                MelonEmulator.lanHost(name, maxPlayers).also { if (!it) DirectLink.leave(context) }
+        }
+    }
+
+    // joins the game network, then the LAN session at the host's address (no discovery)
+    fun joinHotspot(ssid: String, password: String) = runAction(directJoining, directFailed) {
+        val host = DirectLink.join(context, ssid.trim(), password)
+        host != null && MelonEmulator.lanJoin(name, host).also { if (!it) DirectLink.leave(context) }
+    }
+
+    fun open(next: Screen) {
+        errorText = null
+        if (next == Screen.HOTSPOT) withNetworkPermission(null)
+        if (next == Screen.HOST_HOTSPOT) hotspotName = DirectLink.randomName()
+        screen = next
+    }
+
+    val title = when {
+        mode != MODE_NONE -> R.string.multiplayer_lan_title
+        screen == Screen.MENU -> R.string.multiplayer_role_title
+        screen == Screen.USB -> R.string.multiplayer_option_usb
+        screen == Screen.HOTSPOT || screen == Screen.HOST_HOTSPOT -> R.string.multiplayer_hotspot_title
+        netplayGoal -> R.string.multiplayer_netplay_title
+        else -> R.string.multiplayer_lan_title
+    }
+
     BaseDialog(
-        title = stringResource(R.string.multiplayer_lan_title),
+        title = stringResource(title),
         onDismiss = onDismiss,
         content = { padding ->
             Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (mode) {
-                    MODE_NONE -> StartContent(
-                        playerName = playerName,
-                        onPlayerNameChange = { playerName = it.take(10) },
-                        maxPlayers = maxPlayers,
-                        onMaxPlayersChange = { maxPlayers = it.coerceIn(2, 16) },
-                        direct = direct,
-                        onDirectChange = { direct = it },
-                    )
+                    MODE_NONE -> {
+                        if (netplayGoal && screen != Screen.MENU) {
+                            Text(stringResource(R.string.multiplayer_netplay_connect_hint), style = MaterialTheme.typography.caption)
+                        }
+                        when (screen) {
+                            Screen.MENU -> {
+                                OptionRow(stringResource(R.string.multiplayer_option_usb), stringResource(R.string.multiplayer_option_usb_hint)) { open(Screen.USB) }
+                                OptionRow(stringResource(R.string.multiplayer_option_netplay), stringResource(R.string.multiplayer_option_netplay_hint)) {
+                                    netplayGoal = true
+                                    maxPlayers = 2
+                                    open(Screen.LAN)
+                                }
+                                OptionRow(stringResource(R.string.multiplayer_option_lan), stringResource(R.string.multiplayer_option_lan_hint)) {
+                                    netplayGoal = false
+                                    open(Screen.LAN)
+                                }
+                            }
+                            Screen.USB -> Text(stringResource(R.string.multiplayer_usb_unavailable), style = MaterialTheme.typography.body2)
+                            Screen.LAN -> {
+                                OptionRow(
+                                    stringResource(R.string.multiplayer_option_hotspot),
+                                    stringResource(if (DirectLink.isSupported) R.string.multiplayer_option_hotspot_hint else R.string.multiplayer_hotspot_unsupported),
+                                    enabled = DirectLink.isSupported,
+                                ) { open(Screen.HOTSPOT) }
+                                OptionRow(stringResource(R.string.multiplayer_option_wifi), stringResource(R.string.multiplayer_option_wifi_hint)) { open(Screen.WIFI) }
+                            }
+                            Screen.HOTSPOT -> HotspotContent(
+                                networks = nearbyNetworks,
+                                canScan = canScan,
+                                enabled = busyText == null,
+                                onHost = { open(Screen.HOST_HOTSPOT) },
+                                onNetworkSelected = { joinHotspot(it, DirectLink.PASSPHRASE) },
+                                ssid = manualSsid,
+                                onSsidChange = { manualSsid = it },
+                                password = manualPassword,
+                                onPasswordChange = { manualPassword = it },
+                                playerName = playerName,
+                                onPlayerNameChange = { playerName = it.take(10) },
+                            )
+                            Screen.HOST_HOTSPOT -> {
+                                Text(stringResource(R.string.multiplayer_hotspot_confirm_hint), style = MaterialTheme.typography.body2)
+                                Text(stringResource(R.string.multiplayer_hotspot_network, hotspotName), style = MaterialTheme.typography.subtitle1)
+                                Text(stringResource(R.string.multiplayer_hotspot_password, DirectLink.PASSPHRASE), style = MaterialTheme.typography.subtitle1)
+                                StartContent(
+                                    playerName = playerName,
+                                    onPlayerNameChange = { playerName = it.take(10) },
+                                    maxPlayers = maxPlayers,
+                                    onMaxPlayersChange = { maxPlayers = it.coerceIn(2, if (netplayGoal) 2 else 16) },
+                                    sameNetworkHint = false,
+                                )
+                            }
+                            Screen.WIFI -> StartContent(
+                                playerName = playerName,
+                                onPlayerNameChange = { playerName = it.take(10) },
+                                maxPlayers = maxPlayers,
+                                onMaxPlayersChange = { maxPlayers = it.coerceIn(2, if (netplayGoal) 2 else 16) },
+                                sameNetworkHint = true,
+                            )
+                        }
+                    }
                     MODE_DISCOVERING -> DiscoveryContent(
                         sessions = sessions,
                         hostAddress = hostAddress,
                         onHostAddressChange = { hostAddress = it },
                         onSessionSelected = { join(it.address) },
                     )
-                    else -> LobbyContent(hosting = mode == MODE_HOSTING, players = players)
+                    else -> LobbyContent(hosting = mode == MODE_HOSTING, players = players, network = DirectLink.hosted, netplayGoal = netplayGoal)
                 }
                 busyText?.let { Text(it, style = MaterialTheme.typography.caption) }
                 errorText?.let { Text(it, color = MaterialTheme.colors.error, style = MaterialTheme.typography.caption) }
@@ -197,21 +319,27 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
             val idle = busyText == null
             when (mode) {
                 MODE_NONE -> {
-                    val name = playerName.ifBlank { defaultPlayerName }
-                    DialogButton(stringResource(R.string.multiplayer_role_host), enabled = idle) {
-                        if (direct) withDirectPermission {
-                            runAction(directStarting, directFailed) {
-                                DirectLink.host(context) && MelonEmulator.lanHost(name, maxPlayers)
-                            }
-                        } else runAction(starting, lanInitFailed) { MelonEmulator.lanHost(name, maxPlayers) }
+                    val parent = when (screen) {
+                        Screen.MENU -> null
+                        Screen.USB, Screen.LAN -> Screen.MENU
+                        Screen.HOTSPOT, Screen.WIFI -> Screen.LAN
+                        Screen.HOST_HOTSPOT -> Screen.HOTSPOT
                     }
-                    DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle) {
-                        if (direct) withDirectPermission {
-                            runAction(directJoining, directFailed) {
-                                val host = DirectLink.join(context)
-                                host != null && MelonEmulator.lanJoin(name, host)
+                    parent?.let { DialogButton(stringResource(R.string.multiplayer_back), enabled = idle) { open(it) } }
+                    when (screen) {
+                        Screen.HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle && manualSsid.isNotBlank()) {
+                            joinHotspot(manualSsid, manualPassword)
+                        }
+                        Screen.HOST_HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_confirm), enabled = idle) { hostHotspot() }
+                        Screen.WIFI -> {
+                            DialogButton(stringResource(R.string.multiplayer_role_host), enabled = idle) {
+                                runAction(starting, lanInitFailed) { MelonEmulator.lanHost(name, maxPlayers) }
                             }
-                        } else runAction(discovering, discoveryFailed) { MelonEmulator.lanStartDiscovery() }
+                            DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle) {
+                                runAction(discovering, discoveryFailed) { MelonEmulator.lanStartDiscovery() }
+                            }
+                        }
+                        else -> {}
                     }
                 }
                 MODE_DISCOVERING -> {
@@ -223,7 +351,8 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                     }
                 }
                 else -> {
-                    // Netplay: exactly two players; each device restarts the game running both consoles
+                    // Netplay: exactly two players; each device restarts the game running both consoles.
+                    // The game network (if any) stays up: Netplay runs over it.
                     val peer = netplayPeer
                     if (peer != null) {
                         DialogButton(stringResource(R.string.multiplayer_start_netplay), enabled = idle) {
@@ -246,13 +375,26 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
 }
 
 @Composable
+private fun OptionRow(title: String, hint: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 8.dp)
+    ) {
+        val color = if (enabled) MaterialTheme.colors.onSurface else MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
+        Text(title, style = MaterialTheme.typography.subtitle1, color = color)
+        Text(hint, style = MaterialTheme.typography.caption, color = color)
+    }
+}
+
+@Composable
 private fun StartContent(
     playerName: String,
     onPlayerNameChange: (String) -> Unit,
     maxPlayers: Int,
     onMaxPlayersChange: (Int) -> Unit,
-    direct: Boolean,
-    onDirectChange: (Boolean) -> Unit,
+    sameNetworkHint: Boolean,
 ) {
     OutlinedTextField(
         value = playerName,
@@ -267,16 +409,65 @@ private fun StartContent(
         Text(maxPlayers.toString())
         TextButton(onClick = { onMaxPlayersChange(maxPlayers + 1) }) { Text("+") }
     }
-    if (DirectLink.isSupported) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { onDirectChange(!direct) }) {
-            Checkbox(checked = direct, onCheckedChange = onDirectChange)
-            Column {
-                Text(stringResource(R.string.multiplayer_direct), style = MaterialTheme.typography.body2)
-                Text(stringResource(R.string.multiplayer_direct_hint), style = MaterialTheme.typography.caption)
-            }
-        }
+    if (sameNetworkHint) {
+        Text(stringResource(R.string.multiplayer_same_version_hint), style = MaterialTheme.typography.caption)
     }
-    Text(stringResource(R.string.multiplayer_same_version_hint), style = MaterialTheme.typography.caption)
+}
+
+@Composable
+private fun HotspotContent(
+    networks: List<String>,
+    canScan: Boolean,
+    enabled: Boolean,
+    onHost: () -> Unit,
+    onNetworkSelected: (String) -> Unit,
+    ssid: String,
+    onSsidChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    playerName: String,
+    onPlayerNameChange: (String) -> Unit,
+) {
+    OptionRow(stringResource(R.string.multiplayer_host_hotspot), stringResource(R.string.multiplayer_host_hotspot_hint), enabled, onHost)
+    Text(stringResource(R.string.multiplayer_nearby_networks), style = MaterialTheme.typography.subtitle2)
+    when {
+        !canScan -> Text(stringResource(R.string.multiplayer_location_needed), style = MaterialTheme.typography.body2)
+        networks.isEmpty() -> Text(stringResource(R.string.multiplayer_no_networks), style = MaterialTheme.typography.body2)
+    }
+    networks.forEach { network ->
+        Text(
+            text = network,
+            style = MaterialTheme.typography.body1,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) { onNetworkSelected(network) }
+                .padding(vertical = 8.dp),
+        )
+    }
+    // manual entry: networks the scan does not show, or a fallback hotspot Android named
+    OutlinedTextField(
+        value = ssid,
+        onValueChange = onSsidChange,
+        label = { Text(stringResource(R.string.multiplayer_network_name)) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = password,
+        onValueChange = onPasswordChange,
+        label = { Text(stringResource(R.string.multiplayer_network_password)) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    OutlinedTextField(
+        value = playerName,
+        onValueChange = onPlayerNameChange,
+        label = { Text(stringResource(R.string.multiplayer_player_name)) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(stringResource(R.string.multiplayer_permission_rationale), style = MaterialTheme.typography.caption)
 }
 
 @Composable
@@ -312,7 +503,7 @@ private fun DiscoveryContent(
 }
 
 @Composable
-private fun LobbyContent(hosting: Boolean, players: List<LanPlayer>) {
+private fun LobbyContent(hosting: Boolean, players: List<LanPlayer>, network: HostedNetwork?, netplayGoal: Boolean) {
     Text(
         stringResource(if (hosting) R.string.multiplayer_hosting else R.string.multiplayer_connected),
         style = MaterialTheme.typography.subtitle2,
@@ -331,6 +522,16 @@ private fun LobbyContent(hosting: Boolean, players: List<LanPlayer>) {
             text = "${player.id + 1}/${player.maxPlayers}  ${player.name}  ·  $status  ·  $where",
             style = MaterialTheme.typography.body2,
         )
+    }
+    network?.let {
+        Text(stringResource(R.string.multiplayer_hosting_network, it.ssid, it.passphrase), style = MaterialTheme.typography.body2)
+        // a plain local-only hotspot: Android chose the name, so players cannot find it by scanning
+        if (!it.wifiDirect && !it.ssid.contains(DirectLink.NAME_PREFIX)) {
+            Text(stringResource(R.string.multiplayer_hotspot_fallback), style = MaterialTheme.typography.caption)
+        }
+    }
+    if (netplayGoal) {
+        Text(stringResource(R.string.multiplayer_netplay_connect_hint), style = MaterialTheme.typography.caption)
     }
     Text(stringResource(R.string.multiplayer_lobby_hint), style = MaterialTheme.typography.caption)
 }

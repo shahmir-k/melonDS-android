@@ -343,8 +343,13 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
     // screen instead of redrawing and swapping every display again. That GPU/DRAM traffic slows
     // the emulator threads on the RG DS (a paused app made a two-console emulation ~40% slower).
     // Still redraw every 30th vsync, so layout or setting changes show up while paused.
+    // Escape hatch for A/B: debug.litev.presentall=1 presents every vsync as before.
+    static const bool presentAll = [] {
+        char prop[8] = {0};
+        return __system_property_get("debug.litev.presentall", prop) > 0 && atoi(prop) == 1;
+    }();
     static int stale = 0;
-    if (presentationFrame != nullptr && !isNew && ++stale < 30)
+    if (!presentAll && presentationFrame != nullptr && !isNew && ++stale < 30)
         return;
     stale = 0;
     EGLDisplay currentDisplay = eglGetCurrentDisplay();

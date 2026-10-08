@@ -212,6 +212,12 @@ namespace MelonDSAndroid
         Platform::Log(Platform::LogLevel::Info, "Netplay: scripted input, %zu lines from %s\n", script.size(), path.c_str());
     }
 
+    // a test script drives the local console up to its last line; after that the real controls do
+    static bool netplayScripted(const std::map<int, NetplayFrameInput>& script, int frame)
+    {
+        return !script.empty() && frame <= script.rbegin()->first;
+    }
+
     static NetplayFrameInput netplayScriptAt(const std::map<int, NetplayFrameInput>& script, int frame)
     {
         auto it = script.upper_bound(frame);
@@ -782,13 +788,13 @@ namespace MelonDSAndroid
 #ifdef LITEV_HOSTED_NETPLAY
             if (netplay->record)    // Hosted Netplay host: its own console exists only here, so no delay
             {
-                if (!netplay->script.empty()) local = netplayScriptAt(netplay->script, netplay->frame);
+                if (netplayScripted(netplay->script, netplay->frame)) local = netplayScriptAt(netplay->script, netplay->frame);
                 applied = local;
             }
             else
 #endif
             {
-            if (!netplay->script.empty())   // by applied frame: what is submitted now applies Delay frames later
+            if (netplayScripted(netplay->script, netplay->frame + netplay->delay))   // by applied frame: what is submitted now applies Delay frames later
                 local = netplayScriptAt(netplay->script, netplay->frame + netplay->delay);
             netplay->input->SubmitLocal(netplay->frame, local);
             applied = netplay->input->Get(netplay->player, netplay->frame);

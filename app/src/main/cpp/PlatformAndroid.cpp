@@ -555,12 +555,6 @@ namespace Platform
         return MPInterface::Get().RecvReplies(emulatorInstance->getInstanceId(), data, timestamp, aidmask);
     }
 
-    void MP_Tick(void* userdata)
-    {
-        auto emulatorInstance = (MelonDSAndroid::MelonInstance*) userdata;
-        MPInterface::Get().Tick(emulatorInstance->getInstanceId());
-    }
-
     int Net_SendPacket(u8* data, int len, void* userdata)
     {
         auto emulatorInstance = (MelonDSAndroid::MelonInstance*) userdata;

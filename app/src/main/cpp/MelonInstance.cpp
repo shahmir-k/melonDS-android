@@ -6,6 +6,7 @@
 #include <vector>
 #include <sched.h>
 #include <dirent.h>
+#include "net/MPInterface.h"
 #include <sys/resource.h>
 #include <sys/system_properties.h>
 #include <EGL/egl.h>
@@ -575,12 +576,14 @@ u32 MelonInstance::runFrame()
                 nds->GPU.SetFrameskipTarget(target);
             }
 #ifdef LITEV_SKIP_REPEAT_FRAMES
-            // skip drawing/presenting frames whose 3D repeats the last (30 Hz 3D): in Netplay,
-            // where every console is emulated and CPU is short. debug.litev.skiprepeat: 0 off,
-            // 2 always (also outside Netplay)
+            // skip drawing/presenting frames whose 3D repeats the last (30 Hz 3D) in multiplayer:
+            // Netplay (every console emulated, CPU short) and LAN (render load slows the device's
+            // own Wi-Fi packet handling; Shrek LAN race 36-37 -> 41.6 fps). debug.litev.skiprepeat:
+            // 0 off, 2 always (also single-player)
             buf[0] = 0;
             int sr = __system_property_get("debug.litev.skiprepeat", buf) > 0 ? atoi(buf) : 1;
-            nds->GPU.SkipRepeatEnabled = sr == 2 || (sr == 1 && MelonDSAndroid::netplayActive());
+            nds->GPU.SkipRepeatEnabled = sr == 2 || (sr == 1 && (MelonDSAndroid::netplayActive()
+                                                               || MPInterface::GetType() == MPInterface_LAN));
 #endif
         }
     }

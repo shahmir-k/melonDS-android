@@ -902,10 +902,19 @@ Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
 }
 
 JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jint players, jstring host, jboolean hosted)
+Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jint players, jstring host, jboolean hosted, jobjectArray library)
 {
+    std::vector<std::string> paths;
+    for (jsize i = 0, n = env->GetArrayLength(library); i < n; i++)
+    {
+        auto path = (jstring)env->GetObjectArrayElement(library, i);
+        const char* p = env->GetStringUTFChars(path, nullptr);
+        paths.emplace_back(p);
+        env->ReleaseStringUTFChars(path, p);
+        env->DeleteLocalRef(path);
+    }
     const char* h = env->GetStringUTFChars(host, nullptr);
-    MelonDSAndroid::netplayPrepare(player, players, h, hosted);
+    MelonDSAndroid::netplayPrepare(player, players, h, hosted, std::move(paths));
     env->ReleaseStringUTFChars(host, h);
 }
 

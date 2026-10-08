@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -387,9 +388,16 @@ class EmulatorViewModel @Inject constructor(
      */
     fun startNetplay(player: Int, players: Int, hostAddress: String, hosted: Boolean = false) {
         val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
-        MelonEmulator.netplayPrepare(player, players, hostAddress, hosted)
-        stopEmulator()
-        loadRom(rom)
+        viewModelScope.launch {
+            // another player may run a different game: its console boots that game, found in the
+            // ROM library by game code, size and hash (native NetplayFindRom)
+            val library = romsRepository.getRoms().first()
+                .filter { it.fileName.endsWith(".nds", ignoreCase = true) }
+                .map { it.uri.toString() }
+            MelonEmulator.netplayPrepare(player, players, hostAddress, hosted, library.toTypedArray())
+            stopEmulator()
+            loadRom(rom)
+        }
     }
 
     fun resetEmulator() {

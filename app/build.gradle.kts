@@ -145,9 +145,11 @@ android {
                     "-DLITEV_NETPLAY_CAPTURE=ON",
                     // Hosted Netplay: the host runs every console, each guest only its own
                     "-DLITEV_HOSTED_NETPLAY=ON",
-                    // LockstepMP: host frames 2 ms late; MP host collects replies at the
-                    // first reply slot (fewer thread hand-offs per CMD).
-                    "-DLITEV_MP_HOSTDELAY=ON",
+                    // LockstepMP: host frames 2 ms late (OFF: on device it makes Shrek's 2P
+                    // Netplay setup drop the link; it never reached LockstepMP.cpp before
+                    // net-utils got the core definitions, so OFF is what always shipped).
+                    // MP host collects replies at the first reply slot (fewer hand-offs per CMD).
+                    "-DLITEV_MP_HOSTDELAY=OFF",
                     "-DLITEV_MP_REPLY_DEFER=ON",
                     // JIT: ARM7 slow memory helpers take the CPU, not thread_local NDS::Current.
                     "-DLITEV_JIT_ARM7_CPUARG=ON",

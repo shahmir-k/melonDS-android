@@ -34,10 +34,11 @@ namespace MelonDSAndroid {
     extern std::string internalFilesDir;
     extern std::shared_ptr<MelonEventMessenger> eventMessenger;
 
-    // Netplay: this device also emulates the other player's console; only inputs cross the network.
+    // Netplay: this device also emulates the other players' consoles; only inputs cross the network.
     extern bool netplayActive();
-    // The next game started runs in Netplay as `player` (0 host, 1 guest) with the peer at `peer` (IP).
-    extern void netplayPrepare(int player, std::string peer);
+    // The next game started runs in Netplay as `player` (the LAN lobby id; 0 = host) of `players`;
+    // guests pass the host's IP as `host` (the host passes "").
+    extern void netplayPrepare(int player, int players, std::string host);
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     extern std::string netplayStatus();
     // Ends every Netplay wait (stopping: the emulator thread may be waiting on a player who left)

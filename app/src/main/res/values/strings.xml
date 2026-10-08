@@ -656,7 +656,7 @@
     <string name="multiplayer_option_usb_hint">Cable between two devices. Coming soon.</string>
     <string name="multiplayer_usb_unavailable">USB link play is not available in this build yet. Use Netplay or LAN for now.</string>
     <string name="multiplayer_option_netplay">Netplay</string>
-    <string name="multiplayer_option_netplay_hint">Two players, smoothest play: each device runs both consoles and only button presses cross the network.</string>
+    <string name="multiplayer_option_netplay_hint">Smoothest play: each device runs every player\'s console and only button presses cross the network. Best for 2–3 players (each device needs CPU for all of them).</string>
     <string name="multiplayer_option_lan">LAN</string>
     <string name="multiplayer_option_lan_hint">Each device runs its own console and they exchange the DS wireless traffic. Up to 16 players.</string>
     <string name="multiplayer_netplay_title">Netplay</string>

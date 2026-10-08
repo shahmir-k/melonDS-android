@@ -6,8 +6,6 @@
 #include <vector>
 #include <sched.h>
 #include <dirent.h>
-#include <cstring>
-#include <map>
 #include <sys/resource.h>
 #include <sys/system_properties.h>
 #include <EGL/egl.h>
@@ -212,47 +210,13 @@ static void litevKeepCore3()
     sched_setaffinity(0, sizeof(cores.EmuSet), &cores.EmuSet);
     setpriority(PRIO_PROCESS, self, -10);
     const cpu_set_t& others = cores.OtherSet;
-    // Experiment (debug.litev.c3share = comma-separated thread-name prefixes, re-read here):
-    // those threads may also use the emulator's core, at nice 10, so they soak up the time the
-    // emulator spends waiting (core 3 is ~40% idle in a Netplay race) instead of competing with
-    // the other console on cores 0-2.
-    char share[PROP_VALUE_MAX] = {0};
-    __system_property_get("debug.litev.c3share", share);
-    cpu_set_t all = others;
-    CPU_OR(&all, &all, &cores.EmuSet);
     if (DIR* d = opendir("/proc/self/task"))
     {
         while (dirent* e = readdir(d))
         {
             pid_t tid = atoi(e->d_name);
-            if (tid <= 0 || tid == self) continue;
-            bool shared = false;
-            if (share[0])
-            {
-                char path[64], name[32] = {0};
-                snprintf(path, sizeof(path), "/proc/self/task/%d/comm", tid);
-                if (FILE* f = fopen(path, "r")) { fgets(name, sizeof(name), f); fclose(f); }
-                for (const char* t = share; *t; )
-                {
-                    const char* c = strchr(t, ',');
-                    size_t n = c ? (size_t)(c - t) : strlen(t);
-                    if (n && !strncmp(name, t, n)) shared = true;
-                    t += n + (c ? 1 : 0);
-                }
-            }
-            sched_setaffinity(tid, sizeof(cpu_set_t), shared ? &all : &others);
-            static std::map<pid_t, int> origNice;   // threads moved to nice 10, to restore
-            auto it = origNice.find(tid);
-            if (shared && it == origNice.end())
-            {
-                origNice[tid] = getpriority(PRIO_PROCESS, tid);
-                setpriority(PRIO_PROCESS, tid, 10);
-            }
-            else if (!shared && it != origNice.end())
-            {
-                setpriority(PRIO_PROCESS, tid, it->second);
-                origNice.erase(it);
-            }
+            if (tid > 0 && tid != self)
+                sched_setaffinity(tid, sizeof(others), &others);
         }
         closedir(d);
     }

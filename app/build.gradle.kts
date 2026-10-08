@@ -203,8 +203,12 @@ android {
                     // geometry (the emu no longer waits on the raster).
                     "-DLITEV_SOFT3D_DRASTIC=ON",
                     "-DLITEV_TILE_COORD=ON",
-                    // Pin the render worker threads to cores {0,1,2}, off the emu core.
+                    // Pin the render worker threads off the emu core.
                     "-DLITEV_PIN_RENDER=ON",
+                    // ...by role from the CPU topology (cpu_capacity/freq + CPU type) instead of
+                    // fixed cores {0,1,2}; tile worker count from the fastest non-emu cluster.
+                    // RG DS placement unchanged; big.LITTLE keeps render off the little cores.
+                    "-DLITEV_TOPO_PIN=ON",
                     // Dirty-incremental VRAM shadow snapshots instead of full memcpy.
                     "-DLITEV_SNAP_DIRTY=ON",
                     // Staged deep prefetch in BuildFrameGeom (A; runtime prop

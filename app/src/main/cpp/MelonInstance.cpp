@@ -207,6 +207,13 @@ static void litevKeepCore3()
     if (!on || ctr-- > 0) return;
     ctr = 300;
     const pid_t self = gettid();
+#ifdef LITEV_TOPO_PIN
+    // Per-role placement (LitevTopo): the emu to its core, every registered thread (tile
+    // workers, coordinator, 2D, GL, present, NetplayRemote) back to ITS role's mask, the rest to
+    // Background. A blanket mask here used to undo the distinct tile-worker pins at frame 300.
+    melonDS::LitevTopo::Reassert(self);
+    setpriority(PRIO_PROCESS, self, -10);
+#else
     const melonDS::LitevCores& cores = melonDS::LitevCores::Get();
     sched_setaffinity(0, sizeof(cores.EmuSet), &cores.EmuSet);
     setpriority(PRIO_PROCESS, self, -10);
@@ -221,6 +228,7 @@ static void litevKeepCore3()
         }
         closedir(d);
     }
+#endif
 }
 // ---- end profiler ----
 

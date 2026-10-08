@@ -902,10 +902,10 @@ Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
 }
 
 JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jint players, jstring host)
+Java_me_magnum_melonds_MelonEmulator_netplayPrepare(JNIEnv* env, jobject thiz, jint player, jint players, jstring host, jboolean hosted)
 {
     const char* h = env->GetStringUTFChars(host, nullptr);
-    MelonDSAndroid::netplayPrepare(player, players, h);
+    MelonDSAndroid::netplayPrepare(player, players, h, hosted);
     env->ReleaseStringUTFChars(host, h);
 }
 

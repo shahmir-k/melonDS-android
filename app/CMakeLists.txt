@@ -68,6 +68,11 @@ option(LITEV_LAN_KTIME "LAN stats: per-stage times from kernel receive timestamp
 if (LITEV_LAN_KTIME)
     add_compile_definitions(LITEV_LAN_KTIME)
 endif()
+# Hosted Netplay (core src/net/HostedMP): the frontend and net-utils need the define too
+option(LITEV_HOSTED_NETPLAY "Hosted Netplay: one device runs every console, the others replay their own" OFF)
+if (LITEV_HOSTED_NETPLAY)
+    add_compile_definitions(LITEV_HOSTED_NETPLAY=1)
+endif()
 
 add_subdirectory(${CORE-LIB} ./melonDS-android-lib)
 add_subdirectory(${OBOE} ./oboe)

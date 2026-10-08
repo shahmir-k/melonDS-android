@@ -23,6 +23,9 @@
 #include "MPInterface.h"
 #include "net/LockstepMP.h"
 #include "net/NetplayInput.h"
+#ifdef LITEV_HOSTED_NETPLAY
+#include "net/HostedMP.h"
+#endif
 #include "LitevCores.h"
 #include <sys/system_properties.h>
 #include <sys/stat.h>
@@ -98,17 +101,32 @@ namespace MelonDSAndroid
         std::mutex hashLock;
         std::atomic<int> desyncFrame {-1};
         bool waiting = false;
+        // Hosted Netplay (docs/HYBRID-NETPLAY.md, design F): the host (player 0) runs every console
+        // and records what the link returns to each; every guest runs only its own console, whose
+        // link replays the host's record of it. The guests' inputs travel to the host only.
+        bool hosted = false;
+#ifdef LITEV_HOSTED_NETPLAY
+        RecordMP* record = nullptr;                 // host: the link (owned by MPInterface)
+        ReplayMP* replay = nullptr;                 // guest: the link (owned by MPInterface)
+        std::unique_ptr<HostedServer> server;
+        std::unique_ptr<HostedClient> client;
+#endif
     };
+#ifdef LITEV_HOSTED_NETPLAY
+    // the host's NetplayInput player index (the consoles are 0..14)
+    static constexpr int kHostedServerId = NetplayInput::kMaxPlayers - 1;
+#endif
     std::unique_ptr<NetplaySession> netplay;
 
     bool netplayActive() { return netplay != nullptr; }
 
     static std::string netplayPending; // set by the lobby, used by the next setup()
 
-    void netplayPrepare(int player, int players, std::string host)
+    void netplayPrepare(int player, int players, std::string host, bool hosted)
     {
         netplayPending = "player=" + std::to_string(player) + ",players=" + std::to_string(players);
         if (!host.empty()) netplayPending += ",peer=" + host + ":7100";
+        if (hosted) netplayPending += ",hosted=1";
     }
 
     static std::unique_ptr<NetplaySession> netplayFromProp()
@@ -136,13 +154,16 @@ namespace MelonDSAndroid
                 else if (k == "port") session->port = atoi(v.c_str());
                 else if (k == "peer") session->peer = v;
                 else if (k == "exchange") session->exchange = atoi(v.c_str()) != 0;
+#ifdef LITEV_HOSTED_NETPLAY
+                else if (k == "hosted") session->hosted = atoi(v.c_str()) != 0;
+#endif
             }
             pos = end + 1;
         }
         // a guest needs the host's address; without session setup (testing) only two players,
         // and the peer is the other one
         if ((session->peer.empty() && (session->player != 0 || !session->exchange)) ||
-            (!session->exchange && (session->players != 2 || session->player > 1)))
+            (!session->exchange && (session->players != 2 || session->player > 1 || session->hosted)))
             return nullptr;
         return session;
     }
@@ -209,6 +230,50 @@ namespace MelonDSAndroid
         nds->SetKeyMask(in.Keys);
         if (in.TouchX >= 0) nds->TouchScreen(in.TouchX, in.TouchY);
         else                nds->ReleaseScreen();
+    }
+
+    // Hosted Netplay frame marker state: the input applied this frame, the clock, and every 60
+    // frames the RAM. The host's copy of a console and the guest's must compute the same.
+    // (Same as the headless harness's HostedState, tools/headless/VerifyTrace.cpp.)
+    static u64 hostedState(NDS& nds, const NetplayFrameInput& in, int frame)
+    {
+        u64 v[4] = { in.Keys | ((u64)(u16)in.TouchX << 32) | ((u64)(u16)in.TouchY << 48), nds.GetSysTimestamp(),
+                     ((frame + 1) % 60) == 0 ? XXH3_64bits(nds.MainRAM, nds.MainRAMMask + 1) : 0, (u64)frame };
+        return XXH3_64bits(v, sizeof(v));
+    }
+
+    // Hosted Netplay host: console `player` finished frame `frame`; its records go to the guest
+    // that runs it (none for the host's own console). On that console's thread.
+    static void hostedEndFrame(MelonInstance& console, int player, int frame, const NetplayFrameInput& in)
+    {
+#ifdef LITEV_HOSTED_NETPLAY
+        NetplaySession& s = *netplay;
+        if (!s.record) return;
+        s.record->EndFrame(player, frame, hostedState(*console.getNds(), in, frame));
+        thread_local std::vector<u8> out;
+        out.clear();
+        s.record->TakeRecords(player, out);
+        if (player != s.player && s.server) s.server->Push(player, out.data(), out.size());
+#endif
+    }
+
+    static void netplaySetClock(int player, std::function<u64()> clock)
+    {
+#ifdef LITEV_HOSTED_NETPLAY
+        if (netplay->record) { netplay->record->SetClock(player, std::move(clock)); return; }
+        if (netplay->replay) { netplay->replay->SetClock(std::move(clock)); return; }
+#endif
+        ((LockstepMP&) MPInterface::Get()).SetClock(player, std::move(clock));
+    }
+
+    // ends every wait on the link
+    static void netplayStopLink()
+    {
+#ifdef LITEV_HOSTED_NETPLAY
+        if (netplay->record) { netplay->record->Link().Stop(); return; }
+        if (netplay->replay) { netplay->replay->Stop(); return; }
+#endif
+        ((LockstepMP&) MPInterface::Get()).Stop();
     }
 
     // Every device must start every console identically, whatever its own settings.
@@ -304,7 +369,7 @@ namespace MelonDSAndroid
     {
         if (!netplay) return "";
         if (netplay->desyncFrame >= 0) return "DESYNC";
-        return netplay->waiting ? "waiting for other player" : "Netplay";
+        return netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
     }
 
     static void netplayRemoteLoop(NetplayRemote* r)
@@ -326,6 +391,7 @@ namespace MelonDSAndroid
             netplayRecord(s, r->player, f, in);
             netplayApply(*r->console, in);
             r->console->runFrameHeadless();
+            hostedEndFrame(*r->console, r->player, f, in);
             netplayHash(*r->console, r->player, f + 1);
         }
     }
@@ -335,7 +401,7 @@ namespace MelonDSAndroid
         if (!netplay)
             return;
         netplay->running = false;
-        ((LockstepMP&) MPInterface::Get()).Stop();
+        netplayStopLink();
         if (netplay->input)
             netplay->input->Abort();
     }
@@ -345,7 +411,7 @@ namespace MelonDSAndroid
         if (!netplay)
             return;
         netplay->running = false;
-        ((LockstepMP&) MPInterface::Get()).Stop();
+        netplayStopLink();
         netplay->input = nullptr;   // wakes a Get() waiting for the peer
         for (auto& r : netplay->remotes)
         {
@@ -354,6 +420,10 @@ namespace MelonDSAndroid
             r->console->stop();
         }
         for (FILE* f : netplay->rec) if (f) fclose(f);
+#ifdef LITEV_HOSTED_NETPLAY
+        netplay->client = nullptr;
+        netplay->server = nullptr;
+#endif
         netplay = nullptr;
         MPInterface::Set(MPInterface_Dummy);
     }
@@ -388,6 +458,21 @@ namespace MelonDSAndroid
             netplayFixConfiguration(*currentConfiguration);
             instanceId = netplay->player;
             netplayLoadScript("debug.litev.npscript", netplay->script);
+#ifdef LITEV_HOSTED_NETPLAY
+            if (netplay->hosted && netplay->player == 0)
+            {
+                auto record = std::make_unique<RecordMP>(std::make_unique<LockstepMP>());
+                netplay->record = record.get();
+                MPInterface::Set(std::move(record), MPInterface_Netplay);
+            }
+            else if (netplay->hosted)
+            {
+                auto replay = std::make_unique<ReplayMP>(netplay->player);
+                netplay->replay = replay.get();
+                MPInterface::Set(std::move(replay), MPInterface_Netplay);
+            }
+            else
+#endif
             MPInterface::Set(MPInterface_Netplay);
             Platform::Log(Platform::LogLevel::Info, "Netplay: player %d of %d, host %s, port %d\n",
                           netplay->player, netplay->players, netplay->peer.c_str(), netplay->port);
@@ -418,7 +503,7 @@ namespace MelonDSAndroid
             // said who they are
             instance->setInputDeferred(true);
             NDS* local = instance->getNds();
-            ((LockstepMP&) MPInterface::Get()).SetClock(netplay->player, [local] { return local->GetSysTimestamp(); });
+            netplaySetClock(netplay->player, [local] { return local->GetSysTimestamp(); });
         }
     }
 
@@ -442,7 +527,7 @@ namespace MelonDSAndroid
         nds->GPU.Headless = true;   // its screens are not shown
         nds->SPU.Silent = true;     // nor its sound heard
         nds->GPU.GPU3D.Headless = true;
-        ((LockstepMP&) MPInterface::Get()).SetClock(player, [nds] { return nds->GetSysTimestamp(); });
+        netplaySetClock(player, [nds] { return nds->GetSysTimestamp(); });
         netplayLoadScript("debug.litev.npscript2", r->script, player);
         bool ok = r->console->loadRom(romPath, netplaySavePath(player, save));
         netplay->remotes.push_back(std::move(r));   // even on failure: netplayStop stops it
@@ -519,6 +604,8 @@ namespace MelonDSAndroid
                 setup.RomId = romId;
                 setup.Save = netplayReadFile(sramPath);
                 setup.Delay = netplay->autoDelay ? 0 : netplay->delay;
+                setup.Hosted = netplay->hosted;
+                setup.Join = netplay->hosted && netplay->player != 0;
                 bool ok = NetplayHandshake(setup);
                 for (size_t pos = 0, end; (end = setup.Log.find('\n', pos)) != std::string::npos; pos = end + 1)
                     Platform::Log(ok ? Platform::LogLevel::Info : Platform::LogLevel::Error, "%s\n", setup.Log.substr(pos, end - pos).c_str());
@@ -530,12 +617,47 @@ namespace MelonDSAndroid
                 saves = std::move(setup.Saves);
             }
             // created only now: every device has agreed on the players and the input delay
+#ifdef LITEV_HOSTED_NETPLAY
+            if (netplay->hosted)
+            {
+                // host: inputs from every guest (it sends none); guest: its input to the host only.
+                // The host's records travel on port + 2.
+                if (netplay->record)
+                {
+                    netplay->input = std::make_unique<NetplayInput>(kHostedServerId, netplay->delay, netplay->port, peers);
+                    netplay->server = std::make_unique<HostedServer>(netplay->port + 2);
+                    netplay->server->DrainMs = 500;   // stopping: the guests may have left
+                    for (auto& [player, addr] : peers)
+                        if (!netplayAddRemote(player, romPath, saves[player]))
+                            return 2;
+                }
+                else
+                {
+                    std::string host = netplay->peer.substr(0, netplay->peer.rfind(':'));
+                    int hport = atoi(netplay->peer.substr(netplay->peer.rfind(':') + 1).c_str());
+                    netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port,
+                                                                    std::vector<std::pair<int, std::string>> {{kHostedServerId, netplay->peer}});
+                    ReplayMP* replay = netplay->replay;
+                    netplay->client = std::make_unique<HostedClient>(netplay->player, host + ":" + std::to_string(hport + 2),
+                                                                     [replay](const u8* d, size_t l) { replay->Feed(d, l); });
+                }
+                bool ok = netplay->input->Ok() && (netplay->server ? netplay->server->Ok() : netplay->client->Ok());
+                Platform::Log(Platform::LogLevel::Info, "Netplay: Hosted, %s, %d players, input delay %d frames%s\n",
+                              netplay->record ? "host runs every console" : "guest replays its own console",
+                              netplay->players, netplay->delay, ok ? "" : " (SOCKET FAILED)");
+            }
+            else
+            {
+#endif
             netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port, peers);
             Platform::Log(Platform::LogLevel::Info, "Netplay: %d players, input delay %d frames%s\n", netplay->players,
                           netplay->delay, netplay->input->Ok() ? "" : " (SOCKET FAILED)");
             for (auto& [player, addr] : peers)
                 if (!netplayAddRemote(player, romPath, saves[player]))
                     return 2;
+#ifdef LITEV_HOSTED_NETPLAY
+            }
+#endif
         }
         if (!instance->loadRom(std::move(romPath), std::move(sramPath)))
             return 2;
@@ -619,10 +741,22 @@ namespace MelonDSAndroid
             local.Keys = instance->getInputMask() & 0xFFF;
             u16 x, y;
             if (instance->getTouch(x, y)) { local.TouchX = x; local.TouchY = y; }
+            NetplayFrameInput applied;
+#ifdef LITEV_HOSTED_NETPLAY
+            if (netplay->record)    // Hosted Netplay host: its own console exists only here, so no delay
+            {
+                if (!netplay->script.empty()) local = netplayScriptAt(netplay->script, netplay->frame);
+                applied = local;
+            }
+            else
+#endif
+            {
             if (!netplay->script.empty())   // by applied frame: what is submitted now applies Delay frames later
                 local = netplayScriptAt(netplay->script, netplay->frame + netplay->delay);
             netplay->input->SubmitLocal(netplay->frame, local);
-            NetplayFrameInput applied = netplay->input->Get(netplay->player, netplay->frame);
+            applied = netplay->input->Get(netplay->player, netplay->frame);
+            }
+            const int frame = netplay->frame;
             netplayRecord(*netplay, netplay->player, netplay->frame, applied);
             netplayApply(*instance, applied);
             netplay->frame++;
@@ -634,6 +768,20 @@ namespace MelonDSAndroid
                 instance->getNds()->GPU.DiagNoDraw = v == 2 ? 1 : v == 3 ? 2 : 0;   // 2: no 2D, 3: no 3D
             }
             u32 lines = instance->runFrame();
+            hostedEndFrame(*instance, netplay->player, frame, applied);
+#ifdef LITEV_HOSTED_NETPLAY
+            // guest: wait for the host's record of this frame and compare
+            if (netplay->replay && !netplay->replay->EndFrame(frame, hostedState(*instance->getNds(), applied, frame))
+                && netplay->desyncFrame < 0)
+            {
+                netplay->desyncFrame = frame;
+                Platform::Log(Platform::LogLevel::Error, "Netplay: DESYNC at frame %d (Hosted replica of console %d): %s\n",
+                              frame, netplay->player, netplay->replay->Error().c_str());
+            }
+            if (netplay->replay && netplay->frame % 600 == 0)
+                Platform::Log(Platform::LogLevel::Info, "Netplay: Hosted replica f%d, waited %.0f ms for the host so far\n",
+                              netplay->frame, netplay->replay->StallMs());
+#endif
             netplayHash(*instance, netplay->player, netplay->frame);
             if (netplay->frame % 60 == 0) netplayCheck(*netplay);
             return lines;

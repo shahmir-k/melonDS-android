@@ -395,10 +395,10 @@ class EmulatorActivity : AppCompatActivity() {
                 if (showMultiplayerDialog.value) {
                     LanMultiplayerDialog(
                         defaultPlayerName = remember { viewModel.getLanPlayerName() },
-                        onStartNetplay = { player, players, host ->
+                        onStartNetplay = { player, players, host, hosted ->
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
                             showMultiplayerDialog.value = false
-                            viewModel.startNetplay(player, players, host)
+                            viewModel.startNetplay(player, players, host, hosted)
                         },
                         onDismiss = {
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)

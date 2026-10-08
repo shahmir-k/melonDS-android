@@ -38,7 +38,7 @@ namespace MelonDSAndroid {
     extern bool netplayActive();
     // The next game started runs in Netplay as `player` (the LAN lobby id; 0 = host) of `players`;
     // guests pass the host's IP as `host` (the host passes "").
-    extern void netplayPrepare(int player, int players, std::string host);
+    extern void netplayPrepare(int player, int players, std::string host, bool hosted);
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     extern std::string netplayStatus();
     // Ends every Netplay wait (stopping: the emulator thread may be waiting on a player who left)

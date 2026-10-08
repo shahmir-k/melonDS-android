@@ -85,7 +85,7 @@ private enum class Screen { MENU, USB, LAN, HOTSPOT, HOST_HOTSPOT, WIFI }
  * "Leave session" or when the emulator stops.
  */
 @Composable
-fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, players: Int, host: String) -> Unit, onDismiss: () -> Unit) {
+fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, players: Int, host: String, hosted: Boolean) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf(Screen.MENU) }
@@ -361,13 +361,17 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                     // restarts the game running every player's console. Player = lobby id (host 0);
                     // the host waits for the others, guests connect to the host.
                     val netplay = netplayPlayers
+                    // Hosted: the host runs every console, each guest only its own (all press it).
                     if (netplay != null) {
-                        DialogButton(stringResource(R.string.multiplayer_start_netplay), enabled = idle) {
-                            val player = netplay.first { it.isLocal }.id
-                            val host = if (mode == MODE_HOSTING) "" else netplay.firstOrNull { it.status == PLAYER_HOST }?.address
-                            if (host != null) scope.launch(Dispatchers.IO) {
-                                MelonEmulator.lanLeave()
-                                withContext(Dispatchers.Main) { onStartNetplay(player, netplay.size, host) }
+                        for (hosted in listOf(false, true)) {
+                            val label = if (hosted) R.string.multiplayer_start_hosted else R.string.multiplayer_start_netplay
+                            DialogButton(stringResource(label), enabled = idle) {
+                                val player = netplay.first { it.isLocal }.id
+                                val host = if (mode == MODE_HOSTING) "" else netplay.firstOrNull { it.status == PLAYER_HOST }?.address
+                                if (host != null) scope.launch(Dispatchers.IO) {
+                                    MelonEmulator.lanLeave()
+                                    withContext(Dispatchers.Main) { onStartNetplay(player, netplay.size, host, hosted) }
+                                }
                             }
                         }
                     }

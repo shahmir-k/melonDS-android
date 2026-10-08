@@ -385,9 +385,9 @@ class EmulatorViewModel @Inject constructor(
      * inputs cross the network. [player] = the LAN lobby id (0 = host) of [players];
      * [hostAddress] = the host's IP (guests), "" on the host.
      */
-    fun startNetplay(player: Int, players: Int, hostAddress: String) {
+    fun startNetplay(player: Int, players: Int, hostAddress: String, hosted: Boolean = false) {
         val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
-        MelonEmulator.netplayPrepare(player, players, hostAddress)
+        MelonEmulator.netplayPrepare(player, players, hostAddress, hosted)
         stopEmulator()
         loadRom(rom)
     }

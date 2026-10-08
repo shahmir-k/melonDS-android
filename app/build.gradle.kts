@@ -143,6 +143,8 @@ android {
                     // sets GPU/GPU3D::Headless and SPU::Silent on them in MelonDS.cpp).
                     "-DLITEV_NETPLAY_HEADLESS=ON",
                     "-DLITEV_NETPLAY_CAPTURE=ON",
+                    // Hosted Netplay: the host runs every console, each guest only its own
+                    "-DLITEV_HOSTED_NETPLAY=ON",
                     // LockstepMP: host frames 2 ms late; MP host collects replies at the
                     // first reply slot (fewer thread hand-offs per CMD).
                     "-DLITEV_MP_HOSTDELAY=ON",

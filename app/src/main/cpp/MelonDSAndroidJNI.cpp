@@ -30,6 +30,7 @@
 #include "net/LAN.h"
 #include "net/NetplayInput.h"
 #include "LitevCores.h"
+#include "SkipRepeatAuto.h"
 
 enum GbaSlotType {
     NONE = 0,
@@ -87,6 +88,11 @@ static int    autoFsCooldown = 0;    // frames to wait after a change (let it se
 static int    autoFsHeadroom = 0;    // consecutive low-load frames (slow-release counter)
 #endif
 
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+static SkipRepeatAuto skipRepeatAuto;   // "Skip repeated frames: Auto" at 1x (emu thread)
+static bool skipRepeatAutoLogged = false;
+#endif
+
 jobject globalCameraManager;
 MelonDSAndroidCameraHandler* androidCameraHandler;
 
@@ -105,6 +111,9 @@ Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jo
     autoFrameskipEnabled = finalEmulatorConfiguration.autoFrameskipEnabled;
     // New emulator session (the emu thread is not running yet): start from no skip.
     autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
+#endif
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+    skipRepeatAuto.reset();
 #endif
 #ifdef LITEV_AGGRESSIVE_SKIP
     ffMaxFrameskip = finalEmulatorConfiguration.fastForwardMaxFrameskip;
@@ -1130,6 +1139,32 @@ void* emulate(void*)
             autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
             MelonDSAndroid::setFrameskip(0);
             LOG_INFO("LITEV_AUTOFS", "skip level 0 (inactive)");
+        }
+#endif
+
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+        // "Skip repeated frames: Auto" (only used when that mode is in force, see runFrame).
+        // Judged against the current target speed: fast-forward above 1x (or unlimited) = on,
+        // most of its presented frames are dropped anyway; below 1x = off; at 1x the
+        // SkipRepeatAuto controller decides from the work time vs the frame period.
+        // The debug.litev.nolimit measurement mode counts as unlimited fast-forward.
+        {
+            bool want;
+            if (noLimit || (isFastForwardEnabled && fastForwardSpeedMultiplier != 1.0f)) {
+                want = noLimit || !limitFps || fastForwardSpeedMultiplier > 1.0f;
+                skipRepeatAuto.reset();
+            } else
+                want = skipRepeatAuto.update(delay, frameTimeStep);
+#ifdef LITEV_AUTO_FRAMESKIP
+            if (autoFsSkip > 0)   // the raster frameskip rungs sit above this one
+                want = skipRepeatAuto.on = true;
+#endif
+            MelonDSAndroid::setSkipRepeatAuto(want);
+            if (want != skipRepeatAutoLogged) {
+                skipRepeatAutoLogged = want;
+                LOG_INFO("LITEV_SKIPREP", "auto %s (ema %.2f ms, budget %.2f ms, next hold %d, ff %d)",
+                         want ? "on" : "off", skipRepeatAuto.emaMs, frameTimeStep, skipRepeatAuto.hold, isFastForwardEnabled ? 1 : 0);
+            }
         }
 #endif
 

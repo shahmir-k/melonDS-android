@@ -75,6 +75,7 @@ typedef struct
     float fastForwardSpeedMultiplier;
     bool autoFrameskipEnabled;
     int fastForwardMaxFrameskip;
+    int skipRepeatMode;   // debug.litev.skiprepeat values: 3 auto, 2 always, 1 Netplay/LAN only
     bool showBootScreen;
     bool useJit;
     int consoleType;

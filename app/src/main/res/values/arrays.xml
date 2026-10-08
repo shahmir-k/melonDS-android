@@ -110,6 +110,18 @@
         <item>8</item>
     </string-array>
 
+    <string-array name="skip_repeat_frames_options">
+        <item>Always</item>
+        <item>Auto (when below full speed or fast-forwarding)</item>
+        <item>Off</item>
+    </string-array>
+
+    <string-array name="skip_repeat_frames_values">
+        <item>2</item>
+        <item>3</item>
+        <item>1</item>
+    </string-array>
+
     <string-array name="fast_forward_max_frameskip_options">
         <item>Off (render every frame)</item>
         <item>1</item>

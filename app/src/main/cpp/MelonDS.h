@@ -57,6 +57,10 @@ namespace MelonDSAndroid {
 #ifdef LITEV_AGGRESSIVE_SKIP
     extern void setFrameskip(int target);
 #endif
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+    // Skip repeated frames "Auto": the emu loop's controller sets whether it is on (emu thread)
+    extern void setSkipRepeatAuto(bool on);
+#endif
 
     /**
      * Loads the NDS ROM and, optionally, the GBA ROM.

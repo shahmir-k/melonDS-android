@@ -172,6 +172,7 @@ class SharedPreferencesSettingsRepository(
             rendererConfiguration = renderConfigurationFlow.first(),
             autoFrameskipEnabled = isAutoFrameskipEnabled(),
             fastForwardMaxFrameskip = getFastForwardMaxFrameskip(),
+            skipRepeatMode = preferences.getString("skip_repeat_frames", "2")!!.toInt(),
         )
     }
 

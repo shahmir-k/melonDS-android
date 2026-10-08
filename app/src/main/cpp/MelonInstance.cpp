@@ -570,14 +570,19 @@ u32 MelonInstance::runFrame()
             // skip drawing/presenting frames whose 3D repeats the last (30 Hz 3D) in multiplayer:
             // Netplay (every console emulated, CPU short) and LAN (render load slows the device's
             // own Wi-Fi packet handling; Shrek LAN race 36-37 -> 41.6 fps). debug.litev.skiprepeat:
-            // 0 off, 2 always (also single-player)
+            // 0 off, 1 multiplayer only, 2 always, 3 auto (multiplayer, plus single player while
+            // below full speed or fast-forwarding: SkipRepeatAuto.h). Unset = the app setting.
             buf[0] = 0;
-            int sr = __system_property_get("debug.litev.skiprepeat", buf) > 0 ? atoi(buf) : 1;
-            nds->GPU.SkipRepeatEnabled = sr == 2 || (sr == 1 && (MelonDSAndroid::netplayActive()
-                                                               || MPInterface::GetType() == MPInterface_LAN));
+            skipRepeatMode = __system_property_get("debug.litev.skiprepeat", buf) > 0 ? atoi(buf)
+                                                                                    : std::atomic_load(&currentConfiguration)->skipRepeatMode;
+            skipRepeatMp = MelonDSAndroid::netplayActive() || MPInterface::GetType() == MPInterface_LAN;
 #endif
         }
     }
+#endif
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+    nds->GPU.SkipRepeatEnabled = skipRepeatMode == 2 || (skipRepeatMode == 1 && skipRepeatMp)
+                              || (skipRepeatMode == 3 && (skipRepeatMp || skipRepeatAuto));
 #endif
 
     // presentation size: from the scale the renderer was actually configured with
@@ -795,8 +800,11 @@ u32 MelonInstance::runFrame()
         static double a_fw = 0, a_rf = 0, a_blit = 0, a_other = 0, a_total = 0, c_rf = 0, c_blit = 0;
         c_rf += litev_c_rf1 - litev_c_rf0;
         c_blit += litev_c_blit1 - litev_c_rf1;
-        static int    n = 0;
+        static int    n = 0, skips = 0;
         static double lastWall = 0;
+#ifdef LITEV_SKIP_REPEAT_FRAMES
+        skips += nds->GPU.SkipRepeat;
+#endif
         double wall = litev_t_end;
         a_fw    += (litev_t_fw1 - litev_t_fw0);
         a_rf    += (litev_t_rf1 - litev_t_rf0);
@@ -811,13 +819,13 @@ u32 MelonInstance::runFrame()
                 double wallSpan = (lastWall > 0) ? (wall - lastWall) : 0;
                 double gpuAvg = (litev_gpuSamples > 0) ? (litev_gpuMsAccum / litev_gpuSamples) : -1.0;
                 LOG_INFO("LITEV_PROF",
-                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f submit=%.2f blit=%.2f other=%.2f) | thread-cpu runFrame=%.2f blit=%.2f | gpu=%.2fms | wall/frame=%.2fms (%.1f fps)",
+                    "60f: cpu_loop=%.2fms (fenceWait=%.2f runFrame=%.2f submit=%.2f blit=%.2f other=%.2f) | thread-cpu runFrame=%.2f blit=%.2f | gpu=%.2fms | wall/frame=%.2fms (%.1f fps) skiprepeat=%d",
                     a_total / n, a_fw / n, a_rf / n, 0.0, a_blit / n, a_other / n, c_rf / n, c_blit / n,
-                    gpuAvg, wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0));
+                    gpuAvg, wallSpan / n, (wallSpan > 0 ? 60000.0 / wallSpan : 0), skips);
             }
             a_fw = a_rf = a_blit = a_other = a_total = c_rf = c_blit = 0;
             litev_gpuMsAccum = 0; litev_gpuSamples = 0;
-            n = 0;
+            n = skips = 0;
             lastWall = wall;
         } else if (lastWall == 0) {
             lastWall = wall;

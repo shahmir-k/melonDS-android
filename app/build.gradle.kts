@@ -138,6 +138,7 @@ android {
                     // Generate 8 SPU samples per scheduler event (B).
                     "-DLITEV_SPU_BATCH=ON",
                     "-DLITEV_WIFI_BATCH=ON",
+                    "-DLITEV_ROM_SHARE=ON",
                     "-DLITEV_WIFI_BATCH_N=8",
                     // Netplay: other players' consoles skip render/audio-only work (the app
                     // sets GPU/GPU3D::Headless and SPU::Silent on them in MelonDS.cpp).

@@ -100,6 +100,7 @@ namespace MelonDSAndroid
         int frame = 0;
         std::mutex hashLock;
         std::atomic<int> desyncFrame {-1};
+        bool lostHost = false;                      // Hosted guest: the host went silent; the session ended
         bool waiting = false;
         // Hosted Netplay (docs/HYBRID-NETPLAY.md, design F): the host (player 0) runs every console
         // and records what the link returns to each; every guest runs only its own console, whose
@@ -249,7 +250,7 @@ namespace MelonDSAndroid
 #ifdef LITEV_HOSTED_NETPLAY
         NetplaySession& s = *netplay;
         if (!s.record) return;
-        s.record->EndFrame(player, frame, hostedState(*console.getNds(), in, frame));
+        s.record->EndFrame(player, frame, hostedState(*console.getNds(), in, frame), in);
         thread_local std::vector<u8> out;
         out.clear();
         s.record->TakeRecords(player, out);
@@ -368,7 +369,13 @@ namespace MelonDSAndroid
     std::string netplayStatus()
     {
         if (!netplay) return "";
+        if (netplay->lostHost) return "HOST LEFT";
         if (netplay->desyncFrame >= 0) return "DESYNC";
+#ifdef LITEV_HOSTED_NETPLAY
+        if (netplay->record)
+            for (int p = 1; p < netplay->players; p++)
+                if (netplay->input && netplay->input->Dropped(p)) return "Hosted Netplay (a player left)";
+#endif
         return netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
     }
 
@@ -627,6 +634,7 @@ namespace MelonDSAndroid
                     netplay->input = std::make_unique<NetplayInput>(kHostedServerId, netplay->delay, netplay->port, peers);
                     netplay->server = std::make_unique<HostedServer>(netplay->port + 2);
                     netplay->server->DrainMs = 500;   // stopping: the guests may have left
+                    netplay->input->DropAfterMs = 3000; // a guest silent this long is dropped: its console plays on with no input
                     for (auto& [player, addr] : peers)
                         if (!netplayAddRemote(player, romPath, saves[player]))
                             return 2;
@@ -638,6 +646,8 @@ namespace MelonDSAndroid
                     netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port,
                                                                     std::vector<std::pair<int, std::string>> {{kHostedServerId, netplay->peer}});
                     ReplayMP* replay = netplay->replay;
+                    NetplayInput* in = netplay->input.get();
+                    replay->SetServerSilence([in] { return in->MsSincePeer(); });   // silent host: end, don't hang
                     netplay->client = std::make_unique<HostedClient>(netplay->player, host + ":" + std::to_string(hport + 2),
                                                                      [replay](const u8* d, size_t l) { replay->Feed(d, l); });
                 }
@@ -755,6 +765,13 @@ namespace MelonDSAndroid
                 local = netplayScriptAt(netplay->script, netplay->frame + netplay->delay);
             netplay->input->SubmitLocal(netplay->frame, local);
             applied = netplay->input->Get(netplay->player, netplay->frame);
+#ifdef LITEV_HOSTED_NETPLAY
+            // guest: past what the host has acknowledged it may have dropped us; apply what it applied
+            NetplayFrameInput srv;
+            if (netplay->replay && netplay->frame >= netplay->delay && netplay->frame > netplay->input->AckedBy(kHostedServerId)
+                && netplay->replay->ServerInput(netplay->frame, srv, true))
+                applied = srv;
+#endif
             }
             const int frame = netplay->frame;
             netplayRecord(*netplay, netplay->player, netplay->frame, applied);
@@ -771,8 +788,13 @@ namespace MelonDSAndroid
             hostedEndFrame(*instance, netplay->player, frame, applied);
 #ifdef LITEV_HOSTED_NETPLAY
             // guest: wait for the host's record of this frame and compare
-            if (netplay->replay && !netplay->replay->EndFrame(frame, hostedState(*instance->getNds(), applied, frame))
-                && netplay->desyncFrame < 0)
+            bool replayOk = !netplay->replay || netplay->replay->EndFrame(frame, hostedState(*instance->getNds(), applied, frame));
+            if (!replayOk && netplay->replay->Lost() && !netplay->lostHost)
+            {
+                netplay->lostHost = true;
+                Platform::Log(Platform::LogLevel::Error, "Netplay: Hosted session ended at frame %d: %s\n", frame, netplay->replay->Error().c_str());
+            }
+            else if (!replayOk && !netplay->lostHost && netplay->desyncFrame < 0)
             {
                 netplay->desyncFrame = frame;
                 Platform::Log(Platform::LogLevel::Error, "Netplay: DESYNC at frame %d (Hosted replica of console %d): %s\n",

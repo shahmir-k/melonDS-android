@@ -131,7 +131,7 @@ target_include_directories(melonDS-android-frontend PUBLIC
         ${FAAD2}/include
         ${RCHEEVOS}/include
 )
-target_link_libraries(melonDS-android-frontend android core net-utils oboe faad enet rcheevos EGL GLESv3 mediandk)
+target_link_libraries(melonDS-android-frontend android core net-utils oboe faad enet rcheevos EGL GLESv3 mediandk z)
 
 # LITEV_LINKOPT (app half). The core is a STATIC archive and the final shared
 # object libmelonDS-android-frontend.so is linked here, so the link flag belongs

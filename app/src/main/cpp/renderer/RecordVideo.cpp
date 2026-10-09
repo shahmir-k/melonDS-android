@@ -89,7 +89,7 @@ static bool setupGl()
     // (in DS pixels; uScale = texture size in DS pixels)
     const char* fs = "#version 300 es\nprecision mediump float; in vec2 uv; out vec4 color; uniform sampler2D tex; uniform vec2 uScale;\n"
                      "void main() { float y = (1.0 - uv.y) * 384.0; y = y < 192.0 ? y : y + 2.0;\n"
-                     "  color = vec4(texture(tex, vec2(uv.x * 256.0, y) / uScale).rgb, 1.0); }";
+                     "  color = vec4(texture(tex, vec2(uv.x * 256.0, y) / uScale).bgr, 1.0); }";   // stored BGRA, like the presenter's shaders
     auto compile = [](GLenum type, const char* src) {
         GLuint s = glCreateShader(type);
         glShaderSource(s, 1, &src, nullptr);

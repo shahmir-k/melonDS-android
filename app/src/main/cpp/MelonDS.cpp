@@ -40,6 +40,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
+#include <zlib.h>
+#include <thread>
 
 extern bool isFastForwardEnabled;   // MelonDSAndroidJNI.cpp (record mode logs it per frame)
 #include <thread>
@@ -288,6 +290,7 @@ namespace MelonDSAndroid
         int rtc[6] {};
         FILE* inputs = nullptr;
         FILE* log = nullptr;
+        FILE* parts = nullptr;                      // debug.litev.rechash=1: per-frame part hashes
         NetplayFrameInput last;
         std::map<int, NetplayFrameInput> script;    // replay
         std::map<int, u64> hashes;                  // replay: the recording's
@@ -360,6 +363,7 @@ namespace MelonDSAndroid
         }
         if (r.inputs) fclose(r.inputs);
         if (r.log) fclose(r.log);
+        if (r.parts) fclose(r.parts);
         Platform::Log(Platform::LogLevel::Info, "Record: %s %s, %d frames\n", r.replay ? "replay" : "recording", r.dir.c_str(), r.frame);
         instance->setInputDeferred(false);
         instance->getNds()->SetKeyMask(instance->getInputMask());
@@ -430,6 +434,27 @@ namespace MelonDSAndroid
         }
         Recording& rec = *recording;
         std::string state = dir + "/start.mln";
+        if (rec.replay && access(state.c_str(), R_OK) != 0)
+        {
+            // stored gzipped: unpack to the cache for the load
+            state = internalFilesDir + "/replay-start.mln";
+            gzFile in = gzopen((dir + "/start.mln.gz").c_str(), "rb");
+            FILE* out = in ? fopen(state.c_str(), "wb") : nullptr;
+            bool ok = in && out;
+            std::vector<char> buf(1 << 20);
+            int n;
+            while (ok && (n = gzread(in, buf.data(), (unsigned) buf.size())) > 0)
+                ok = fwrite(buf.data(), 1, n, out) == (size_t) n;
+            if (in) gzclose(in);
+            if (out) fclose(out);
+            if (!ok)
+            {
+                std::lock_guard<std::mutex> l(recordLock);
+                recording.reset();
+                recordResult = "REPLAY FAILED (no start state)";
+                return false;
+            }
+        }
         // the clock first, so start.mln holds the clock replay pins (loadState re-pins it)
         nds->RTC.SetDateTime(rec.rtc[0], rec.rtc[1], rec.rtc[2], rec.rtc[3], rec.rtc[4], rec.rtc[5]);
         if ((!rec.replay && !saveState(state.c_str())) || !loadState(state.c_str()))
@@ -441,8 +466,28 @@ namespace MelonDSAndroid
         }
         nds = instance->getNds();
         rec.startEmuFrame = instance->getFrame();
+        if (rec.replay && state != dir + "/start.mln") unlink(state.c_str());   // the unpacked copy
         if (!rec.replay)
         {
+            // start.mln is ~19 MB, mostly zeros: gzip it (level 1, ~1.4 MB) off the emulator thread
+            std::thread([state] {
+                if (gzFile out = gzopen((state + ".gz.part").c_str(), "wb1"))
+                {
+                    bool ok = false;
+                    if (FILE* in = fopen(state.c_str(), "rb"))
+                    {
+                        std::vector<char> buf(1 << 20);
+                        size_t n;
+                        ok = true;
+                        while ((n = fread(buf.data(), 1, buf.size(), in)) > 0)
+                            ok &= gzwrite(out, buf.data(), (unsigned) n) == (int) n;
+                        fclose(in);
+                    }
+                    ok &= gzclose(out) == Z_OK;
+                    if (ok && rename((state + ".gz.part").c_str(), (state + ".gz").c_str()) == 0)
+                        unlink(state.c_str());
+                }
+            }).detach();
             if (FILE* f = fopen((dir + "/start.sav").c_str(), "wb"))
             {
                 if (nds->GetNDSSave()) fwrite(nds->GetNDSSave(), 1, nds->GetNDSSaveLength(), f);
@@ -461,6 +506,13 @@ namespace MelonDSAndroid
         snprintf(name, sizeof(name), rec.replay ? "/replay-%ld.csv" : "/frames.csv", (long) time(nullptr));
         rec.log = fopen((dir + name).c_str(), "w");
         if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,ff,hash\n");
+        char prop[PROP_VALUE_MAX] = {0};
+        if (__system_property_get("debug.litev.rechash", prop) > 0 && atoi(prop) == 1)
+        {
+            snprintf(name, sizeof(name), rec.replay ? "/parts-replay-%ld.csv" : "/parts.csv", (long) time(nullptr));
+            rec.parts = fopen((dir + name).c_str(), "w");
+            if (rec.parts) fprintf(rec.parts, "frame,timestamp,arm9regs,arm7regs,mainram,vram,wram\n");
+        }
         instance->setInputDeferred(true);
 #ifdef LITEV_AGGRESSIVE_SKIP
         nds->GPU.KeepCaptures = true;
@@ -512,6 +564,21 @@ namespace MelonDSAndroid
                     s.drawn ? 1 : 0, ::isFastForwardEnabled ? 1 : 0);
             if (hash) fprintf(r.log, "%016llx\n", (unsigned long long) hash); else fputs("\n", r.log);
         }
+        if (r.parts)
+        {
+            XXH3_state_t* st = XXH3_createState();
+            XXH3_64bits_reset(st);
+            for (int b = 0; b < 9; b++) XXH3_64bits_update(st, nds.GPU.VRAM[b], nds.GPU.VRAMMask[b] + 1);
+            u64 vram = XXH3_64bits_digest(st);
+            XXH3_64bits_reset(st);
+            XXH3_64bits_update(st, nds.SharedWRAM, 0x8000);
+            XXH3_64bits_update(st, nds.ARM7WRAM, nds.ARM7WRAMSize);
+            u64 wram = XXH3_64bits_digest(st);
+            XXH3_freeState(st);
+            fprintf(r.parts, "%d,%llu,%016llx,%016llx,%016llx,%016llx,%016llx\n", r.frame, (unsigned long long) nds.GetSysTimestamp(),
+                    (unsigned long long) XXH3_64bits(nds.ARM9.R, sizeof(nds.ARM9.R)), (unsigned long long) XXH3_64bits(nds.ARM7.R, sizeof(nds.ARM7.R)),
+                    (unsigned long long) XXH3_64bits(nds.MainRAM, nds.MainRAMMask + 1), (unsigned long long) vram, (unsigned long long) wram);
+        }
         r.prev = t0;
         if (r.replay && hash && r.firstDiff < 0)
         {
@@ -539,7 +606,10 @@ namespace MelonDSAndroid
         std::string request;
         {
             std::lock_guard<std::mutex> l(recordLock);
-            if (recordRequest.empty()) return;
+            // a load into a console that has not run a frame yet runs differently under the JIT
+            // than every later load (upstream; not found yet), so recordings and replays start
+            // only once the game has run (a replay asked for at launch waits one frame)
+            if (recordRequest.empty() || instance->getFrame() == 0) return;
             request.swap(recordRequest);
         }
         if (recording) recordEnd();

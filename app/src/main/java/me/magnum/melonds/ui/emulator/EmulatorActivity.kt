@@ -994,7 +994,7 @@ class EmulatorActivity : AppCompatActivity() {
     }
 
     private fun showRecordings() {
-        val recordings = recordingsDir().listFiles { f -> File(f, "start.mln").exists() }?.sortedByDescending { it.name }.orEmpty()
+        val recordings = recordingsDir().listFiles { f -> File(f, "start.mln").exists() || File(f, "start.mln.gz").exists() }?.sortedByDescending { it.name }.orEmpty()
         if (recordings.isEmpty()) {
             Toast.makeText(this, R.string.record_none, Toast.LENGTH_SHORT).show()
             viewModel.resumeEmulator()

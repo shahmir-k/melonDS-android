@@ -592,6 +592,7 @@ u32 MelonInstance::runFrame()
     double litev_t0 = litevNowMs();
 
     Frame* renderFrame = frameQueue.getRenderFrame();
+    renderFrame->emuFrame = frame;
 
     EGLDisplay currentDisplay = eglGetCurrentDisplay();
     // Delete old render fence
@@ -793,6 +794,7 @@ u32 MelonInstance::runFrame()
     }
 
     double litev_t_end = litevNowMs();
+    frameStats = { litev_t_end - litev_t0, litev_t_rf1 - litev_t_rf0, litev_c_rf1 - litev_c_rf0, !skipPresent };
     // Frame-phase profiler: accumulate and log one LITEV_PROF line per 60 frames
     // when debug.litev.prof=1 (re-read every 60 frames). `submit` is kept in the
     // format for log-parser compatibility; it is always 0 without a render thread.
@@ -1200,6 +1202,12 @@ void MelonInstance::setDateTime()
     if (litevFbHashOn() || MelonDSAndroid::netplayActive())
     {
         nds->RTC.SetDateTime(2026, 1, 1, 0, 0, 0);
+        return;
+    }
+    // record mode: the clock of the recording's start, on both recording and replay
+    if (int rtc[6]; MelonDSAndroid::recordRtc(rtc))
+    {
+        nds->RTC.SetDateTime(rtc[0], rtc[1], rtc[2], rtc[3], rtc[4], rtc[5]);
         return;
     }
 

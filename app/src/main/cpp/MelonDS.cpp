@@ -183,12 +183,18 @@ namespace MelonDSAndroid
     // Also reads the recording format: "FRAME 0xKEYS TX TY".
     // `prop` holds the path; a "%d" in it becomes `player` (debug.litev.npscript2: one script
     // per remote player, or the same one for all without %d).
+    static void netplayParseScript(const std::string& path, std::map<int, NetplayFrameInput>& script);
     static void netplayLoadScript(const char* prop, std::map<int, NetplayFrameInput>& script, int player = 0)
     {
         char spec[PROP_VALUE_MAX] = {0};
         if (__system_property_get(prop, spec) <= 0 || !spec[0]) return;
         std::string path = spec;
         if (size_t at = path.find("%d"); at != std::string::npos) path.replace(at, 2, std::to_string(player));
+        netplayParseScript(path, script);
+    }
+
+    static void netplayParseScript(const std::string& path, std::map<int, NetplayFrameInput>& script)
+    {
         FILE* f = fopen(path.c_str(), "r");
         if (!f) return;
         static const char* names[12] = {"A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN", "R", "L", "X", "Y"};
@@ -202,10 +208,12 @@ namespace MelonDSAndroid
             int x, y;
             unsigned keys;
             if (sscanf(line, "%*d 0x%x %d %d", &keys, &x, &y) == 3) { in.Keys = keys; in.TouchX = x; in.TouchY = y; }
-            else if (sscanf(rest, "T:%d:%d", &x, &y) == 2) { in.TouchX = x; in.TouchY = y; }
             else for (char* k = strtok(rest, ","); k; k = strtok(nullptr, ","))
+            {
+                if (sscanf(k, "T:%d:%d", &x, &y) == 2) { in.TouchX = x; in.TouchY = y; continue; }
                 for (int b = 0; b < 12; b++)
                     if (!strcmp(k, names[b])) in.Keys &= ~(1u << b);
+            }
             script[frame] = in;
         }
         fclose(f);
@@ -256,6 +264,278 @@ namespace MelonDSAndroid
         u64 v[4] = { in.Keys | ((u64)(u16)in.TouchX << 32) | ((u64)(u16)in.TouchY << 48), nds.GetSysTimestamp(),
                      ((frame + 1) % 60) == 0 ? XXH3_64bits(nds.MainRAM, nds.MainRAMMask + 1) : 0, (u64)frame };
         return XXH3_64bits(v, sizeof(v));
+    }
+
+    // Record mode (single player). A recording is a folder:
+    //   start.mln   the state it starts from. Saved and loaded straight back, so recording and
+    //               replay both begin from a fresh load (same JIT reset, same pinned clock).
+    //   start.sav   the game save at that moment (start.mln holds it too)
+    //   inputs.txt  every input change, "FRAME KEY,KEY,T:x:y" or "FRAME NONE", held until the
+    //               next line (the headless --input-script format; frames count from start.mln)
+    //   frames.csv  per frame: frame period, emulator loop, RunFrame and its thread CPU (ms),
+    //               whether the frame was drawn, and every 60 frames a state hash
+    //   meta.txt    game, clock, renderer
+    // Replay loads start.mln, applies inputs.txt frame by frame, writes replay_<time>.csv and
+    // compares its hashes with the recording's: "REPLAY OK" or "REPLAY DIFFERS at frame N".
+    // Requests come from the UI thread and run at the top of the next emulator frame.
+    struct Recording
+    {
+        std::string dir;
+        bool replay = false;
+        int frame = 0, frames = 0;                  // replay: frames recorded
+        int rtc[6] {};
+        FILE* inputs = nullptr;
+        FILE* log = nullptr;
+        NetplayFrameInput last;
+        std::map<int, NetplayFrameInput> script;    // replay
+        std::map<int, u64> hashes;                  // replay: the recording's
+        int firstDiff = -1;
+        int startEmuFrame = 0;                      // MelonInstance frame number of recording frame 0
+        timespec prev {};
+    };
+    static std::unique_ptr<Recording> recording;
+    static std::mutex recordLock;                   // the request and the status text
+    static std::string recordRequest;               // "record DIR", "replay DIR" or "stop"
+    static std::string recordResult;                // last finished replay, for the status line
+
+    bool recordRtc(int* out)
+    {
+        if (!recording) return false;
+        memcpy(out, recording->rtc, sizeof(recording->rtc));
+        return true;
+    }
+
+    void recordQueue(std::string request)
+    {
+        std::lock_guard<std::mutex> l(recordLock);
+        recordRequest = std::move(request);
+    }
+
+    static std::string recordStatus()
+    {
+        std::lock_guard<std::mutex> l(recordLock);
+        if (!recording) return recordResult;
+        return recording->replay ? "REPLAY " + std::to_string(recording->frame) + "/" + std::to_string(recording->frames) : "REC";
+    }
+
+    // present thread: the recording a presented frame belongs to (footage of recordings only)
+    bool recordVideoTarget(const Frame* frame, std::string& dir, int& recFrame)
+    {
+        std::lock_guard<std::mutex> l(recordLock);
+        if (!recording || recording->replay || !frame || frame->emuFrame < recording->startEmuFrame) return false;
+        dir = recording->dir;
+        recFrame = frame->emuFrame - recording->startEmuFrame;
+        return true;
+    }
+
+    // 0 none, 1 recording, 2 replaying
+    int recordMode() { return !recording ? 0 : recording->replay ? 2 : 1; }
+
+    static double msSince(const timespec& a, const timespec& b)
+    {
+        return (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6;
+    }
+
+    static void recordEnd()
+    {
+        Recording& r = *recording;
+        std::string result;
+        if (r.replay)
+        {
+            result = r.firstDiff >= 0 ? "REPLAY DIFFERS at frame " + std::to_string(r.firstDiff)
+                   : r.frame < r.frames ? "REPLAY STOPPED at frame " + std::to_string(r.frame)
+                   : "REPLAY OK";
+            if (FILE* f = fopen((r.dir + "/replay-result.txt").c_str(), "w"))
+            {
+                fprintf(f, "%s\nframes %d of %d, %zu hashes\n", result.c_str(), r.frame, r.frames, r.hashes.size());
+                fclose(f);
+            }
+        }
+        else if (FILE* f = fopen((r.dir + "/meta.txt").c_str(), "a"))
+        {
+            fprintf(f, "frames %d\n", r.frame);
+            fclose(f);
+        }
+        if (r.inputs) fclose(r.inputs);
+        if (r.log) fclose(r.log);
+        Platform::Log(Platform::LogLevel::Info, "Record: %s %s, %d frames\n", r.replay ? "replay" : "recording", r.dir.c_str(), r.frame);
+        instance->setInputDeferred(false);
+        instance->getNds()->SetKeyMask(instance->getInputMask());
+        std::lock_guard<std::mutex> l(recordLock);
+        recording.reset();
+        recordResult = result;
+    }
+
+    static bool recordBegin(const std::string& kind, const std::string& dir)
+    {
+        auto r = std::make_unique<Recording>();
+        r->dir = dir;
+        r->replay = kind == "replay";
+        NDS* nds = instance->getNds();
+        char gameCode[5] = {0};
+        if (auto* cart = nds->NDSCartSlot.GetCart()) memcpy(gameCode, cart->GetHeader().GameCode, 4);
+        if (r->replay)
+        {
+            FILE* m = fopen((dir + "/meta.txt").c_str(), "r");
+            if (!m) return false;
+            char line[256], code[8] = {0};
+            while (fgets(line, sizeof(line), m))
+            {
+                sscanf(line, "game %7s", code);
+                sscanf(line, "rtc %d %d %d %d %d %d", &r->rtc[0], &r->rtc[1], &r->rtc[2], &r->rtc[3], &r->rtc[4], &r->rtc[5]);
+                sscanf(line, "frames %d", &r->frames);
+            }
+            fclose(m);
+            if (strcmp(code, gameCode) != 0)
+            {
+                Platform::Log(Platform::LogLevel::Error, "Record: %s is a recording of %s, not %s\n", dir.c_str(), code, gameCode);
+                return false;
+            }
+            if (FILE* f = fopen((dir + "/frames.csv").c_str(), "r"))
+            {
+                char line[256];
+                int frame, last = -1;
+                unsigned long long hash;
+                while (fgets(line, sizeof(line), f))
+                {
+                    if (sscanf(line, "%d", &frame) != 1) continue;
+                    last = frame;
+                    const char* h = strrchr(line, ',');
+                    if (h && sscanf(h + 1, "%llx", &hash) == 1) r->hashes[frame] = hash;
+                }
+                fclose(f);
+                if (!r->frames) r->frames = last + 1;   // a recording cut off without its "frames" line
+            }
+            // inputs.txt is the Netplay test-script format
+            if (access((dir + "/inputs.txt").c_str(), R_OK) != 0) return false;
+            netplayParseScript(dir + "/inputs.txt", r->script);
+        }
+        else
+        {
+            mkdir(dir.c_str(), 0755);
+            time_t t = time(nullptr);
+            tm* now = localtime(&t);
+            int v[6] = { now->tm_year + 1900, now->tm_mon + 1, now->tm_mday, now->tm_hour, now->tm_min, now->tm_sec };
+            memcpy(r->rtc, v, sizeof(v));
+        }
+        {
+            std::lock_guard<std::mutex> l(recordLock);
+            recording = std::move(r);
+            recordResult.clear();
+        }
+        Recording& rec = *recording;
+        std::string state = dir + "/start.mln";
+        // the clock first, so start.mln holds the clock replay pins (loadState re-pins it)
+        nds->RTC.SetDateTime(rec.rtc[0], rec.rtc[1], rec.rtc[2], rec.rtc[3], rec.rtc[4], rec.rtc[5]);
+        if ((!rec.replay && !saveState(state.c_str())) || !loadState(state.c_str()))
+        {
+            std::lock_guard<std::mutex> l(recordLock);
+            recording.reset();
+            recordResult = "RECORD FAILED";
+            return false;
+        }
+        nds = instance->getNds();
+        rec.startEmuFrame = instance->getFrame();
+        if (!rec.replay)
+        {
+            if (FILE* f = fopen((dir + "/start.sav").c_str(), "wb"))
+            {
+                if (nds->GetNDSSave()) fwrite(nds->GetNDSSave(), 1, nds->GetNDSSaveLength(), f);
+                fclose(f);
+            }
+            if (FILE* f = fopen((dir + "/meta.txt").c_str(), "w"))
+            {
+                fprintf(f, "game %s\nrtc %d %d %d %d %d %d\nrenderer %d\njit %d\n", gameCode,
+                        rec.rtc[0], rec.rtc[1], rec.rtc[2], rec.rtc[3], rec.rtc[4], rec.rtc[5],
+                        (int) currentConfiguration->renderer, (int) currentConfiguration->useJit);
+                fclose(f);
+            }
+            rec.inputs = fopen((dir + "/inputs.txt").c_str(), "w");
+        }
+        char name[64];
+        snprintf(name, sizeof(name), rec.replay ? "/replay-%ld.csv" : "/frames.csv", (long) time(nullptr));
+        rec.log = fopen((dir + name).c_str(), "w");
+        if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,hash\n");
+        instance->setInputDeferred(true);
+        clock_gettime(CLOCK_MONOTONIC, &rec.prev);
+        Platform::Log(Platform::LogLevel::Info, "Record: %s %s\n", rec.replay ? "replaying" : "recording", dir.c_str());
+        return true;
+    }
+
+    static void recordWriteInput(FILE* f, int frame, const NetplayFrameInput& in)
+    {
+        static const char* names[12] = {"A", "B", "SELECT", "START", "RIGHT", "LEFT", "UP", "DOWN", "R", "L", "X", "Y"};
+        std::string keys;
+        for (int b = 0; b < 12; b++)
+            if (!(in.Keys & (1u << b))) keys += (keys.empty() ? "" : ",") + std::string(names[b]);
+        if (in.TouchX >= 0) keys += (keys.empty() ? "T:" : ",T:") + std::to_string(in.TouchX) + ":" + std::to_string(in.TouchY);
+        fprintf(f, "%d %s\n", frame, keys.empty() ? "NONE" : keys.c_str());
+    }
+
+    // one emulator frame while recording or replaying
+    static u32 recordFrame()
+    {
+        Recording& r = *recording;
+        timespec t0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        NetplayFrameInput in;
+        if (r.replay)
+            in = netplayScriptAt(r.script, r.frame);
+        else
+        {
+            in.Keys = instance->getInputMask() & 0xFFF;
+            u16 x, y;
+            if (instance->getTouch(x, y)) { in.TouchX = x; in.TouchY = y; }
+            if (r.frame == 0 || in.Keys != r.last.Keys || in.TouchX != r.last.TouchX || in.TouchY != r.last.TouchY)
+            {
+                if (r.inputs) recordWriteInput(r.inputs, r.frame, in);
+                r.last = in;
+            }
+        }
+        netplayApply(*instance, in);
+        u32 lines = instance->runFrame();
+        NDS& nds = *instance->getNds();
+        u64 hash = ((r.frame + 1) % 60) == 0 ? hostedState(nds, in, r.frame) : 0;
+        if (r.log)
+        {
+            const auto& s = instance->lastFrameStats();
+            fprintf(r.log, "%d,%.3f,%.3f,%.3f,%.3f,%d,", r.frame, msSince(r.prev, t0), s.loopMs, s.runFrameMs, s.emuCpuMs, s.drawn ? 1 : 0);
+            if (hash) fprintf(r.log, "%016llx\n", (unsigned long long) hash); else fputs("\n", r.log);
+        }
+        r.prev = t0;
+        if (r.replay && hash && r.firstDiff < 0)
+        {
+            auto it = r.hashes.find(r.frame);
+            if (it != r.hashes.end() && it->second != hash)
+            {
+                r.firstDiff = r.frame;
+                Platform::Log(Platform::LogLevel::Error, "Record: replay differs from the recording at frame %d\n", r.frame);
+            }
+        }
+        r.frame++;
+        if (r.frame % 60 == 0)
+        {
+            if (r.inputs) fflush(r.inputs);
+            if (r.log) fflush(r.log);
+        }
+        if (r.replay && r.frame >= r.frames)
+            recordEnd();
+        return lines;
+    }
+
+    // at the top of an emulator frame: start or stop what the UI asked for
+    static void recordService()
+    {
+        std::string request;
+        {
+            std::lock_guard<std::mutex> l(recordLock);
+            if (recordRequest.empty()) return;
+            request.swap(recordRequest);
+        }
+        if (recording) recordEnd();
+        size_t sp = request.find(' ');
+        if (sp != std::string::npos && !netplay)
+            recordBegin(request.substr(0, sp), request.substr(sp + 1));
     }
 
     // Hosted Netplay host: console `player` finished frame `frame`; its records go to the guest
@@ -389,7 +669,7 @@ namespace MelonDSAndroid
 
     std::string netplayStatus()
     {
-        if (!netplay) return "";
+        if (!netplay) return recordStatus();
         if (netplay->lostHost) return "HOST LEFT";
         if (netplay->desyncFrame >= 0) return "DESYNC";
 #ifdef LITEV_HOSTED_NETPLAY
@@ -854,6 +1134,8 @@ namespace MelonDSAndroid
             if (netplay->frame % 60 == 0) netplayCheck(*netplay);
             return lines;
         }
+        recordService();
+        if (recording) return recordFrame();
         return instance->runFrame();
     }
 

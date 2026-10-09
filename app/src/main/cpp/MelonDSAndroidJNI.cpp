@@ -12,6 +12,7 @@
 #include <sched.h>
 #include <sys/system_properties.h>
 #include <MelonDS.h>
+#include "renderer/RecordVideo.h"
 #include <MelonDSAudio.h>
 #include <RomGbaSlotConfig.h>
 #include <android/asset_manager_jni.h>
@@ -379,6 +380,16 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
     {
         eglWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0);
         env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, true, (jint) presentationFrame->frameTexture);
+        // record mode footage, on this thread's GL context (the hardware encoder does the rest)
+        {
+            std::string dir;
+            int recFrame;
+            if (isNew && MelonDSAndroid::recordVideoTarget(presentationFrame, dir, recFrame))
+                RecordVideo::Present(presentationFrame, recFrame, dir, 30);
+            else if (!isNew) {}
+            else
+                RecordVideo::Stop();
+        }
         EGLSyncKHR presentFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
         presentationFrame->presentFence = presentFence;
     }
@@ -961,6 +972,20 @@ JNIEXPORT jstring JNICALL
 Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
 {
     return env->NewStringUTF(MelonDSAndroid::netplayStatus().c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_recordQueue(JNIEnv* env, jobject thiz, jstring request)
+{
+    const char* r = env->GetStringUTFChars(request, JNI_FALSE);
+    MelonDSAndroid::recordQueue(r);
+    env->ReleaseStringUTFChars(request, r);
+}
+
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_recordMode(JNIEnv* env, jobject thiz)
+{
+    return MelonDSAndroid::recordMode();
 }
 
 JNIEXPORT void JNICALL

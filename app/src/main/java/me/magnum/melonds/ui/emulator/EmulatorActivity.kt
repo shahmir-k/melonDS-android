@@ -119,6 +119,10 @@ import me.magnum.melonds.ui.layouteditor.model.LayoutTarget
 import me.magnum.melonds.ui.settings.SettingsActivity
 import me.magnum.melonds.ui.theme.MelonTheme
 import java.text.SimpleDateFormat
+import me.magnum.melonds.ui.emulator.rom.RomPauseMenuOption
+import java.util.Locale
+import java.util.Date
+import java.io.File
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -129,6 +133,8 @@ class EmulatorActivity : AppCompatActivity() {
         const val KEY_URI = "uri"
         const val KEY_BOOT_FIRMWARE_CONSOLE = "boot_firmware_console"
         const val KEY_BOOT_FIRMWARE_ONLY = "boot_firmware_only"
+        const val KEY_RECORD = "record"
+        const val KEY_REPLAY = "replay"
 
         fun getRomEmulatorActivityIntent(context: Context, rom: Rom): Intent {
             return Intent(context, EmulatorActivity::class.java).apply {
@@ -941,15 +947,20 @@ class EmulatorActivity : AppCompatActivity() {
 
     private fun showPauseMenu(pauseMenu: PauseMenu) {
         val options = Array(pauseMenu.options.size) {
-            getString(pauseMenu.options[it].textResource)
+            val option = pauseMenu.options[it]
+            if (option == RomPauseMenuOption.RECORD && MelonEmulator.recordMode() == 1) getString(R.string.record_stop)
+            else getString(option.textResource)
         }
 
         activeOverlays.addActiveOverlay(EmulatorOverlay.PAUSE_MENU)
         AlertDialog.Builder(this)
                 .setTitle(R.string.pause)
                 .setItems(options) { _, which ->
-                    val selectedOption = pauseMenu.options[which]
-                    viewModel.onPauseMenuOptionSelected(selectedOption)
+                    when (val selectedOption = pauseMenu.options[which]) {
+                        RomPauseMenuOption.RECORD -> toggleRecording()
+                        RomPauseMenuOption.REPLAY -> showRecordings()
+                        else -> viewModel.onPauseMenuOptionSelected(selectedOption)
+                    }
                 }
                 .setOnDismissListener {
                     activeOverlays.removeActiveOverlay(EmulatorOverlay.PAUSE_MENU)
@@ -958,6 +969,39 @@ class EmulatorActivity : AppCompatActivity() {
                     viewModel.resumeEmulator()
                 }
                 .show()
+    }
+
+    // Record mode: recordings go to Android/data/<package>/files/recordings/<time>, readable with adb pull
+    private fun recordingsDir() = File(getExternalFilesDir(null), "recordings")
+
+    private fun toggleRecording() {
+        if (MelonEmulator.recordMode() == 1) {
+            MelonEmulator.recordQueue("stop")
+            Toast.makeText(this, getString(R.string.record_saved, recordingsDir().absolutePath), Toast.LENGTH_LONG).show()
+        } else {
+            val dir = File(recordingsDir(), SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()))
+            dir.mkdirs()
+            MelonEmulator.recordQueue("record ${dir.absolutePath}")
+            Toast.makeText(this, getString(R.string.record_started, dir.name), Toast.LENGTH_SHORT).show()
+        }
+        viewModel.resumeEmulator()
+    }
+
+    private fun showRecordings() {
+        val recordings = recordingsDir().listFiles { f -> File(f, "start.mln").exists() }?.sortedByDescending { it.name }.orEmpty()
+        if (recordings.isEmpty()) {
+            Toast.makeText(this, R.string.record_none, Toast.LENGTH_SHORT).show()
+            viewModel.resumeEmulator()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.record_replay)
+            .setItems(recordings.map { it.name }.toTypedArray()) { _, which ->
+                MelonEmulator.recordQueue("replay ${recordings[which].absolutePath}")
+                viewModel.resumeEmulator()
+            }
+            .setOnCancelListener { viewModel.resumeEmulator() }
+            .show()
     }
 
     private fun disableScreenTimeOut() {

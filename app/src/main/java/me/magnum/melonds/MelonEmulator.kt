@@ -170,6 +170,11 @@ object MelonEmulator {
 
     private external fun onKeyRelease(key: Int)
 
+    // Record mode: "record DIR", "replay DIR" or "stop"; runs at the next emulated frame
+    external fun recordQueue(request: String)
+
+    external fun recordMode(): Int     // 0 none, 1 recording, 2 replaying
+
     external fun takeScreenshot(): Boolean
 
     external fun setFastForwardEnabled(enabled: Boolean)

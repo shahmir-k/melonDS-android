@@ -47,6 +47,10 @@ public:
     // Netplay: input is only recorded here; the session applies every player's input to every
     // console a few frames later, identically on every device.
     void setInputDeferred(bool deferred) { inputDeferred = deferred; }
+    // the last runFrame's timings (record mode's per-frame log)
+    struct FrameStats { double loopMs = 0, runFrameMs = 0, emuCpuMs = 0; bool drawn = true; };
+    const FrameStats& lastFrameStats() const { return frameStats; }
+    int getFrame() const { return frame; }
     melonDS::u32 getInputMask() { return inputMask; }
     bool getTouch(u16& x, u16& y) { x = touchX; y = touchY; return touching; }
     // Netplay: another player's console. Emulates a frame with no presentation (its screens are
@@ -104,6 +108,7 @@ private:
     std::unique_ptr<SaveManager> firmwareSave;
     u32 inputMask;
     bool inputDeferred = false;
+    FrameStats frameStats;
     bool touching = false;
     u16 touchX = 0, touchY = 0;
     bool headlessRendererSet = false;

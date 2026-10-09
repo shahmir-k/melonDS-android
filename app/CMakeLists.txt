@@ -120,6 +120,7 @@ add_library(
         ${ANDROID-CPP}/performancehint/ThreadSafePerformanceHintSession.cpp
         ${ANDROID-CPP}/renderer/FrameQueue.cpp
         ${ANDROID-CPP}/renderer/ScreenshotRenderer.cpp
+        ${ANDROID-CPP}/renderer/RecordVideo.cpp
         ${ANDROID-CPP}/retroachievements/RetroAchievementsManager.cpp
 )
 
@@ -130,7 +131,7 @@ target_include_directories(melonDS-android-frontend PUBLIC
         ${FAAD2}/include
         ${RCHEEVOS}/include
 )
-target_link_libraries(melonDS-android-frontend android core net-utils oboe faad enet rcheevos EGL GLESv3)
+target_link_libraries(melonDS-android-frontend android core net-utils oboe faad enet rcheevos EGL GLESv3 mediandk)
 
 # LITEV_LINKOPT (app half). The core is a STATIC archive and the final shared
 # object libmelonDS-android-frontend.so is linked here, so the link flag belongs

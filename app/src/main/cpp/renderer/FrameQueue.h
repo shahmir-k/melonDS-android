@@ -19,6 +19,7 @@ struct Frame {
     GLuint frameTexture{};
     u32 width{};
     u32 height{};
+    int emuFrame{};     // MelonInstance frame number it shows (record mode footage)
     EGLSyncKHR renderFence{};
     EGLSyncKHR presentFence{};
 };

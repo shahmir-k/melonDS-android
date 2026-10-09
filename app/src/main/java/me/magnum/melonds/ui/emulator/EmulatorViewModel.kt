@@ -118,7 +118,7 @@ class EmulatorViewModel @Inject constructor(
     private val emulatorManager: EmulatorManager,
     private val emulatorSession: EmulatorSession,
     private val retroAchievementsSubmissionHandler: RetroAchievementsSubmissionHandler,
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val sessionCoroutineScope = EmulatorSessionCoroutineScope()
@@ -276,6 +276,9 @@ class EmulatorViewModel @Inject constructor(
                     _toastEvent.tryEmit(ToastEvent.GbaLoadFailed)
                 }
                 _emulatorState.value = EmulatorState.RunningRom(rom)
+                // record mode from the command line: am start ... -e record|replay <absolute dir>
+                savedStateHandle.get<String>(EmulatorActivity.KEY_RECORD)?.let { MelonEmulator.recordQueue("record $it") }
+                savedStateHandle.get<String>(EmulatorActivity.KEY_REPLAY)?.let { MelonEmulator.recordQueue("replay $it") }
                 startTrackingFps()
                 startTrackingPlayTime(rom)
             }
@@ -529,6 +532,7 @@ class EmulatorViewModel @Inject constructor(
                             _uiEvent.tryEmit(EmulatorUiEvent.ShowRomSaveStates(saveStateSlots, EmulatorUiEvent.ShowRomSaveStates.Reason.LOADING))
                         }
                     }
+                    RomPauseMenuOption.RECORD, RomPauseMenuOption.REPLAY -> Unit   // EmulatorActivity (needs the files dir)
                     RomPauseMenuOption.REWIND -> {
                         sessionCoroutineScope.launch {
                             val rewindWindow = emulatorManager.getRewindWindow()

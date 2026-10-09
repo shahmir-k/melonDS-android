@@ -154,6 +154,12 @@
     <string name="save_state">Save state</string>
     <string name="load_state">Load state</string>
     <string name="rewind">Rewind</string>
+    <string name="record_start">Start recording</string>
+    <string name="record_stop">Stop recording</string>
+    <string name="record_replay">Replay a recording</string>
+    <string name="record_started">Recording to %1$s</string>
+    <string name="record_saved">Recording saved: %1$s</string>
+    <string name="record_none">No recordings yet</string>
     <string name="save_slot">Save slot</string>
     <string name="empty_slot">%1$s. &lt;Empty&gt;</string>
     <string name="quick_slot">Quick Slot</string>

@@ -47,6 +47,11 @@ namespace MelonDSAndroid {
     extern int netplayKind();   // 0 none, 1 Netplay, 2 Hosted Netplay
     // Ends every Netplay wait (stopping: the emulator thread may be waiting on a player who left)
     extern void netplayAbort();
+    // Record mode (single player): "record DIR", "replay DIR" or "stop", run at the next frame
+    extern void recordQueue(std::string request);
+    extern int recordMode();            // 0 none, 1 recording, 2 replaying
+    extern bool recordRtc(int* out);    // the recording's clock (6 ints), while one is active
+    extern bool recordVideoTarget(const Frame* frame, std::string& dir, int& recFrame);
     extern void setConfiguration(EmulatorConfiguration emulatorConfiguration);
     extern void setup(AndroidCameraHandler* androidCameraHandler, std::shared_ptr<MelonEventMessenger> androidEventMessenger, u32* screenshotBufferPointer, int instanceId);
     extern void setCodeList(std::list<Cheat> cheats);

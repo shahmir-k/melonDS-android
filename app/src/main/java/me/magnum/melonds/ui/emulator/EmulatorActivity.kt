@@ -434,15 +434,15 @@ class EmulatorActivity : AppCompatActivity() {
             }
         }
 
-        // the multiplayer group (a Netplay lobby kept connected): pump it, follow the host's commands
+        // the multiplayer group (a Netplay lobby kept connected): pump it, follow the host's commands.
+        // Also while the activity is stopped (screen off, another app on top): the group's links
+        // time out after 3 s unpumped, which dropped a sleeping device from its group mid-session.
         lifecycleScope.launch {
-            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                while (true) {
-                    val (request, left) = withContext(Dispatchers.IO) { MelonEmulator.groupTake() to MelonEmulator.groupLeft() }
-                    if (request >= 0) runGroupCommand(request)
-                    left.forEach(::groupPlayerLeft)
-                    delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
-                }
+            while (true) {
+                val (request, left) = withContext(Dispatchers.IO) { MelonEmulator.groupTake() to MelonEmulator.groupLeft() }
+                if (request >= 0) runGroupCommand(request)
+                left.forEach(::groupPlayerLeft)
+                delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
             }
         }
 

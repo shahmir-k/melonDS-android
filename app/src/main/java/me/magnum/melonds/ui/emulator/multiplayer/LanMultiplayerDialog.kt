@@ -42,6 +42,7 @@ import kotlinx.coroutines.withContext
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.R
 import me.magnum.melonds.ui.common.component.dialog.BaseDialog
+import me.magnum.melonds.ui.common.melonTextButtonColors
 import me.magnum.melonds.ui.common.component.dialog.DialogButton
 
 // Mirrors LanMode in MelonDSAndroidJNI.cpp
@@ -656,9 +657,10 @@ private fun StartContent(
     )
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.multiplayer_max_players), Modifier.weight(1f))
-        TextButton(onClick = { onMaxPlayersChange(maxPlayers - 1) }) { Text("−") }
-        Text(maxPlayers.toString())
-        TextButton(onClick = { onMaxPlayersChange(maxPlayers + 1) }) { Text("+") }
+        // the dialog buttons' colour: the default (primary) is near-invisible on the dark theme
+        TextButton(onClick = { onMaxPlayersChange(maxPlayers - 1) }, colors = melonTextButtonColors()) { Text("−", style = MaterialTheme.typography.h5) }
+        Text(maxPlayers.toString(), style = MaterialTheme.typography.h6)
+        TextButton(onClick = { onMaxPlayersChange(maxPlayers + 1) }, colors = melonTextButtonColors()) { Text("+", style = MaterialTheme.typography.h5) }
     }
     if (sameNetworkHint) {
         Text(stringResource(R.string.multiplayer_same_version_hint), style = MaterialTheme.typography.caption)

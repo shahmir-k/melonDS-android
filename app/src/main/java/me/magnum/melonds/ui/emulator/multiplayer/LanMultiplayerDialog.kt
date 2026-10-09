@@ -296,7 +296,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                                     playerName = playerName,
                                     onPlayerNameChange = { playerName = it.take(10) },
                                     maxPlayers = maxPlayers,
-                                    onMaxPlayersChange = { maxPlayers = it.coerceIn(2, if (netplayGoal) 2 else 16) },
+                                    onMaxPlayersChange = { maxPlayers = it.coerceIn(2, 16) },
                                     sameNetworkHint = false,
                                 )
                             }
@@ -304,7 +304,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                                 playerName = playerName,
                                 onPlayerNameChange = { playerName = it.take(10) },
                                 maxPlayers = maxPlayers,
-                                onMaxPlayersChange = { maxPlayers = it.coerceIn(2, if (netplayGoal) 2 else 16) },
+                                onMaxPlayersChange = { maxPlayers = it.coerceIn(2, 16) },
                                 sameNetworkHint = true,
                             )
                         }

@@ -1,7 +1,11 @@
 package me.magnum.melonds.ui.emulator
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.opengl.GLES30
 import android.opengl.GLUtils
 import me.magnum.melonds.common.opengl.Shader
@@ -54,6 +58,18 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
 
     private var width = 0f
     private var height = 0f
+
+    // FPS counter drawn over the screens in the colour opposite to what is under it (readable on
+    // white menus too): text texture, blended as 1 - destination
+    private data class Overlay(val text: String, val x: Float, val y: Float, val textSize: Float)
+    @Volatile private var overlay: Overlay? = null
+    private var overlayDrawn: Overlay? = null
+    private var overlayShader: Shader? = null
+    private var overlayTexture = 0
+    private var overlayVbo = 0
+    private var overlayVao = 0
+    private var overlayW = 0
+    private var overlayH = 0
 
     private var backgroundWidth = 0
     private var backgroundHeight = 0
@@ -133,6 +149,13 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
 
         // Create background shader
         backgroundShader = ShaderFactory.createShaderProgram(ShaderProgramSource.BackgroundShader)
+
+        overlayShader = ShaderFactory.createShaderProgram(ShaderProgramSource.OverlayShader)
+        val overlayObjects = IntArray(1)
+        GLES30.glGenTextures(1, overlayObjects, 0); overlayTexture = overlayObjects[0]
+        GLES30.glGenBuffers(1, overlayObjects, 0); overlayVbo = overlayObjects[0]
+        GLES30.glGenVertexArrays(1, overlayObjects, 0); overlayVao = overlayObjects[0]
+        overlayDrawn = null
 
         synchronized(configurationLock) {
             mustUpdateConfiguration = true
@@ -284,6 +307,68 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
             GLES30.glBindVertexArray(0)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
         }
+
+        renderOverlay()
+    }
+
+    // text: null hides it. x/y: top-left of the text in surface pixels; textSize in pixels
+    fun setOverlayText(text: String?, x: Float, y: Float, textSize: Float) {
+        overlay = text?.let { Overlay(it, x, y, textSize) }
+    }
+
+    private fun renderOverlay() {
+        val o = overlay ?: return
+        val shader = overlayShader ?: return
+        if (o != overlayDrawn) {
+            // rasterise the text (white, premultiplied alpha) and place its quad
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = o.textSize }
+            val fm = paint.fontMetrics
+            overlayW = paint.measureText(o.text).toInt() + 2
+            overlayH = (fm.descent - fm.ascent).toInt() + 2
+            val bitmap = Bitmap.createBitmap(overlayW, overlayH, Bitmap.Config.ARGB_8888)
+            Canvas(bitmap).drawText(o.text, 1f, 1f - fm.ascent, paint)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, overlayTexture)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+            bitmap.recycle()
+
+            val l = (o.x / width) * 2f - 1f
+            val r = ((o.x + overlayW) / width) * 2f - 1f
+            val t = 1f - o.y / height * 2f
+            val b = 1f - (o.y + overlayH) / height * 2f
+            val vertexData = floatArrayOf(
+                l, t, 0f, 0f,
+                l, b, 0f, 1f,
+                r, b, 1f, 1f,
+                l, t, 0f, 0f,
+                r, b, 1f, 1f,
+                r, t, 1f, 0f,
+            )
+            val buffer = ByteBuffer.allocateDirect(vertexData.size * Float.SIZE_BYTES).order(ByteOrder.nativeOrder()).asFloatBuffer().put(vertexData).position(0)
+            GLES30.glBindVertexArray(overlayVao)
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, overlayVbo)
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexData.size * Float.SIZE_BYTES, buffer, GLES30.GL_DYNAMIC_DRAW)
+            overlayDrawn = o
+        }
+
+        GLES30.glBindVertexArray(overlayVao)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, overlayVbo)
+        shader.use()
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, overlayTexture)
+        GLES30.glVertexAttribPointer(shader.attribPos, 2, GLES30.GL_FLOAT, false, 4 * Float.SIZE_BYTES, 0)
+        GLES30.glVertexAttribPointer(shader.attribUv, 2, GLES30.GL_FLOAT, false, 4 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES)
+        GLES30.glUniform1i(shader.uniformTex, 0)
+        // out = text * (1 - under) + under * (1 - text alpha): the inverse colour where the text is
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_ONE_MINUS_DST_COLOR, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 6)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glBindVertexArray(0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
     private fun renderBackground() {

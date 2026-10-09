@@ -32,6 +32,26 @@ class ShaderProgramSource private constructor(val textureFiltering: TextureFilte
                 "    gl_FragColor = vec4(color.bgr, alpha);\n" +
                 "}"
 
+        // text overlay: the texture as is, alpha included (premultiplied), for an inverting blend
+        val OverlayShader = ShaderProgramSource(
+            TextureFiltering.LINEAR,
+            "attribute vec2 vUV;\n" +
+                    "attribute vec2 vPos;\n" +
+                    "varying vec2 uv;\n" +
+                    "void main()\n" +
+                    "{\n" +
+                    "    gl_Position = vec4(vPos, 0.0, 1.0);\n" +
+                    "    uv = vUV;\n" +
+                    "}",
+            "precision mediump float;\n" +
+                    "uniform sampler2D tex;\n" +
+                    "varying vec2 uv;\n" +
+                    "void main()\n" +
+                    "{\n" +
+                    "    gl_FragColor = texture2D(tex, uv);\n" +
+                    "}"
+        )
+
         val BackgroundShader = ShaderProgramSource(
             TextureFiltering.LINEAR,
             "attribute vec2 vUV;\n" +

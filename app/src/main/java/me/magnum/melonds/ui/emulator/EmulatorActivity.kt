@@ -522,6 +522,7 @@ class EmulatorActivity : AppCompatActivity() {
                     } else {
                         binding.textFps.text = getString(R.string.info_fps, fps) + if (netplay.isEmpty()) "" else "  ·  $netplay"
                     }
+                    updateFpsOverlay()
                 }
             }
         }
@@ -844,6 +845,23 @@ class EmulatorActivity : AppCompatActivity() {
 
     private fun setupSustainedPerformanceMode() {
         window.setSustainedPerformanceMode(viewModel.isSustainedPerformanceModeEnabled())
+    }
+
+    // The counter is drawn by the screen renderer in the colour opposite to the pixels under it
+    // (white text vanished on white menus); the TextView only lays it out, with invisible text.
+    private fun updateFpsOverlay() {
+        val view = binding.textFps
+        view.setTextColor(android.graphics.Color.TRANSPARENT)
+        view.post {
+            val text = view.text?.toString()
+            val shown = view.isVisible && !text.isNullOrEmpty()
+            mainScreenRenderer.setOverlayText(
+                if (shown) text else null,
+                view.x + view.paddingLeft,
+                view.y + view.paddingTop,
+                view.textSize,
+            )
+        }
     }
 
     private fun setupFpsCounter() {

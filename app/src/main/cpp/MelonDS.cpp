@@ -419,6 +419,9 @@ namespace MelonDSAndroid
         for (int f = 0; s.running; f++)
         {
             NetplayFrameInput in = r->script.empty() ? s.input->Get(r->player, f) : netplayScriptAt(r->script, f);
+            // a dropped player's Get() returns at once: keep its console paced with ours
+            while (s.running && s.input->Dropped(r->player) && f > __atomic_load_n(&s.frame, __ATOMIC_RELAXED))
+                usleep(2000);
             if (!s.running) break;
             netplayRecord(s, r->player, f, in);
             netplayApply(*r->console, in);

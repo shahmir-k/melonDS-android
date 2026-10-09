@@ -175,6 +175,8 @@ object MelonEmulator {
 
     external fun recordMode(): Int     // 0 none, 1 recording, 2 replaying
 
+    external fun recordMark(): Int     // flag this moment for investigation; the frame, -1 when not recording
+
     external fun takeScreenshot(): Boolean
 
     external fun setFastForwardEnabled(enabled: Boolean)

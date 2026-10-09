@@ -983,6 +983,12 @@ Java_me_magnum_melonds_MelonEmulator_recordQueue(JNIEnv* env, jobject thiz, jstr
 }
 
 JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_recordMark(JNIEnv* env, jobject thiz)
+{
+    return MelonDSAndroid::recordMark();
+}
+
+JNIEXPORT jint JNICALL
 Java_me_magnum_melonds_MelonEmulator_recordMode(JNIEnv* env, jobject thiz)
 {
     return MelonDSAndroid::recordMode();

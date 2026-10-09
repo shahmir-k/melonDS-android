@@ -161,6 +161,7 @@
     <string name="record_saved">Recording saved: %1$s</string>
     <string name="record_none">No recordings yet</string>
     <string name="record_share">Share a recording</string>
+    <string name="record_marked">Marked %1$d:%2$02d</string>
     <string name="record_sharing">Packing the recording…</string>
     <string name="save_slot">Save slot</string>
     <string name="empty_slot">%1$s. &lt;Empty&gt;</string>

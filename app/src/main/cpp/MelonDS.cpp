@@ -42,9 +42,11 @@
 #include <sched.h>
 #include <zlib.h>
 #include <thread>
+#include <atomic>
 
 extern bool isFastForwardEnabled;   // MelonDSAndroidJNI.cpp (record mode logs it per frame)
 #include <thread>
+#include <atomic>
 #include <map>
 #include <mutex>
 #include "xxhash/xxhash.h"
@@ -291,6 +293,7 @@ namespace MelonDSAndroid
         FILE* inputs = nullptr;
         FILE* log = nullptr;
         FILE* parts = nullptr;                      // debug.litev.rechash=1: per-frame part hashes
+        FILE* marks = nullptr;                      // marks.txt: frames the player flagged (L2)
         NetplayFrameInput last;
         std::map<int, NetplayFrameInput> script;    // replay
         std::map<int, u64> hashes;                  // replay: the recording's
@@ -302,6 +305,17 @@ namespace MelonDSAndroid
     static std::mutex recordLock;                   // the request and the status text
     static std::string recordRequest;               // "record DIR", "replay DIR" or "stop"
     static std::string recordResult;                // last finished replay, for the status line
+    int recordMode();
+    static std::atomic<int> recordMarks {0};        // L2 presses not yet written (UI thread -> emu thread)
+
+    // the player flags this moment as worth investigating; lands on the next recorded frame
+    int recordMark()
+    {
+        if (recordMode() != 1) return -1;
+        recordMarks++;
+        std::lock_guard<std::mutex> l(recordLock);
+        return recording ? recording->frame : -1;
+    }
 
     bool recordRtc(int* out)
     {
@@ -363,6 +377,7 @@ namespace MelonDSAndroid
         }
         if (r.inputs) fclose(r.inputs);
         if (r.log) fclose(r.log);
+        if (r.marks) fclose(r.marks);
         if (r.parts) fclose(r.parts);
         Platform::Log(Platform::LogLevel::Info, "Record: %s %s, %d frames\n", r.replay ? "replay" : "recording", r.dir.c_str(), r.frame);
         instance->setInputDeferred(false);
@@ -501,6 +516,7 @@ namespace MelonDSAndroid
                 fclose(f);
             }
             rec.inputs = fopen((dir + "/inputs.txt").c_str(), "w");
+            recordMarks = 0;
         }
         char name[64];
         snprintf(name, sizeof(name), rec.replay ? "/replay-%ld.csv" : "/frames.csv", (long) time(nullptr));
@@ -588,6 +604,12 @@ namespace MelonDSAndroid
                 r.firstDiff = r.frame;
                 Platform::Log(Platform::LogLevel::Error, "Record: replay differs from the recording at frame %d\n", r.frame);
             }
+        }
+        for (int m = recordMarks.exchange(0); m > 0 && !r.replay; m--)
+        {
+            if (!r.marks && (r.marks = fopen((r.dir + "/marks.txt").c_str(), "w")))
+                fprintf(r.marks, "# frame  seconds  (player pressed L2: investigate here)\n");
+            if (r.marks) { fprintf(r.marks, "%d %.2f\n", r.frame, r.frame / 60.0); fflush(r.marks); }
         }
         r.frame++;
         if (r.frame % 60 == 0)

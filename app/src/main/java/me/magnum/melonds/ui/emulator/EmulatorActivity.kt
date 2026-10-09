@@ -1055,6 +1055,14 @@ class EmulatorActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Recording: L2 (no DS button) marks "investigate here" in marks.txt
+        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2 && MelonEmulator.recordMode() == 1 && !activeOverlays.hasActiveOverlays()) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val frame = MelonEmulator.recordMark()
+                if (frame >= 0) Toast.makeText(this, getString(R.string.record_marked, frame / 3600, frame / 60 % 60), Toast.LENGTH_SHORT).show()
+            }
+            return true
+        }
         if (!activeOverlays.hasActiveOverlays() && nativeInputListener.onKeyEvent(event))
             return true
 

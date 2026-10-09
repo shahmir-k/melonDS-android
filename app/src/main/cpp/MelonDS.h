@@ -50,6 +50,7 @@ namespace MelonDSAndroid {
     // Record mode (single player): "record DIR", "replay DIR" or "stop", run at the next frame
     extern void recordQueue(std::string request);
     extern int recordMode();            // 0 none, 1 recording, 2 replaying
+    extern int recordMark();            // flag this moment (L2); the frame, or -1 when not recording
     extern bool recordRtc(int* out);    // the recording's clock (6 ints), while one is active
     extern bool recordVideoTarget(const Frame* frame, std::string& dir, int& recFrame);
     extern void setConfiguration(EmulatorConfiguration emulatorConfiguration);

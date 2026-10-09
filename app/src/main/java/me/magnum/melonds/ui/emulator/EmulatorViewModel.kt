@@ -532,7 +532,7 @@ class EmulatorViewModel @Inject constructor(
                             _uiEvent.tryEmit(EmulatorUiEvent.ShowRomSaveStates(saveStateSlots, EmulatorUiEvent.ShowRomSaveStates.Reason.LOADING))
                         }
                     }
-                    RomPauseMenuOption.RECORD, RomPauseMenuOption.REPLAY -> Unit   // EmulatorActivity (needs the files dir)
+                    RomPauseMenuOption.RECORD, RomPauseMenuOption.REPLAY, RomPauseMenuOption.SHARE_RECORDING -> Unit   // EmulatorActivity (needs the files dir)
                     RomPauseMenuOption.REWIND -> {
                         sessionCoroutineScope.launch {
                             val rewindWindow = emulatorManager.getRewindWindow()

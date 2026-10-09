@@ -120,6 +120,9 @@ import me.magnum.melonds.ui.layouteditor.model.LayoutTarget
 import me.magnum.melonds.ui.settings.SettingsActivity
 import me.magnum.melonds.ui.theme.MelonTheme
 import java.text.SimpleDateFormat
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
+import androidx.core.content.FileProvider
 import me.magnum.melonds.ui.emulator.rom.RomPauseMenuOption
 import java.util.Locale
 import java.util.Date
@@ -964,7 +967,8 @@ class EmulatorActivity : AppCompatActivity() {
                 .setItems(options) { _, which ->
                     when (val selectedOption = pauseMenu.options[which]) {
                         RomPauseMenuOption.RECORD -> toggleRecording()
-                        RomPauseMenuOption.REPLAY -> showRecordings()
+                        RomPauseMenuOption.REPLAY -> showRecordings(R.string.record_replay, ::replayRecording)
+                        RomPauseMenuOption.SHARE_RECORDING -> showRecordings(R.string.record_share, ::shareRecording)
                         else -> viewModel.onPauseMenuOptionSelected(selectedOption)
                     }
                 }
@@ -993,7 +997,7 @@ class EmulatorActivity : AppCompatActivity() {
         viewModel.resumeEmulator()
     }
 
-    private fun showRecordings() {
+    private fun showRecordings(title: Int, onPick: (File) -> Unit) {
         val recordings = recordingsDir().listFiles { f -> File(f, "start.mln").exists() || File(f, "start.mln.gz").exists() }?.sortedByDescending { it.name }.orEmpty()
         if (recordings.isEmpty()) {
             Toast.makeText(this, R.string.record_none, Toast.LENGTH_SHORT).show()
@@ -1001,13 +1005,45 @@ class EmulatorActivity : AppCompatActivity() {
             return
         }
         AlertDialog.Builder(this)
-            .setTitle(R.string.record_replay)
-            .setItems(recordings.map { it.name }.toTypedArray()) { _, which ->
-                MelonEmulator.recordQueue("replay ${recordings[which].absolutePath}")
-                viewModel.resumeEmulator()
-            }
+            .setTitle(title)
+            .setItems(recordings.map { it.name }.toTypedArray()) { _, which -> onPick(recordings[which]) }
             .setOnCancelListener { viewModel.resumeEmulator() }
             .show()
+    }
+
+    private fun replayRecording(dir: File) {
+        MelonEmulator.recordQueue("replay ${dir.absolutePath}")
+        viewModel.resumeEmulator()
+    }
+
+    // Zips the recording (the unpacked start state is left out when its .gz is there) into the
+    // cache and opens the share sheet, so a player can send it with any app.
+    private fun shareRecording(dir: File) {
+        Toast.makeText(this, R.string.record_sharing, Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val zip = withContext(Dispatchers.IO) {
+                val out = File(cacheDir, "shared").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+                    .let { File(it, "SereneDS-recording-${dir.name}.zip") }
+                ZipOutputStream(out.outputStream().buffered()).use { zip ->
+                    zip.setLevel(1)
+                    dir.listFiles()?.filter { !(it.name == "start.mln" && File(dir, "start.mln.gz").exists()) && !it.name.endsWith(".part") }
+                        ?.forEach { f ->
+                            zip.putNextEntry(ZipEntry("${dir.name}/${f.name}"))
+                            f.inputStream().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                        }
+                }
+                out
+            }
+            val uri = FileProvider.getUriForFile(this@EmulatorActivity, "$packageName.recordings", zip)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "SereneDS recording ${dir.name}")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, getString(R.string.record_share)))
+        }
     }
 
     private fun disableScreenTimeOut() {

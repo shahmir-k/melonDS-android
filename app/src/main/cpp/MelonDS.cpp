@@ -273,13 +273,15 @@ namespace MelonDSAndroid
 #endif
     }
 
-    static void netplaySetClock(int player, std::function<u64()> clock)
+    static void netplaySetClock(int player, NDS* nds)
     {
+        std::function<u64()> clock = [nds] { return nds->GetSysTimestamp(); };
 #ifdef LITEV_HOSTED_NETPLAY
-        if (netplay->record) { netplay->record->SetClock(player, std::move(clock)); return; }
+        if (netplay->record) { netplay->record->SetClock(player, std::move(clock)); netplay->record->Link().SetWake(player, *nds); return; }
         if (netplay->replay) { netplay->replay->SetClock(std::move(clock)); return; }
 #endif
         ((LockstepMP&) MPInterface::Get()).SetClock(player, std::move(clock));
+        ((LockstepMP&) MPInterface::Get()).SetWake(player, *nds);
     }
 
     // ends every wait on the link
@@ -532,7 +534,7 @@ namespace MelonDSAndroid
             // said who they are
             instance->setInputDeferred(true);
             NDS* local = instance->getNds();
-            netplaySetClock(netplay->player, [local] { return local->GetSysTimestamp(); });
+            netplaySetClock(netplay->player, local);
         }
     }
 
@@ -556,7 +558,7 @@ namespace MelonDSAndroid
         nds->GPU.Headless = true;   // its screens are not shown
         nds->SPU.Silent = true;     // nor its sound heard
         nds->GPU.GPU3D.Headless = true;
-        netplaySetClock(player, [nds] { return nds->GetSysTimestamp(); });
+        netplaySetClock(player, nds);
         netplayLoadScript("debug.litev.npscript2", r->script, player);
         bool ok = r->console->loadRom(romPath, netplaySavePath(player, save, tag));
         netplay->remotes.push_back(std::move(r));   // even on failure: netplayStop stops it

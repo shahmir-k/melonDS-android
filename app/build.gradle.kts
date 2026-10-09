@@ -152,6 +152,9 @@ android {
                     // MP host collects replies at the first reply slot (fewer hand-offs per CMD).
                     "-DLITEV_MP_HOSTDELAY=OFF",
                     "-DLITEV_MP_REPLY_DEFER=ON",
+                    // LockstepMP: a client's no-op host-frame poll skips the link lock; a console
+                    // waiting on a peer's clock is woken by that peer (its own condvar)
+                    "-DLITEV_MP_FASTPOLL=ON", "-DLITEV_MP_CLOCKWAKE=ON",
                     // JIT: ARM7 slow memory helpers take the CPU, not thread_local NDS::Current.
                     "-DLITEV_JIT_ARM7_CPUARG=ON",
                     // 2D hybrid composite uses the NEON line compositor (needs SOFT2D_NEON).

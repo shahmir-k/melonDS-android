@@ -27,7 +27,7 @@ struct Encoder
     int fd = -1;
     ssize_t track = -1;
     int firstFrame = 0, lastFrame = -1;
-    std::string dir;
+    std::string dir, prefix;
 };
 
 static Encoder enc;
@@ -124,13 +124,14 @@ static bool setupGl()
     return true;
 }
 
-static bool start(const std::string& dir, int firstFrame, int fps)
+static bool start(const std::string& dir, const std::string& prefix, int firstFrame, int fps)
 {
     if (!__builtin_available(android 26, *)) return false;
-    std::string path = dir + "/video-" + std::to_string(firstFrame) + ".mp4";
+    std::string path = dir + "/" + prefix + std::to_string(firstFrame) + ".mp4";
     enc.fd = open(path.c_str(), O_CREAT | O_TRUNC | O_RDWR, 0644);
     if (enc.fd < 0) return false;
     enc.dir = dir;
+    enc.prefix = prefix;
     enc.firstFrame = firstFrame;
     enc.muxer = AMediaMuxer_new(enc.fd, AMEDIAMUXER_OUTPUT_FORMAT_MPEG_4);
     enc.codec = AMediaCodec_createEncoderByType("video/avc");
@@ -171,13 +172,13 @@ static bool start(const std::string& dir, int firstFrame, int fps)
     return ok;
 }
 
-void Present(const Frame* frame, int recFrame, const std::string& dir, int fps)
+void Present(const Frame* frame, int recFrame, const std::string& dir, const std::string& prefix, int fps)
 {
     if (unavailable || !frame) return;
-    if (enc.codec && (dir != enc.dir || recFrame < enc.lastFrame || recFrame - enc.firstFrame >= kSegmentFrames))
+    if (enc.codec && (dir != enc.dir || prefix != enc.prefix || recFrame < enc.lastFrame || recFrame - enc.firstFrame >= kSegmentFrames))
         Stop();
     if (enc.codec && recFrame - enc.lastFrame < 60 / fps) return;   // e.g. 30 fps: every other frame
-    if (!enc.codec && !(setupGl() && start(dir, recFrame, fps)))
+    if (!enc.codec && !(setupGl() && start(dir, prefix, recFrame, fps)))
     {
         unavailable = true;
         return;
@@ -197,6 +198,16 @@ void Present(const Frame* frame, int recFrame, const std::string& dir, int fps)
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, viewport);
 
+    // the screen renderer's state is not ours: set every switch the draw depends on
+    const GLenum caps[] = { GL_SCISSOR_TEST, GL_BLEND, GL_DEPTH_TEST, GL_STENCIL_TEST, GL_CULL_FACE, GL_DITHER };
+    GLboolean capOn[6];
+    for (int i = 0; i < 6; i++) { capOn[i] = glIsEnabled(caps[i]); glDisable(caps[i]); }
+    GLboolean colorMask[4];
+    glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    GLint prevReadFbo;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+
     eglMakeCurrent(display, enc.surface, enc.surface, context);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, kWidth, kHeight);
@@ -215,8 +226,11 @@ void Present(const Frame* frame, int recFrame, const std::string& dir, int fps)
     glActiveTexture(prevActive);
     glBindVertexArray(prevVao);
     glUseProgram(prevProgram);
-    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevFbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFbo);
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    glColorMask(colorMask[0], colorMask[1], colorMask[2], colorMask[3]);
+    for (int i = 0; i < 6; i++) if (capOn[i]) glEnable(caps[i]);
     drain(false);
 }
 

@@ -338,11 +338,12 @@ namespace MelonDSAndroid
     }
 
     // present thread: the recording a presented frame belongs to (footage of recordings only)
-    bool recordVideoTarget(const Frame* frame, std::string& dir, int& recFrame)
+    bool recordVideoTarget(const Frame* frame, std::string& dir, std::string& prefix, int& recFrame)
     {
         std::lock_guard<std::mutex> l(recordLock);
-        if (!recording || recording->replay || !frame || frame->emuFrame < recording->startEmuFrame) return false;
+        if (!recording || !frame || frame->emuFrame < recording->startEmuFrame) return false;
         dir = recording->dir;
+        prefix = recording->replay ? "replay-video-" : "video-";
         recFrame = frame->emuFrame - recording->startEmuFrame;
         return true;
     }

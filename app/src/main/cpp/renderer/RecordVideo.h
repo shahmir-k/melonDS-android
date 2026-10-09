@@ -11,7 +11,8 @@
 namespace RecordVideo
 {
     // `frame` was just presented; it is recording frame `recFrame` of the recording in `dir`
-    void Present(const Frame* frame, int recFrame, const std::string& dir, int fps);
+    // prefix: "video-" for a recording, "replay-video-" for a replay of one
+    void Present(const Frame* frame, int recFrame, const std::string& dir, const std::string& prefix, int fps);
     // no recording: finish the open file, if any
     void Stop();
 }

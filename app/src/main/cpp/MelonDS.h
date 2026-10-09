@@ -52,7 +52,7 @@ namespace MelonDSAndroid {
     extern int recordMode();            // 0 none, 1 recording, 2 replaying
     extern int recordMark();            // flag this moment (L2); the frame, or -1 when not recording
     extern bool recordRtc(int* out);    // the recording's clock (6 ints), while one is active
-    extern bool recordVideoTarget(const Frame* frame, std::string& dir, int& recFrame);
+    extern bool recordVideoTarget(const Frame* frame, std::string& dir, std::string& prefix, int& recFrame);
     extern void setConfiguration(EmulatorConfiguration emulatorConfiguration);
     extern void setup(AndroidCameraHandler* androidCameraHandler, std::shared_ptr<MelonEventMessenger> androidEventMessenger, u32* screenshotBufferPointer, int instanceId);
     extern void setCodeList(std::list<Cheat> cheats);

@@ -382,10 +382,10 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
         env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, true, (jint) presentationFrame->frameTexture);
         // record mode footage, on this thread's GL context (the hardware encoder does the rest)
         {
-            std::string dir;
+            std::string dir, prefix;
             int recFrame;
-            if (isNew && MelonDSAndroid::recordVideoTarget(presentationFrame, dir, recFrame))
-                RecordVideo::Present(presentationFrame, recFrame, dir, 15);
+            if (isNew && MelonDSAndroid::recordVideoTarget(presentationFrame, dir, prefix, recFrame))
+                RecordVideo::Present(presentationFrame, recFrame, dir, prefix, 15);
             else if (!isNew) {}
             else
                 RecordVideo::Stop();

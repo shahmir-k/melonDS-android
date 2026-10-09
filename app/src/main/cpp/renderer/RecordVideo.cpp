@@ -10,12 +10,16 @@
 #include <media/NdkMediaFormat.h>
 #include <media/NdkMediaMuxer.h>
 #include "../MelonLog.h"
+#include <algorithm>
+#include <sys/system_properties.h>
 
 namespace RecordVideo
 {
 
-static constexpr int kWidth = 256, kHeight = 384;
-static constexpr int kBitrate = 200000;            // ~1.5 MB a minute
+// Normal footage: 256x384, 200 kbps (~1.5 MB a minute). Diagnosis (frame-by-frame comparisons):
+// debug.litev.recfps=60 (every frame), debug.litev.recscale=1..3, debug.litev.recbitrate=<bps>.
+static int kWidth = 256, kHeight = 384;
+static int kBitrate = 200000;
 static constexpr int kSegmentFrames = 3600;        // one file a minute
 
 struct Encoder
@@ -124,8 +128,17 @@ static bool setupGl()
     return true;
 }
 
+static int prop(const char* name, int def)
+{
+    char b[PROP_VALUE_MAX] = {0};
+    return __system_property_get(name, b) > 0 && b[0] ? atoi(b) : def;
+}
+
 static bool start(const std::string& dir, const std::string& prefix, int firstFrame, int fps)
 {
+    const int scale = std::clamp(prop("debug.litev.recscale", 1), 1, 3);
+    kWidth = 256 * scale; kHeight = 384 * scale;
+    kBitrate = prop("debug.litev.recbitrate", 200000 * scale * scale);
     if (!__builtin_available(android 26, *)) return false;
     std::string path = dir + "/" + prefix + std::to_string(firstFrame) + ".mp4";
     enc.fd = open(path.c_str(), O_CREAT | O_TRUNC | O_RDWR, 0644);
@@ -175,6 +188,8 @@ static bool start(const std::string& dir, const std::string& prefix, int firstFr
 void Present(const Frame* frame, int recFrame, const std::string& dir, const std::string& prefix, int fps)
 {
     if (unavailable || !frame) return;
+    static const int fpsOverride = prop("debug.litev.recfps", 0);
+    if (fpsOverride > 0) fps = std::clamp(fpsOverride, 1, 60);
     if (enc.codec && (dir != enc.dir || prefix != enc.prefix || recFrame < enc.lastFrame || recFrame - enc.firstFrame >= kSegmentFrames))
         Stop();
     if (enc.codec && recFrame - enc.lastFrame < 60 / fps) return;   // e.g. 30 fps: every other frame
@@ -213,6 +228,7 @@ void Present(const Frame* frame, int recFrame, const std::string& dir, const std
     glViewport(0, 0, kWidth, kHeight);
     glUseProgram(program);
     glUniform2f(uScale, 256.0f, frame->height * 256.0f / frame->width);
+    glViewport(0, 0, kWidth, kHeight);
     glBindVertexArray(vao);
     glBindTexture(GL_TEXTURE_2D, frame->frameTexture);
     glBindSampler(0, sampler);

@@ -439,7 +439,7 @@ class EmulatorViewModel @Inject constructor(
     }
 
     /**
-     * Runs a group command (the host's own, or one it sent): every device of the group does the same.
+     * Runs a group command (the leader's own, or one it sent): every device of the group does the same.
      * [request] = (server << 16) | (mode << 8) | players; mode 0 Netplay, 1 Hosted (server = the
      * lobby id that runs every console), 2 LAN (the group becomes the game's LAN session), 3 end
      * the session (back to normal play, still grouped).
@@ -447,11 +447,11 @@ class EmulatorViewModel @Inject constructor(
     fun runGroupCommand(request: Int, romCacheDir: String) {
         val mode = (request shr 8) and 0xFF
         val server = request shr 16
+        MultiplayerGroup.server = server    // the group's leader from now on
         viewModelScope.launch {
             when (mode) {
                 0, 1 -> {
                     val seat = groupSeat(groupRows(), server) ?: return@launch
-                    MultiplayerGroup.server = server
                     startNetplay(seat.player, seat.players, seat.host, mode == 1, romCacheDir)
                 }
                 else -> {

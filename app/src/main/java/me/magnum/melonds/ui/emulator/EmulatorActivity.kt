@@ -432,7 +432,7 @@ class EmulatorActivity : AppCompatActivity() {
                 while (true) {
                     val request = withContext(Dispatchers.IO) { MelonEmulator.groupTake() }
                     if (request >= 0) runGroupCommand(request)
-                    delay(200)
+                    delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
                 }
             }
         }

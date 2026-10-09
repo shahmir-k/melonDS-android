@@ -69,7 +69,10 @@ private fun parsePlayers(rows: Array<String>) = rows.mapNotNull { row ->
     }
 }
 
-/** The group's current Hosted server (lobby id), as the last group command set it. */
+/**
+ * The group's leader (lobby id), as the last group command set it: the session's player 0 (a
+ * Hosted session's server), who sends the group's commands. "Make <player> the host" hands it over.
+ */
 object MultiplayerGroup {
     var server = 0
 }
@@ -398,14 +401,14 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
         onGroupCommand((srv shl 16) or (mode shl 8) or list.size)
     }
 
-    // Group host: send a command to everyone and run it here too
+    // Group leader: send a command to everyone and run it here too
     fun hostCommand(cmdMode: Int, srv: Int) {
         val n = group.count { it.live() }
         MelonEmulator.groupSend(cmdMode, n, srv)
         onGroupCommand((srv shl 16) or (cmdMode shl 8) or n)
     }
 
-    val leader = group.firstOrNull { it.status == PLAYER_HOST }
+    val leader = group.firstOrNull { it.id == MultiplayerGroup.server && it.live() }
     val inGroup = group.any { it.isLocal }
     val isLeader = leader?.isLocal == true
 
@@ -444,7 +447,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                     Text(stringResource(R.string.multiplayer_session_section), style = MaterialTheme.typography.subtitle2)
                                     listOf(Goal.NETPLAY to 0, Goal.HOSTED to 1, Goal.LAN to 2).filter { it.first != active }.forEach { (g, m) ->
                                         OptionRow(stringResource(R.string.multiplayer_switch_to, stringResource(modeName(g))), stringResource(R.string.multiplayer_switch_to_hint), idle) {
-                                            hostCommand(m, 0)
+                                            hostCommand(m, MultiplayerGroup.server)
                                         }
                                     }
                                     if (active == Goal.HOSTED) group.filter { it.live() && it.id != MultiplayerGroup.server }.forEach { p ->
@@ -554,7 +557,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                         }
                         Screen.MENU -> if (inGroup) {
                             if (isLeader && active != null) {
-                                DialogButton(stringResource(R.string.multiplayer_end_session), enabled = idle) { hostCommand(3, 0) }
+                                DialogButton(stringResource(R.string.multiplayer_end_session), enabled = idle) { hostCommand(3, MultiplayerGroup.server) }
                             }
                             DialogButton(stringResource(R.string.multiplayer_leave_group), enabled = idle) { open(Screen.LEAVE_GROUP) }
                         } else if (active != null) {

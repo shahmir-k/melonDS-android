@@ -60,6 +60,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import me.magnum.melonds.MelonEmulator
+import me.magnum.melonds.ui.emulator.multiplayer.MultiplayerGroup
+import me.magnum.melonds.ui.emulator.multiplayer.groupRows
+import me.magnum.melonds.ui.emulator.multiplayer.live
 import me.magnum.melonds.R
 import me.magnum.melonds.common.PermissionHandler
 import me.magnum.melonds.databinding.ActivityEmulatorBinding
@@ -435,8 +438,9 @@ class EmulatorActivity : AppCompatActivity() {
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
-                    val request = withContext(Dispatchers.IO) { MelonEmulator.groupTake() }
+                    val (request, left) = withContext(Dispatchers.IO) { MelonEmulator.groupTake() to MelonEmulator.groupLeft() }
                     if (request >= 0) runGroupCommand(request)
+                    left.forEach(::groupPlayerLeft)
                     delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
                 }
             }
@@ -736,6 +740,34 @@ class EmulatorActivity : AppCompatActivity() {
             showMultiplayerDialog.value = false
         }
         viewModel.runGroupCommand(request, NetplayRomCache.dir(this).path)
+    }
+
+    /**
+     * A player's group link closed (Leave group, or its device dropped: ~3 s timeout). Plain Netplay
+     * runs every player's console on every device, so the others would wait for its input forever:
+     * the leader restarts the session without it (a fresh session: deterministic), or ends it when
+     * only the leader remains. The leader leaving, or the lobby host (the group's hub), ends the
+     * session everywhere; the lobby host, if still here, leads the group from then on.
+     */
+    private fun groupPlayerLeft(row: String) {
+        val id = row.substringBefore('\t').toIntOrNull() ?: return
+        val name = row.substringAfter('\t')
+        if (MelonEmulator.netplayKind() != 1) return
+        val leader = MultiplayerGroup.server
+        val message = if (id == leader || id == 0) {
+            runGroupCommand(3 shl 8)    // end the session here (server 0: the lobby host leads)
+            getString(R.string.multiplayer_group_host_left)
+        } else {
+            val rows = groupRows()
+            val n = rows.count { it.live() && it.id != id }
+            if (rows.firstOrNull { it.isLocal }?.id == leader) {
+                val mode = if (n > 1) 0 else 3
+                MelonEmulator.groupSend(mode, n, leader)
+                runGroupCommand((leader shl 16) or (mode shl 8) or n)
+            }
+            if (n > 1) getString(R.string.multiplayer_player_left_restart, name, n) else getString(R.string.multiplayer_player_left_end, name)
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     override fun onNewIntent(intent: Intent) {

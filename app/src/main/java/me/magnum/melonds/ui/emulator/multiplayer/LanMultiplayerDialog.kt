@@ -82,7 +82,7 @@ data class Seat(val player: Int, val players: Int, val host: String)
 /** The group's players (empty when not in a group): the lobby kept connected through a session. */
 fun groupRows() = parsePlayers(MelonEmulator.groupPlayers())
 
-private fun LanPlayer.live() = status == PLAYER_HOST || status == PLAYER_CLIENT
+fun LanPlayer.live() = status == PLAYER_HOST || status == PLAYER_CLIENT
 
 /**
  * This device's seat in a session of the group's connected players: the server (lobby id) is

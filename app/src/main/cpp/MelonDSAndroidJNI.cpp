@@ -802,6 +802,7 @@ static std::vector<std::string> lanPlayerRows(melonDS::LAN& l)
 // follows. Pumped by the app (groupTake) from its own thread, so it has its own lock.
 static std::unique_ptr<melonDS::MPInterface> groupLink;
 static std::mutex groupMutex;
+static std::vector<std::string> groupLeftRows;   // "id \t name" of players whose link closed (groupLeft)
 #define grp() ((melonDS::LAN&) *groupLink)
 
 extern "C"
@@ -1023,6 +1024,7 @@ Java_me_magnum_melonds_MelonEmulator_lanToGroup(JNIEnv* env, jobject thiz)
     {
         std::lock_guard<std::mutex> lk(groupMutex);
         groupLink = melonDS::MPInterface::Take();
+        grp().SetPeerTimeout(3000);     // a dropped device is noticed in ~3 s, like Hosted
         lanMode = LanNone;
     }
     pthread_mutex_unlock(&emuThreadMutex);
@@ -1067,6 +1069,8 @@ Java_me_magnum_melonds_MelonEmulator_groupTake(JNIEnv* env, jobject thiz)
     if (!groupLink)
         return -1;
     grp().Process();
+    for (const auto& p : grp().TakeLeft())
+        groupLeftRows.push_back(std::to_string(p.ID) + "\t" + std::string(p.Name));
     bool lostHost = false;
     for (const auto& p : grp().GetPlayerList())
         if (p.ID == 0 && !p.IsLocalPlayer && p.Status == melonDS::LAN::Player_Disconnected) lostHost = true;
@@ -1077,6 +1081,16 @@ Java_me_magnum_melonds_MelonEmulator_groupTake(JNIEnv* env, jobject thiz)
         groupLink = nullptr;
     }
     return r;
+}
+
+// The players who left the group (lobby link closed or timed out) since the last call: "id \t name"
+JNIEXPORT jobjectArray JNICALL
+Java_me_magnum_melonds_MelonEmulator_groupLeft(JNIEnv* env, jobject thiz)
+{
+    std::lock_guard<std::mutex> lk(groupMutex);
+    std::vector<std::string> rows;
+    rows.swap(groupLeftRows);
+    return lanStringArray(env, rows);
 }
 
 // Host: sends a group command to every client

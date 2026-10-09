@@ -113,6 +113,7 @@ object MelonEmulator {
     external fun groupToLan(): Boolean
     external fun groupPlayers(): Array<String>
     external fun groupTake(): Int
+    external fun groupLeft(): Array<String>     // players whose group link closed: "id \t name"
     external fun groupSend(mode: Int, players: Int, server: Int)
     external fun groupLeave()
     external fun lanStartSession(hosted: Boolean, players: Int, server: Int)

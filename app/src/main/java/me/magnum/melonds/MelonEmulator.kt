@@ -105,6 +105,8 @@ object MelonEmulator {
     external fun lanGetPlayers(): Array<String>
     external fun lanTick()
     external fun lanLeave()
+    external fun lanStartSession(hosted: Boolean, players: Int)
+    external fun lanGetStartRequest(): Int
     // The next game started runs in Netplay (every player's console on every device) as `player`
     // (the LAN lobby id, 0 = host) of `players`; guests pass the host's IP as `host`, the host "".
     // hosted: Hosted Netplay (the host runs every console, each guest only its own)

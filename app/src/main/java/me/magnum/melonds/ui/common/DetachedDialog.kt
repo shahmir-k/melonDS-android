@@ -60,7 +60,7 @@ fun DetachedDialog(
             setContent(parentComposition) {
                 currentContent()
             }
-            setOnDismissListener(dismiss)
+            setOnDismissListener { dismiss() }  // the latest onDismissRequest, not the first
         }
     }
 

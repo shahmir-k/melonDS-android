@@ -898,6 +898,31 @@ Java_me_magnum_melonds_MelonEmulator_lanGetPlayers(JNIEnv* env, jobject thiz)
     return lanStringArray(env, rows);
 }
 
+// Netplay start over the lobby. Host: sends it to every client. Client: -1 until the host's
+// start arrives, then (hosted << 8) | players.
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanStartSession(JNIEnv* env, jobject thiz, jboolean hosted, jint players)
+{
+    if (!lanLockParked())
+        return;
+    if (lanMode == LanHosting)
+        lan().HostStartSession(hosted ? 1 : 0, (u8) players);
+    pthread_mutex_unlock(&emuThreadMutex);
+}
+
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanGetStartRequest(JNIEnv* env, jobject thiz)
+{
+    int r = -1;
+    if (lanLockParked())
+    {
+        if (lanMode == LanJoined)
+            r = lan().GetStartRequest();
+        pthread_mutex_unlock(&emuThreadMutex);
+    }
+    return r;
+}
+
 // Pumps discovery beacons and ENet events while the lobby holds the game paused.
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanTick(JNIEnv* env, jobject thiz)

@@ -665,11 +665,11 @@
     <string name="multiplayer_option_usb_hint">Cable between two devices. Coming soon.</string>
     <string name="multiplayer_usb_unavailable">USB link play is not available in this build yet. Use Netplay or LAN for now.</string>
     <string name="multiplayer_option_netplay">Netplay</string>
-    <string name="multiplayer_option_netplay_hint">Smoothest play: each device runs every player\'s console and only button presses cross the network. Best for 2–3 players (each device needs CPU for all of them).</string>
+    <string name="multiplayer_option_netplay_hint">Every device runs every console. Smoothest, best for 2–3 players.</string>
+    <string name="multiplayer_option_hosted">Hosted Netplay</string>
+    <string name="multiplayer_option_hosted_hint">The host runs every console. Best when the host is the strongest device.</string>
     <string name="multiplayer_option_lan">LAN</string>
-    <string name="multiplayer_option_lan_hint">Each device runs its own console and they exchange the DS wireless traffic. Up to 16 players.</string>
-    <string name="multiplayer_netplay_title">Netplay</string>
-    <string name="multiplayer_netplay_connect_hint">First connect the two devices: one hosts, the other joins. Then press Start Netplay on both.</string>
+    <string name="multiplayer_option_lan_hint">The game\'s own wireless over the network. Up to 16 players.</string>
     <string name="multiplayer_option_hotspot">Hotspot (Recommended)</string>
     <string name="multiplayer_option_hotspot_hint">One device creates a game network and the others join it directly: lowest lag, no router needed.</string>
     <string name="multiplayer_option_wifi">Wi-Fi</string>
@@ -696,6 +696,8 @@
     <string name="multiplayer_connect">Connect</string>
     <string name="multiplayer_back">Back</string>
     <string name="multiplayer_leave">Leave session</string>
+    <string name="multiplayer_cancel_lobby">Cancel lobby</string>
+    <string name="multiplayer_host_left">The host closed the lobby.</string>
     <string name="multiplayer_resume">Resume game</string>
     <string name="multiplayer_hosting">Hosting. Waiting for players to join.</string>
     <string name="multiplayer_session_waiting">Waiting for players</string>
@@ -706,7 +708,9 @@
     <string name="multiplayer_player_lost">Connection lost</string>
     <string name="multiplayer_player_you">You</string>
     <string name="multiplayer_same_version_hint">All players must be on the same Wi-Fi network and run the same SereneDS version.</string>
-    <string name="multiplayer_lobby_hint">Resume the game and use its wireless mode to connect. Smoother: Start Netplay (every device runs every console) or Start Hosted (the host runs every console, each guest only its own).</string>
-    <string name="multiplayer_start_netplay">Start Netplay</string>
-    <string name="multiplayer_start_hosted">Start Hosted</string>
+    <string name="multiplayer_lobby_hint">Resume the game and use its wireless mode.</string>
+    <string name="multiplayer_start">Start</string>
+    <string name="multiplayer_starting_netplay">Starting…</string>
+    <string name="multiplayer_netplay_host_hint">Press Start when everyone has joined.</string>
+    <string name="multiplayer_netplay_guest_hint">Waiting for the host to press Start…</string>
 </resources>

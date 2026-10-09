@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.R
 import me.magnum.melonds.ui.common.component.dialog.BaseDialog
@@ -54,6 +55,7 @@ private const val MODE_JOINED = 3
 private const val PLAYER_CLIENT = 1
 private const val PLAYER_HOST = 2
 private const val PLAYER_CONNECTING = 3
+private const val PLAYER_HOST_LOST = 4 // Player_Disconnected
 
 data class LanSession(val address: String, val name: String, val players: Int, val maxPlayers: Int, val playing: Boolean)
 data class LanPlayer(val id: Int, val maxPlayers: Int, val name: String, val status: Int, val ping: Int, val isLocal: Boolean, val address: String)
@@ -71,25 +73,30 @@ private fun parsePlayers(rows: Array<String>) = rows.mapNotNull { row ->
 // Screens before a LAN session exists; once hosting/joined the lobby replaces them
 private enum class Screen { MENU, USB, LAN, HOTSPOT, HOST_HOTSPOT, WIFI }
 
+// What the lobby is for. Netplay / Hosted: the lobby only finds the players; the host's Start
+// sends every guest into the session. LAN: the game's own wireless runs over the lobby.
+private enum class Goal { NETPLAY, HOSTED, LAN }
+
 /**
- * Multiplayer dialog, opened from the pause menu: USB | Netplay | LAN, LAN = Hotspot | Wi-Fi.
- * Hotspot: one device creates a game network ([DirectLink]) and the others join it, then join the
- * LAN session by the host's address (session discovery does not cross these networks). Wi-Fi: the
- * LAN session over the current network, with discovery. Netplay starts from a connected 2-player
- * LAN session (Start Netplay on both devices), so the Netplay entry runs the same connect flow and
- * only changes the hints.
+ * Multiplayer dialog, opened from the pause menu: Netplay | Hosted Netplay | LAN | USB, then
+ * Hotspot | Wi-Fi, then host or join the lobby (a LAN session). Hotspot: one device creates a game
+ * network ([DirectLink]) and the others join it, then join the session by the host's address
+ * (session discovery does not cross these networks). Wi-Fi: the current network, with discovery.
  *
- * The game stays paused while it is open, so it pumps the native LAN backend itself; once
- * connected, players use their game's own wireless features (e.g. Union Room) and the emulator
- * routes the DS wireless traffic over the network. The session outlives the dialog: it ends on
- * "Leave session" or when the emulator stops.
+ * The game stays paused while it is open, so it pumps the native LAN backend itself.
+ * Netplay / Hosted: the lobby dialog cannot be closed (only Cancel lobby / Leave / Start), so the
+ * paused game never talks over it; the host's Start sends a start message to every guest and each
+ * device restarts the game into the session. LAN: players resume and use their game's own
+ * wireless features over the session, which outlives the dialog until "Leave session" or the
+ * emulator stops.
  */
 @Composable
 fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int, players: Int, host: String, hosted: Boolean) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf(Screen.MENU) }
-    var netplayGoal by remember { mutableStateOf(false) }
+    var goal by remember { mutableStateOf(Goal.LAN) }
+    val netplayGoal = goal != Goal.LAN
     var playerName by remember { mutableStateOf(defaultPlayerName) }
     var maxPlayers by remember { mutableIntStateOf(2) }
     var hostAddress by remember { mutableStateOf("") }
@@ -126,11 +133,26 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
         onDispose { lock.release() }
     }
 
+    val hostLeft = stringResource(R.string.multiplayer_host_left)
+
+    // a guest starts as soon as the host's start arrives: leave the lobby, restart into the session
+    fun guestStart(request: Int) {
+        val list = netplayPlayers ?: players
+        val player = list.firstOrNull { it.isLocal }?.id ?: return
+        val host = list.firstOrNull { it.status == PLAYER_HOST }?.address ?: return
+        scope.launch(Dispatchers.IO) {
+            MelonEmulator.lanLeave()
+            withContext(Dispatchers.Main) { onStartNetplay(player, request and 0xFF, host, (request shr 8) == 1) }
+        }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
+            var startRequest = -1
             val (newMode, newSessions, newPlayers) = withContext(Dispatchers.IO) {
                 MelonEmulator.lanTick()
                 val m = MelonEmulator.lanGetMode()
+                if (m == MODE_JOINED) startRequest = MelonEmulator.lanGetStartRequest()
                 Triple(
                     m,
                     if (m == MODE_DISCOVERING) parseSessions(MelonEmulator.lanGetSessions()) else emptyList(),
@@ -147,6 +169,15 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                 newPlayers.all { it.isLocal || (it.status != PLAYER_CONNECTING && it.address != "127.0.0.1" && it.address != "0.0.0.0") }
             ) {
                 netplayPlayers = newPlayers
+            }
+            if (startRequest >= 0) {
+                guestStart(startRequest)
+                return@LaunchedEffect
+            }
+            // the host cancelled the Netplay lobby: back to the start
+            if (goal != Goal.LAN && newMode == MODE_JOINED && newPlayers.any { it.status == PLAYER_HOST_LOST && !it.isLocal && it.id == 0 }) {
+                withContext(Dispatchers.IO) { MelonEmulator.lanLeave() }
+                errorText = hostLeft
             }
             delay(100)
         }
@@ -234,37 +265,66 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
         screen = next
     }
 
+    val goalTitle = when (goal) {
+        Goal.NETPLAY -> R.string.multiplayer_option_netplay
+        Goal.HOSTED -> R.string.multiplayer_option_hosted
+        Goal.LAN -> R.string.multiplayer_lan_title
+    }
     val title = when {
-        mode != MODE_NONE -> R.string.multiplayer_lan_title
+        mode != MODE_NONE -> goalTitle
         screen == Screen.MENU -> R.string.multiplayer_role_title
         screen == Screen.USB -> R.string.multiplayer_option_usb
         screen == Screen.HOTSPOT || screen == Screen.HOST_HOTSPOT -> R.string.multiplayer_hotspot_title
-        netplayGoal -> R.string.multiplayer_netplay_title
-        else -> R.string.multiplayer_lan_title
+        else -> goalTitle
+    }
+
+    fun leave() {
+        scope.launch(Dispatchers.IO) { MelonEmulator.lanLeave() }
+        DirectLink.leave(context)
+    }
+
+    // Netplay lobby: back / outside taps do nothing; it is left only by Cancel lobby / Leave or
+    // the start, so nobody backs out thinking Netplay is broken and the paused game never runs
+    // linked to the others over LAN
+    val inNetplayLobby = netplayGoal && (mode == MODE_HOSTING || mode == MODE_JOINED)
+    val dismiss = { if (!inNetplayLobby) onDismiss() }
+
+    // Host: tell every guest to start, give them a moment to receive it (they leave the lobby as
+    // it arrives), then start too. Player = lobby id (host 0).
+    val startingNetplay = stringResource(R.string.multiplayer_starting_netplay)
+    fun hostStart(list: List<LanPlayer>) = scope.launch {
+        busyText = startingNetplay
+        val hosted = goal == Goal.HOSTED
+        withContext(Dispatchers.IO) { MelonEmulator.lanStartSession(hosted, list.size) }
+        withTimeoutOrNull(2000) { while (players.size > 1) delay(100) }
+        withContext(Dispatchers.IO) { MelonEmulator.lanLeave() }
+        onStartNetplay(list.first { it.isLocal }.id, list.size, "", hosted)
     }
 
     BaseDialog(
         title = stringResource(title),
-        onDismiss = onDismiss,
+        onDismiss = dismiss,
         content = { padding ->
             Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (mode) {
                     MODE_NONE -> {
-                        if (netplayGoal && screen != Screen.MENU) {
-                            Text(stringResource(R.string.multiplayer_netplay_connect_hint), style = MaterialTheme.typography.caption)
-                        }
                         when (screen) {
                             Screen.MENU -> {
-                                OptionRow(stringResource(R.string.multiplayer_option_usb), stringResource(R.string.multiplayer_option_usb_hint)) { open(Screen.USB) }
                                 OptionRow(stringResource(R.string.multiplayer_option_netplay), stringResource(R.string.multiplayer_option_netplay_hint)) {
-                                    netplayGoal = true
+                                    goal = Goal.NETPLAY
+                                    maxPlayers = 2
+                                    open(Screen.LAN)
+                                }
+                                OptionRow(stringResource(R.string.multiplayer_option_hosted), stringResource(R.string.multiplayer_option_hosted_hint)) {
+                                    goal = Goal.HOSTED
                                     maxPlayers = 2
                                     open(Screen.LAN)
                                 }
                                 OptionRow(stringResource(R.string.multiplayer_option_lan), stringResource(R.string.multiplayer_option_lan_hint)) {
-                                    netplayGoal = false
+                                    goal = Goal.LAN
                                     open(Screen.LAN)
                                 }
+                                OptionRow(stringResource(R.string.multiplayer_option_usb), stringResource(R.string.multiplayer_option_usb_hint)) { open(Screen.USB) }
                             }
                             Screen.USB -> Text(stringResource(R.string.multiplayer_usb_unavailable), style = MaterialTheme.typography.body2)
                             Screen.LAN -> {
@@ -357,31 +417,21 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onStartNetplay: (player: Int
                     }
                 }
                 else -> {
-                    // Netplay: every player (as in the lobby) presses Start Netplay; each device
-                    // restarts the game running every player's console. Player = lobby id (host 0);
-                    // the host waits for the others, guests connect to the host.
-                    val netplay = netplayPlayers
-                    // Hosted: the host runs every console, each guest only its own (all press it).
-                    if (netplay != null) {
-                        for (hosted in listOf(false, true)) {
-                            val label = if (hosted) R.string.multiplayer_start_hosted else R.string.multiplayer_start_netplay
-                            DialogButton(stringResource(label), enabled = idle) {
-                                val player = netplay.first { it.isLocal }.id
-                                val host = if (mode == MODE_HOSTING) "" else netplay.firstOrNull { it.status == PLAYER_HOST }?.address
-                                if (host != null) scope.launch(Dispatchers.IO) {
-                                    MelonEmulator.lanLeave()
-                                    withContext(Dispatchers.Main) { onStartNetplay(player, netplay.size, host, hosted) }
-                                }
-                            }
+                    val leaveLabel = if (netplayGoal && mode == MODE_HOSTING) R.string.multiplayer_cancel_lobby else R.string.multiplayer_leave
+                    DialogButton(stringResource(leaveLabel), enabled = idle) { leave() }
+                    // Netplay: only the host starts, once everyone has joined; the guests follow
+                    if (netplayGoal && mode == MODE_HOSTING) {
+                        val netplay = netplayPlayers
+                        DialogButton(stringResource(R.string.multiplayer_start), enabled = idle && netplay != null) {
+                            netplay?.let { hostStart(it) }
                         }
-                    }
-                    DialogButton(stringResource(R.string.multiplayer_leave), enabled = idle) {
-                        scope.launch(Dispatchers.IO) { MelonEmulator.lanLeave() }
-                        DirectLink.leave(context)
                     }
                 }
             }
-            DialogButton(stringResource(R.string.multiplayer_resume), enabled = idle, onClick = onDismiss)
+            // in a Netplay lobby the game stays paused until the session starts
+            if (!inNetplayLobby) {
+                DialogButton(stringResource(R.string.multiplayer_resume), enabled = idle, onClick = onDismiss)
+            }
         },
     )
 }
@@ -542,8 +592,10 @@ private fun LobbyContent(hosting: Boolean, players: List<LanPlayer>, network: Ho
             Text(stringResource(R.string.multiplayer_hotspot_fallback), style = MaterialTheme.typography.caption)
         }
     }
-    if (netplayGoal) {
-        Text(stringResource(R.string.multiplayer_netplay_connect_hint), style = MaterialTheme.typography.caption)
+    val hint = when {
+        !netplayGoal -> R.string.multiplayer_lobby_hint
+        hosting -> R.string.multiplayer_netplay_host_hint
+        else -> R.string.multiplayer_netplay_guest_hint
     }
-    Text(stringResource(R.string.multiplayer_lobby_hint), style = MaterialTheme.typography.caption)
+    Text(stringResource(hint), style = MaterialTheme.typography.body2)
 }

@@ -1204,12 +1204,10 @@ void MelonInstance::setDateTime()
         nds->RTC.SetDateTime(2026, 1, 1, 0, 0, 0);
         return;
     }
-    // record mode: the clock of the recording's start, on both recording and replay
+    // record mode: the clock is the loaded state's own (record mode set it just before saving
+    // start.mln; a segment cut later in a session carries its later clock), never host time
     if (int rtc[6]; MelonDSAndroid::recordRtc(rtc))
-    {
-        nds->RTC.SetDateTime(rtc[0], rtc[1], rtc[2], rtc[3], rtc[4], rtc[5]);
         return;
-    }
 
     std::time_t t = std::time(0);
     std::tm* now = std::localtime(&t);

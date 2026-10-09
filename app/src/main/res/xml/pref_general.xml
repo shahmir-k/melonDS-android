@@ -19,7 +19,7 @@
             app:iconSpaceReserved="false"
             android:entries="@array/fast_forward_speed_multiplier_options"
             android:entryValues="@array/fast_forward_speed_multiplier_values"
-            android:defaultValue="-1" />
+            android:defaultValue="2.5" />
 
     <ListPreference
             android:key="fast_forward_max_frameskip"

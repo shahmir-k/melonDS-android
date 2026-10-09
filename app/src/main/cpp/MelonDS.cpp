@@ -361,6 +361,9 @@ namespace MelonDSAndroid
         Platform::Log(Platform::LogLevel::Info, "Record: %s %s, %d frames\n", r.replay ? "replay" : "recording", r.dir.c_str(), r.frame);
         instance->setInputDeferred(false);
         instance->getNds()->SetKeyMask(instance->getInputMask());
+#ifdef LITEV_AGGRESSIVE_SKIP
+        instance->getNds()->GPU.KeepCaptures = false;
+#endif
         std::lock_guard<std::mutex> l(recordLock);
         recording.reset();
         recordResult = result;
@@ -457,6 +460,10 @@ namespace MelonDSAndroid
         rec.log = fopen((dir + name).c_str(), "w");
         if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,hash\n");
         instance->setInputDeferred(true);
+#ifdef LITEV_AGGRESSIVE_SKIP
+        nds->GPU.KeepCaptures = true;
+        nds->GPU.KeepCapturesSeen = false;
+#endif
         clock_gettime(CLOCK_MONOTONIC, &rec.prev);
         Platform::Log(Platform::LogLevel::Info, "Record: %s %s\n", rec.replay ? "replaying" : "recording", dir.c_str());
         return true;

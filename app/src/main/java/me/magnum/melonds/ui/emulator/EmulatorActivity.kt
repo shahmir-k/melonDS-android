@@ -12,6 +12,7 @@ import android.hardware.input.InputManager
 import android.app.ActivityOptions
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.os.Handler
 import android.view.Display
 import android.view.KeyEvent
@@ -214,6 +215,7 @@ class EmulatorActivity : AppCompatActivity() {
     private lateinit var nativeInputListener: INativeInputListener
     private val frontendInputHandler = object : FrontendInputHandler() {
         var fastForwardEnabled = false
+        private var lastFastForwardToggle = 0L
             private set
         var microphoneEnabled = true
             private set
@@ -228,6 +230,10 @@ class EmulatorActivity : AppCompatActivity() {
         }
 
         override fun onFastForwardPressed() {
+            // R2 can arrive as a key and as the trigger axis for one press: toggle once
+            val now = SystemClock.uptimeMillis()
+            if (now - lastFastForwardToggle < 150) return
+            lastFastForwardToggle = now
             fastForwardEnabled = !fastForwardEnabled
             binding.viewLayoutControls.setLayoutComponentToggleState(LayoutComponent.BUTTON_FAST_FORWARD_TOGGLE, fastForwardEnabled)
             presentation?.layoutView?.setLayoutComponentToggleState(LayoutComponent.BUTTON_FAST_FORWARD_TOGGLE, fastForwardEnabled)

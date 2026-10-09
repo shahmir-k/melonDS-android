@@ -24,16 +24,24 @@ class DefaultControllerConfigurationFactory : ControllerConfigurationFactory {
     }
 
     override fun isReplaceableDefault(configuration: ControllerConfiguration): Boolean {
-        // Saved from an earlier default and never changed: the position-based one, or the short-lived
-        // Thor default that mapped D-pad keys instead of the hat axis (its D-pad then did nothing).
-        if (!isNintendoLabelledHandheld) return false
-        return configuration.inputMapper == buildPositional().inputMapper ||
-            configuration.inputMapper == buildConfiguration(byLabel = true, dpadKeys = true).inputMapper
+        // Saved from an earlier default and never changed: any earlier default without fast-forward on
+        // R2; on the labelled handhelds also the position-based one, or the short-lived Thor default
+        // that mapped D-pad keys instead of the hat axis (its D-pad then did nothing).
+        val current = buildDefaultControllerConfiguration().inputMapper
+        if (configuration.inputMapper == current) return false
+        val earlier = mutableListOf(buildConfiguration(byLabel = isNintendoLabelledHandheld, dpadKeys = false, fastForward = false))
+        if (isNintendoLabelledHandheld) {
+            earlier += buildConfiguration(byLabel = false, dpadKeys = false, fastForward = false)
+            earlier += buildConfiguration(byLabel = false, dpadKeys = false)
+            earlier += buildConfiguration(byLabel = true, dpadKeys = true, fastForward = false)
+            earlier += buildConfiguration(byLabel = true, dpadKeys = true)
+        }
+        return earlier.any { configuration.inputMapper == it.inputMapper }
     }
 
     private fun buildPositional() = buildConfiguration(byLabel = false, dpadKeys = false)
 
-    private fun buildConfiguration(byLabel: Boolean, dpadKeys: Boolean): ControllerConfiguration {
+    private fun buildConfiguration(byLabel: Boolean, dpadKeys: Boolean, fastForward: Boolean = true): ControllerConfiguration {
         fun key(code: Int) = InputConfig.Assignment.Key(null, code)
         fun axis(code: Int, direction: InputConfig.Assignment.Axis.Direction) = InputConfig.Assignment.Axis(null, code, direction)
         val neg = InputConfig.Assignment.Axis.Direction.NEGATIVE
@@ -56,6 +64,10 @@ class DefaultControllerConfigurationFactory : ControllerConfigurationFactory {
             InputConfig(Input.START, key(KeyEvent.KEYCODE_BUTTON_START)),
             InputConfig(Input.SELECT, key(KeyEvent.KEYCODE_BUTTON_SELECT)),
             InputConfig(Input.PAUSE, key(KeyEvent.KEYCODE_BUTTON_MODE)),
+        ) + listOfNotNull(
+            // R2 as a key, or the analog trigger on controllers that report it only as an axis
+            // (a press that arrives as both toggles once: see onFastForwardPressed)
+            InputConfig(Input.FAST_FORWARD, key(KeyEvent.KEYCODE_BUTTON_R2), axis(MotionEvent.AXIS_RTRIGGER, pos)).takeIf { fastForward },
         )
 
         return ControllerConfiguration(inputList)

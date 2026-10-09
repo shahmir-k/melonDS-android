@@ -190,7 +190,7 @@ class SharedPreferencesSettingsRepository(
     }
 
     override fun getFastForwardSpeedMultiplier(): Float {
-        val speedMultiplierPreference = preferences.getString("fast_forward_speed_multiplier", "-1")!!
+        val speedMultiplierPreference = preferences.getString("fast_forward_speed_multiplier", "2.5")!!
         return speedMultiplierPreference.toFloat()
     }
 

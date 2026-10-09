@@ -15,7 +15,7 @@ namespace RecordVideo
 {
 
 static constexpr int kWidth = 256, kHeight = 384;
-static constexpr int kBitrate = 400000;            // ~3 MB a minute
+static constexpr int kBitrate = 200000;            // ~1.5 MB a minute
 static constexpr int kSegmentFrames = 3600;        // one file a minute
 
 struct Encoder

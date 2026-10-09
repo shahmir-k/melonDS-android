@@ -385,7 +385,7 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
             std::string dir;
             int recFrame;
             if (isNew && MelonDSAndroid::recordVideoTarget(presentationFrame, dir, recFrame))
-                RecordVideo::Present(presentationFrame, recFrame, dir, 30);
+                RecordVideo::Present(presentationFrame, recFrame, dir, 15);
             else if (!isNew) {}
             else
                 RecordVideo::Stop();

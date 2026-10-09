@@ -442,7 +442,20 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                     else stringResource(R.string.multiplayer_following, leader?.name ?: "?"),
                                     style = MaterialTheme.typography.subtitle1,
                                 )
-                                if (isLeader) {
+                                if (isLeader && group.count { it.live() } <= 1) {
+                                    // everyone else left: the group stays open for them to rejoin, and picking a
+                                    // mode here leaves it (ending any session) and starts that mode's setup
+                                    fun leaveThen(next: Goal) {
+                                        MelonEmulator.groupLeave()
+                                        MultiplayerGroup.server = 0
+                                        group = emptyList()
+                                        pending = next
+                                        if (active != null) endActive { enter(next) } else enter(next)
+                                    }
+                                    OptionRow(stringResource(R.string.multiplayer_option_netplay), stringResource(R.string.multiplayer_option_netplay_hint), idle) { leaveThen(Goal.NETPLAY) }
+                                    OptionRow(stringResource(R.string.multiplayer_option_hosted), stringResource(R.string.multiplayer_option_hosted_hint), idle) { leaveThen(Goal.HOSTED) }
+                                    OptionRow(stringResource(R.string.multiplayer_option_lan), stringResource(R.string.multiplayer_option_lan_hint), idle) { leaveThen(Goal.LAN) }
+                                } else if (isLeader) {
                                     // Session: switch the whole group's mode, or change who runs a Hosted session
                                     Text(stringResource(R.string.multiplayer_session_section), style = MaterialTheme.typography.subtitle2)
                                     listOf(Goal.NETPLAY to 0, Goal.HOSTED to 1, Goal.LAN to 2).filter { it.first != active }.forEach { (g, m) ->

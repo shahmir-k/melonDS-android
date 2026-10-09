@@ -163,6 +163,7 @@ android {
                     "-DLITEV_LAN_EARLY_REPLY=ON", "-DLITEV_LAN_RX_SPIN=ON",
                     "-DLITEV_SKIP_REPEAT_FRAMES=ON",
                     "-DLITEV_MASTERBRIGHT_LATCH=ON",
+                    "-DLITEV_GL_SORT_OPAQUE=ON",
                     // Skip inert 32 kHz RTC ticks while no RTC IRQ is armed (B).
                     "-DLITEV_COARSE_RTC=ON",
                     // Cache the next timer-overflow deadline (A).

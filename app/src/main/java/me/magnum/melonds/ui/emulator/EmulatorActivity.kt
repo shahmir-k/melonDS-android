@@ -745,7 +745,7 @@ class EmulatorActivity : AppCompatActivity() {
     /**
      * A player's group link closed (Leave group, or its device dropped: ~3 s timeout). Plain Netplay
      * runs every player's console on every device, so the others would wait for its input forever:
-     * the leader restarts the session without it (a fresh session: deterministic), or ends it when
+     * the lobby host restarts the session without it (a fresh session: deterministic), or ends it when
      * only the leader remains. The leader leaving, or the lobby host (the group's hub), ends the
      * session everywhere; the lobby host, if still here, leads the group from then on.
      */
@@ -760,7 +760,10 @@ class EmulatorActivity : AppCompatActivity() {
         } else {
             val rows = groupRows()
             val n = rows.count { it.live() && it.id != id }
-            if (rows.firstOrNull { it.isLocal }?.id == leader) {
+            // only the lobby host restarts, even when the leader is a guest: it hears every
+            // disconnect first and relays, and its player list (sent before the command, same
+            // channel) is the one every device seats from, so all restart with the same players
+            if (rows.firstOrNull { it.isLocal }?.id == 0) {
                 val mode = if (n > 1) 0 else 3
                 MelonEmulator.groupSend(mode, n, leader)
                 runGroupCommand((leader shl 16) or (mode shl 8) or n)

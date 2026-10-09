@@ -40,6 +40,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>
+
+extern bool isFastForwardEnabled;   // MelonDSAndroidJNI.cpp (record mode logs it per frame)
 #include <thread>
 #include <map>
 #include <mutex>
@@ -273,7 +275,7 @@ namespace MelonDSAndroid
     //   inputs.txt  every input change, "FRAME KEY,KEY,T:x:y" or "FRAME NONE", held until the
     //               next line (the headless --input-script format; frames count from start.mln)
     //   frames.csv  per frame: frame period, emulator loop, RunFrame and its thread CPU (ms),
-    //               whether the frame was drawn, and every 60 frames a state hash
+    //               whether the frame was drawn, fast-forward on, and every 60 frames a state hash
     //   meta.txt    game, clock, renderer
     // Replay loads start.mln, applies inputs.txt frame by frame, writes replay_<time>.csv and
     // compares its hashes with the recording's: "REPLAY OK" or "REPLAY DIFFERS at frame N".
@@ -458,7 +460,7 @@ namespace MelonDSAndroid
         char name[64];
         snprintf(name, sizeof(name), rec.replay ? "/replay-%ld.csv" : "/frames.csv", (long) time(nullptr));
         rec.log = fopen((dir + name).c_str(), "w");
-        if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,hash\n");
+        if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,ff,hash\n");
         instance->setInputDeferred(true);
 #ifdef LITEV_AGGRESSIVE_SKIP
         nds->GPU.KeepCaptures = true;
@@ -506,7 +508,8 @@ namespace MelonDSAndroid
         if (r.log)
         {
             const auto& s = instance->lastFrameStats();
-            fprintf(r.log, "%d,%.3f,%.3f,%.3f,%.3f,%d,", r.frame, msSince(r.prev, t0), s.loopMs, s.runFrameMs, s.emuCpuMs, s.drawn ? 1 : 0);
+            fprintf(r.log, "%d,%.3f,%.3f,%.3f,%.3f,%d,%d,", r.frame, msSince(r.prev, t0), s.loopMs, s.runFrameMs, s.emuCpuMs,
+                    s.drawn ? 1 : 0, ::isFastForwardEnabled ? 1 : 0);
             if (hash) fprintf(r.log, "%016llx\n", (unsigned long long) hash); else fputs("\n", r.log);
         }
         r.prev = t0;

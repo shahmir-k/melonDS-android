@@ -160,6 +160,7 @@ android {
                     // 2D hybrid composite uses the NEON line compositor (needs SOFT2D_NEON).
                     "-DLITEV_HYB_COMPOSITE_NEON=ON",
                     "-DLITEV_HYB_CAPTURE_ASYNC=ON",
+                    "-DLITEV_HYB_CAPTURE_OFFTHREAD=ON",
                     "-DLITEV_LAN_EARLY_REPLY=ON", "-DLITEV_LAN_RX_SPIN=ON",
                     "-DLITEV_SKIP_REPEAT_FRAMES=ON",
                     "-DLITEV_MASTERBRIGHT_LATCH=ON",

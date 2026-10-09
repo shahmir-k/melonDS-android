@@ -105,7 +105,17 @@ object MelonEmulator {
     external fun lanGetPlayers(): Array<String>
     external fun lanTick()
     external fun lanLeave()
-    external fun lanStartSession(hosted: Boolean, players: Int)
+
+    // Group: the Netplay lobby kept connected while its session runs, so the host's commands
+    // (mode switch, Hosted server change, end) reach everyone. Commands: (server << 16) |
+    // (mode << 8) | players; mode 0 Netplay, 1 Hosted, 2 LAN, 3 end the session.
+    external fun lanToGroup(): Boolean
+    external fun groupToLan(): Boolean
+    external fun groupPlayers(): Array<String>
+    external fun groupTake(): Int
+    external fun groupSend(mode: Int, players: Int, server: Int)
+    external fun groupLeave()
+    external fun lanStartSession(hosted: Boolean, players: Int, server: Int)
     external fun lanGetStartRequest(): Int
     // The next game started runs in Netplay (every player's console on every device) as `player`
     // (the LAN lobby id, 0 = host) of `players`; guests pass the host's IP as `host`, the host "".

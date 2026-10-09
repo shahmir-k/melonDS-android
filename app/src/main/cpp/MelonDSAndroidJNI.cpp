@@ -3,6 +3,7 @@
 #include <jni.h>
 #include <string>
 #include <sstream>
+#include <mutex>
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -776,6 +777,33 @@ static jobjectArray lanStringArray(JNIEnv* env, const std::vector<std::string>& 
     return arr;
 }
 
+// One row per player: "id \t maxPlayers \t name \t status \t ping \t isLocal \t ip"
+static std::vector<std::string> lanPlayerRows(melonDS::LAN& l)
+{
+    std::vector<std::string> rows;
+    int maxPlayers = l.GetMaxPlayers();
+    for (const auto& p : l.GetPlayerList())
+    {
+        // player addresses are network-order (first octet in the low byte)
+        uint32_t ip = p.Address;
+        char row[160];
+        snprintf(row, sizeof(row), "%d\t%d\t%.32s\t%d\t%u\t%d\t%u.%u.%u.%u",
+                 p.ID, maxPlayers, p.Name, (int) p.Status, p.Ping, p.IsLocalPlayer ? 1 : 0,
+                 ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, ip >> 24);
+        rows.emplace_back(row);
+    }
+    return rows;
+}
+
+// ---- Group: a Netplay lobby kept connected while its session runs -----------------------------
+// At the host's Start every device keeps its lobby link (a LAN, port 7064; the session itself uses
+// 7100) as the group's control channel, not installed as the MPInterface: the host sends group
+// commands over it (switch mode, change the Hosted server, end the session) and every device
+// follows. Pumped by the app (groupTake) from its own thread, so it has its own lock.
+static std::unique_ptr<melonDS::MPInterface> groupLink;
+static std::mutex groupMutex;
+#define grp() ((melonDS::LAN&) *groupLink)
+
 extern "C"
 {
 JNIEXPORT jint JNICALL
@@ -787,7 +815,7 @@ Java_me_magnum_melonds_MelonEmulator_lanGetMode(JNIEnv* env, jobject thiz)
 JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring playerName, jint maxPlayers)
 {
-    if (MelonDSAndroid::netplayActive() || !lanLockParked())   // end the Netplay session first
+    if (MelonDSAndroid::netplayActive() || groupLink || !lanLockParked())   // end the session / group first
         return JNI_FALSE;
     std::string name = lanJString(env, playerName);
     lanEndAll();
@@ -805,7 +833,7 @@ Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring 
 JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanStartDiscovery(JNIEnv* env, jobject thiz)
 {
-    if (MelonDSAndroid::netplayActive() || !lanLockParked())   // end the Netplay session first
+    if (MelonDSAndroid::netplayActive() || groupLink || !lanLockParked())   // end the session / group first
         return JNI_FALSE;
     lanEndAll();
     melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
@@ -846,7 +874,7 @@ Java_me_magnum_melonds_MelonEmulator_lanGetSessions(JNIEnv* env, jobject thiz)
 JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanJoin(JNIEnv* env, jobject thiz, jstring playerName, jstring hostAddress)
 {
-    if (MelonDSAndroid::netplayActive() || !lanLockParked())   // end the Netplay session first
+    if (MelonDSAndroid::netplayActive() || groupLink || !lanLockParked())   // end the session / group first
         return JNI_FALSE;
     std::string name = lanJString(env, playerName);
     std::string host = lanJString(env, hostAddress);
@@ -880,19 +908,7 @@ Java_me_magnum_melonds_MelonEmulator_lanGetPlayers(JNIEnv* env, jobject thiz)
     if (lanLockParked())
     {
         if (lanMode == LanHosting || lanMode == LanJoined)
-        {
-            int maxPlayers = lan().GetMaxPlayers();
-            for (const auto& p : lan().GetPlayerList())
-            {
-                // player addresses are network-order (first octet in the low byte)
-                uint32_t ip = p.Address;
-                char row[160];
-                snprintf(row, sizeof(row), "%d\t%d\t%.32s\t%d\t%u\t%d\t%u.%u.%u.%u",
-                         p.ID, maxPlayers, p.Name, (int) p.Status, p.Ping, p.IsLocalPlayer ? 1 : 0,
-                         ip & 0xFF, (ip >> 8) & 0xFF, (ip >> 16) & 0xFF, ip >> 24);
-                rows.emplace_back(row);
-            }
-        }
+            rows = lanPlayerRows(lan());
         pthread_mutex_unlock(&emuThreadMutex);
     }
     return lanStringArray(env, rows);
@@ -901,12 +917,12 @@ Java_me_magnum_melonds_MelonEmulator_lanGetPlayers(JNIEnv* env, jobject thiz)
 // Netplay start over the lobby. Host: sends it to every client. Client: -1 until the host's
 // start arrives, then (hosted << 8) | players.
 JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_lanStartSession(JNIEnv* env, jobject thiz, jboolean hosted, jint players)
+Java_me_magnum_melonds_MelonEmulator_lanStartSession(JNIEnv* env, jobject thiz, jboolean hosted, jint players, jint server)
 {
     if (!lanLockParked())
         return;
     if (lanMode == LanHosting)
-        lan().HostStartSession(hosted ? 1 : 0, (u8) players);
+        lan().HostStartSession(hosted ? 1 : 0, (u8) players, (u8) server);
     pthread_mutex_unlock(&emuThreadMutex);
 }
 
@@ -917,7 +933,7 @@ Java_me_magnum_melonds_MelonEmulator_lanGetStartRequest(JNIEnv* env, jobject thi
     if (lanLockParked())
     {
         if (lanMode == LanJoined)
-            r = lan().GetStartRequest();
+            r = lan().TakeStartRequest();
         pthread_mutex_unlock(&emuThreadMutex);
     }
     return r;
@@ -994,6 +1010,91 @@ Java_me_magnum_melonds_MelonEmulator_lanLeave(JNIEnv* env, jobject thiz)
         return;
     lanEndAll();
     pthread_mutex_unlock(&emuThreadMutex);
+}
+
+// The lobby (hosting or joined) becomes the group: kept connected, no longer the MPInterface.
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_lanToGroup(JNIEnv* env, jobject thiz)
+{
+    if (!lanLockParked())
+        return JNI_FALSE;
+    bool ok = lanMode == LanHosting || lanMode == LanJoined;
+    if (ok)
+    {
+        std::lock_guard<std::mutex> lk(groupMutex);
+        groupLink = melonDS::MPInterface::Take();
+        lanMode = LanNone;
+    }
+    pthread_mutex_unlock(&emuThreadMutex);
+    return ok;
+}
+
+// The group becomes this game's LAN session again (the host switched the group to LAN).
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_groupToLan(JNIEnv* env, jobject thiz)
+{
+    if (MelonDSAndroid::netplayActive() || !lanLockParked())
+        return JNI_FALSE;
+    std::lock_guard<std::mutex> lk(groupMutex);
+    bool ok = groupLink != nullptr;
+    if (ok)
+    {
+        bool host = false;
+        for (const auto& p : grp().GetPlayerList())
+            if (p.IsLocalPlayer) host = p.Status == melonDS::LAN::Player_Host;
+        lanEndAll();
+        melonDS::MPInterface::Set(std::move(groupLink), melonDS::MPInterface_LAN);
+        lanApplyRecvTimeout();
+        lanMode = host ? LanHosting : LanJoined;
+    }
+    pthread_mutex_unlock(&emuThreadMutex);
+    return ok;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_me_magnum_melonds_MelonEmulator_groupPlayers(JNIEnv* env, jobject thiz)
+{
+    std::lock_guard<std::mutex> lk(groupMutex);
+    return lanStringArray(env, groupLink ? lanPlayerRows(grp()) : std::vector<std::string> {});
+}
+
+// Pumps the group; returns the next command from the host ((server << 16) | (mode << 8) |
+// players), or -1. A client whose host has gone leaves the group.
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_groupTake(JNIEnv* env, jobject thiz)
+{
+    std::lock_guard<std::mutex> lk(groupMutex);
+    if (!groupLink)
+        return -1;
+    grp().Process();
+    bool lostHost = false;
+    for (const auto& p : grp().GetPlayerList())
+        if (p.ID == 0 && !p.IsLocalPlayer && p.Status == melonDS::LAN::Player_Disconnected) lostHost = true;
+    int r = grp().TakeStartRequest();
+    if (lostHost && r < 0)
+    {
+        grp().EndSession();
+        groupLink = nullptr;
+    }
+    return r;
+}
+
+// Host: sends a group command to every client
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_groupSend(JNIEnv* env, jobject thiz, jint mode, jint players, jint server)
+{
+    std::lock_guard<std::mutex> lk(groupMutex);
+    if (groupLink)
+        grp().HostStartSession((u8) mode, (u8) players, (u8) server);
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_groupLeave(JNIEnv* env, jobject thiz)
+{
+    std::lock_guard<std::mutex> lk(groupMutex);
+    if (groupLink)
+        grp().EndSession();
+    groupLink = nullptr;
 }
 }
 

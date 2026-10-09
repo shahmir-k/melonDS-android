@@ -56,6 +56,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.R
 import me.magnum.melonds.common.PermissionHandler
@@ -400,11 +403,7 @@ class EmulatorActivity : AppCompatActivity() {
                     LanMultiplayerDialog(
                         defaultPlayerName = remember { viewModel.getLanPlayerName() },
                         onEndSession = { viewModel.endNetplay() },
-                        onStartNetplay = { player, players, host, hosted ->
-                            activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
-                            showMultiplayerDialog.value = false
-                            viewModel.startNetplay(player, players, host, hosted, NetplayRomCache.dir(this@EmulatorActivity).path)
-                        },
+                        onGroupCommand = ::runGroupCommand,
                         onDismiss = {
                             activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
                             viewModel.resumeEmulator()
@@ -423,6 +422,17 @@ class EmulatorActivity : AppCompatActivity() {
                             showPendingSubmissionsDialog.value = false
                         }
                     )
+                }
+            }
+        }
+
+        // the multiplayer group (a Netplay lobby kept connected): pump it, follow the host's commands
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    val request = withContext(Dispatchers.IO) { MelonEmulator.groupTake() }
+                    if (request >= 0) runGroupCommand(request)
+                    delay(200)
                 }
             }
         }
@@ -713,6 +723,14 @@ class EmulatorActivity : AppCompatActivity() {
                 show()
             }
         }
+    }
+
+    private fun runGroupCommand(request: Int) {
+        if (showMultiplayerDialog.value) {
+            activeOverlays.removeActiveOverlay(EmulatorOverlay.MULTIPLAYER_DIALOG)
+            showMultiplayerDialog.value = false
+        }
+        viewModel.runGroupCommand(request, NetplayRomCache.dir(this).path)
     }
 
     override fun onNewIntent(intent: Intent) {

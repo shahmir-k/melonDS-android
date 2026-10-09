@@ -726,4 +726,16 @@
     <string name="multiplayer_switch_confirm">End your %1$s session and switch to %2$s?</string>
     <string name="multiplayer_end_and_switch">End and switch</string>
     <string name="multiplayer_ending">Ending session…</string>
+    <string name="multiplayer_group_leader">Players in your group: %1$d</string>
+    <string name="multiplayer_following">Following %1$s</string>
+    <string name="multiplayer_following_hint">The host chooses the mode for everyone. Leave the group to choose your own.</string>
+    <string name="multiplayer_session_section">Session</string>
+    <string name="multiplayer_switch_to">Switch to %1$s</string>
+    <string name="multiplayer_switch_to_hint">Everyone in the group follows. Netplay modes restart the game.</string>
+    <string name="multiplayer_make_host">Make %1$s the host</string>
+    <string name="multiplayer_make_host_hint">They run every console from now on. The game restarts for everyone.</string>
+    <string name="multiplayer_leave_group">Leave group</string>
+    <string name="multiplayer_leave_group_confirm">Leave the group? You stop following the host. A running Netplay session ends here and the game restarts normally.</string>
+    <string name="multiplayer_runs_consoles">runs every console</string>
+    <string name="multiplayer_pick_server_hint">Tap a player to make them the host that runs every console (pick the strongest device).</string>
 </resources>

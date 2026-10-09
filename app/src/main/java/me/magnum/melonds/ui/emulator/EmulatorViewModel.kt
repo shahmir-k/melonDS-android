@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -39,6 +40,9 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import me.magnum.melonds.MelonEmulator
+import me.magnum.melonds.ui.emulator.multiplayer.MultiplayerGroup
+import me.magnum.melonds.ui.emulator.multiplayer.groupRows
+import me.magnum.melonds.ui.emulator.multiplayer.groupSeat
 import me.magnum.melonds.common.romprocessors.RomFileProcessorFactory
 import me.magnum.melonds.common.runtime.ScreenshotFrameBufferProvider
 import me.magnum.melonds.domain.model.Cheat
@@ -432,6 +436,31 @@ class EmulatorViewModel @Inject constructor(
         withTimeoutOrNull(5.seconds) { _emulatorState.first { !ended(it) } }
         _emulatorState.first(ended)
         emulatorManager.pauseEmulator()
+    }
+
+    /**
+     * Runs a group command (the host's own, or one it sent): every device of the group does the same.
+     * [request] = (server << 16) | (mode << 8) | players; mode 0 Netplay, 1 Hosted (server = the
+     * lobby id that runs every console), 2 LAN (the group becomes the game's LAN session), 3 end
+     * the session (back to normal play, still grouped).
+     */
+    fun runGroupCommand(request: Int, romCacheDir: String) {
+        val mode = (request shr 8) and 0xFF
+        val server = request shr 16
+        viewModelScope.launch {
+            when (mode) {
+                0, 1 -> {
+                    val seat = groupSeat(groupRows(), server) ?: return@launch
+                    MultiplayerGroup.server = server
+                    startNetplay(seat.player, seat.players, seat.host, mode == 1, romCacheDir)
+                }
+                else -> {
+                    if (MelonEmulator.netplayKind() != 0) endNetplay() else emulatorManager.pauseEmulator()
+                    if (mode == 2) withContext(Dispatchers.IO) { MelonEmulator.groupToLan() }
+                    emulatorManager.resumeEmulator()
+                }
+            }
+        }
     }
 
     fun answerNetplayTransfer(yes: Boolean) = MelonEmulator.netplayAnswer(yes)
@@ -1106,6 +1135,7 @@ class EmulatorViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         sessionCoroutineScope.cancel()
+        MelonEmulator.groupLeave()
         emulatorManager.cleanEmulator()
     }
 

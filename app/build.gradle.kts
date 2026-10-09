@@ -168,6 +168,7 @@ android {
                     "-DLITEV_HYB_MERGE_1X_2D=ON",
                     "-DLITEV_GL_WBUF_EARLYZ=ON",
                     "-DLITEV_GL_SKIP_NOOP_EDGE=ON",
+                    "-DLITEV_HYB_MERGE_FASTLINES=ON",
                     // Skip inert 32 kHz RTC ticks while no RTC IRQ is armed (B).
                     "-DLITEV_COARSE_RTC=ON",
                     // Cache the next timer-overflow deadline (A).

@@ -420,6 +420,20 @@ class EmulatorViewModel @Inject constructor(
         _netplayTransfer.value = null
     }
 
+    /**
+     * Ends the running Netplay / Hosted session here: the game restarts without it. Returns once
+     * the restarted game runs, paused (the multiplayer dialog that asked continues over it).
+     */
+    suspend fun endNetplay() {
+        val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
+        stopEmulator()
+        loadRom(rom)
+        val ended = { s: EmulatorState -> s is EmulatorState.RunningRom || s is EmulatorState.RomLoadError || s is EmulatorState.RomNotFoundError }
+        withTimeoutOrNull(5.seconds) { _emulatorState.first { !ended(it) } }
+        _emulatorState.first(ended)
+        emulatorManager.pauseEmulator()
+    }
+
     fun answerNetplayTransfer(yes: Boolean) = MelonEmulator.netplayAnswer(yes)
 
     fun cancelNetplayTransfer() = MelonEmulator.netplayCancelSetup()

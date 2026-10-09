@@ -44,6 +44,7 @@ namespace MelonDSAndroid {
                                std::string cacheDir, u64 cacheMaxBytes);
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     extern std::string netplayStatus();
+    extern int netplayKind();   // 0 none, 1 Netplay, 2 Hosted Netplay
     // Ends every Netplay wait (stopping: the emulator thread may be waiting on a player who left)
     extern void netplayAbort();
     extern void setConfiguration(EmulatorConfiguration emulatorConfiguration);

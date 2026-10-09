@@ -787,7 +787,7 @@ Java_me_magnum_melonds_MelonEmulator_lanGetMode(JNIEnv* env, jobject thiz)
 JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring playerName, jint maxPlayers)
 {
-    if (!lanLockParked())
+    if (MelonDSAndroid::netplayActive() || !lanLockParked())   // end the Netplay session first
         return JNI_FALSE;
     std::string name = lanJString(env, playerName);
     lanEndAll();
@@ -805,7 +805,7 @@ Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring 
 JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanStartDiscovery(JNIEnv* env, jobject thiz)
 {
-    if (!lanLockParked())
+    if (MelonDSAndroid::netplayActive() || !lanLockParked())   // end the Netplay session first
         return JNI_FALSE;
     lanEndAll();
     melonDS::MPInterface::Set(melonDS::MPInterface_LAN);
@@ -846,7 +846,7 @@ Java_me_magnum_melonds_MelonEmulator_lanGetSessions(JNIEnv* env, jobject thiz)
 JNIEXPORT jboolean JNICALL
 Java_me_magnum_melonds_MelonEmulator_lanJoin(JNIEnv* env, jobject thiz, jstring playerName, jstring hostAddress)
 {
-    if (!lanLockParked())
+    if (MelonDSAndroid::netplayActive() || !lanLockParked())   // end the Netplay session first
         return JNI_FALSE;
     std::string name = lanJString(env, playerName);
     std::string host = lanJString(env, hostAddress);
@@ -932,6 +932,12 @@ Java_me_magnum_melonds_MelonEmulator_lanTick(JNIEnv* env, jobject thiz)
     if (lanMode != LanNone)
         melonDS::MPInterface::Get().Process();
     pthread_mutex_unlock(&emuThreadMutex);
+}
+
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayKind(JNIEnv* env, jobject thiz)
+{
+    return MelonDSAndroid::netplayKind();
 }
 
 JNIEXPORT jstring JNICALL

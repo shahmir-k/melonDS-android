@@ -713,4 +713,17 @@
     <string name="multiplayer_starting_netplay">Starting…</string>
     <string name="multiplayer_netplay_host_hint">Press Start when everyone has joined.</string>
     <string name="multiplayer_netplay_guest_hint">Waiting for the host to press Start…</string>
+    <string name="multiplayer_in_netplay">In a Netplay session</string>
+    <string name="multiplayer_in_hosted">In a Hosted Netplay session</string>
+    <string name="multiplayer_in_lan">In a LAN session (%1$s)</string>
+    <string name="multiplayer_lan_hosting">hosting</string>
+    <string name="multiplayer_lan_joined">joined</string>
+    <string name="multiplayer_lan_searching">searching</string>
+    <string name="multiplayer_end_session">End session</string>
+    <string name="multiplayer_leave_lan">Leave LAN</string>
+    <string name="multiplayer_back_to_session">Back to session</string>
+    <string name="multiplayer_same_mode_hint">Go back to it, or end it. Ending a Netplay session restarts the game normally on this device.</string>
+    <string name="multiplayer_switch_confirm">End your %1$s session and switch to %2$s?</string>
+    <string name="multiplayer_end_and_switch">End and switch</string>
+    <string name="multiplayer_ending">Ending session…</string>
 </resources>

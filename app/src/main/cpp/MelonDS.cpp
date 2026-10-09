@@ -385,6 +385,8 @@ namespace MelonDSAndroid
         s.waiting = s.input->MsSincePeer() > 500;   // a peer went quiet (each re-sends every 10 ms)
     }
 
+    int netplayKind() { return !netplay ? 0 : netplay->hosted ? 2 : 1; }
+
     std::string netplayStatus()
     {
         if (!netplay) return "";

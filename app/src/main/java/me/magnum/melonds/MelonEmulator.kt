@@ -124,6 +124,9 @@ object MelonEmulator {
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     external fun netplayStatus(): String
 
+    // 0 = no Netplay session, 1 = Netplay, 2 = Hosted Netplay
+    external fun netplayKind(): Int
+
     fun saveState(path: Uri): Boolean {
         return saveStateInternal(path.toString())
     }

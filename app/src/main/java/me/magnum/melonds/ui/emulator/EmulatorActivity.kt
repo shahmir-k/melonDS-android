@@ -401,7 +401,12 @@ class EmulatorActivity : AppCompatActivity() {
 
                 if (showMultiplayerDialog.value) {
                     LanMultiplayerDialog(
-                        defaultPlayerName = remember { viewModel.getLanPlayerName() },
+                        defaultPlayerName = remember {
+                            // the firmware's default nickname says nothing: name the device instead
+                            // (model + a short id, so two of the same handheld can be told apart)
+                            viewModel.getLanPlayerName().takeUnless { it.isBlank() || it == "Player" }
+                                ?: (android.os.Build.MODEL + " " + (android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: "").takeLast(3).uppercase()).trim()
+                        },
                         onEndSession = { viewModel.endNetplay() },
                         onGroupCommand = ::runGroupCommand,
                         onDismiss = {

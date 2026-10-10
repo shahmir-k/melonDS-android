@@ -2,7 +2,11 @@ package me.magnum.melonds.ui.emulator.multiplayer
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.net.Uri
+import android.provider.Settings
 import android.net.wifi.WifiManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -35,6 +39,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -148,6 +153,8 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     var manualSsid by remember { mutableStateOf(DirectLink.NAME_PREFIX) }
     var manualPassword by remember { mutableStateOf(DirectLink.PASSPHRASE) }
     var canScan by remember { mutableStateOf(false) }
+    // Wi-Fi scan results are also empty while the device's Location switch is off
+    var locationOn by remember { mutableStateOf(true) }
     // Netplay players: the largest complete lobby seen (everyone connected, addresses known).
     // Once a device restarts into Netplay it leaves the lobby (the host leaving ends it), so the
     // others' lists shrink: a smaller list never replaces it.
@@ -230,6 +237,8 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
         var polls = 0
         while (true) {
             canScan = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+            locationOn = (context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)
+                ?.let(LocationManagerCompat::isLocationEnabled) ?: true
             // Android throttles scan requests (4 per 2 minutes); results also arrive from system scans
             if (polls++ % 15 == 0) DirectLink.requestScan(context)
             nearbyNetworks = withContext(Dispatchers.IO) { DirectLink.nearbyNetworks(context) }
@@ -495,6 +504,17 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                             Screen.HOTSPOT -> HotspotContent(
                                 networks = nearbyNetworks,
                                 canScan = canScan,
+                                locationOn = locationOn,
+                                // the prompt already ran when this screen opened (and Android stops
+                                // showing it after two refusals), so go to the system screens
+                                onFixScan = {
+                                    val intent = if (!canScan) {
+                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                                    } else {
+                                        Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                    }
+                                    runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                                },
                                 enabled = busyText == null,
                                 onHost = { open(Screen.HOST_HOTSPOT) },
                                 onNetworkSelected = { joinHotspot(it, DirectLink.PASSPHRASE) },
@@ -668,6 +688,8 @@ private fun StartContent(
 private fun HotspotContent(
     networks: List<String>,
     canScan: Boolean,
+    locationOn: Boolean,
+    onFixScan: () -> Unit,
     enabled: Boolean,
     onHost: () -> Unit,
     onNetworkSelected: (String) -> Unit,
@@ -681,7 +703,12 @@ private fun HotspotContent(
     OptionRow(stringResource(R.string.multiplayer_host_hotspot), stringResource(R.string.multiplayer_host_hotspot_hint), enabled, onHost)
     Text(stringResource(R.string.multiplayer_nearby_networks), style = MaterialTheme.typography.subtitle2)
     when {
-        !canScan -> Text(stringResource(R.string.multiplayer_location_needed), style = MaterialTheme.typography.body2)
+        !canScan || !locationOn -> Text(
+            stringResource(if (!canScan) R.string.multiplayer_location_needed else R.string.multiplayer_location_off),
+            style = MaterialTheme.typography.body2,
+            color = MaterialTheme.colors.primary,
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onFixScan).padding(vertical = 8.dp),
+        )
         networks.isEmpty() -> Text(stringResource(R.string.multiplayer_no_networks), style = MaterialTheme.typography.body2)
     }
     networks.forEach { network ->

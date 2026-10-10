@@ -696,7 +696,8 @@
     <string name="multiplayer_hotspot_unsupported">Needs Android 10 or newer.</string>
     <string name="multiplayer_nearby_networks">Nearby SereneDS networks</string>
     <string name="multiplayer_no_networks">None found yet. Make sure the host has started its hotspot.</string>
-    <string name="multiplayer_location_needed">Allow location access to list nearby networks (Android only shows Wi-Fi scan results to apps that have it), or type the network name below.</string>
+    <string name="multiplayer_location_needed">Tap here to allow location access so nearby games are listed (Android only shows Wi-Fi scan results to apps that have it), or type the network name below.</string>
+    <string name="multiplayer_location_off">Tap here to turn on Location so nearby games are listed (Android hides Wi-Fi scan results while it is off), or type the network name below.</string>
     <string name="multiplayer_permission_rationale">SereneDS asks for Nearby devices access to create or join a game network, and location access to list nearby networks. The game network only carries game traffic; your location is not used or stored.</string>
     <string name="multiplayer_network_name">Network name</string>
     <string name="multiplayer_network_password">Password</string>

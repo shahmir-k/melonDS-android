@@ -69,6 +69,11 @@ if (LITEV_LAN_KTIME)
     add_compile_definitions(LITEV_LAN_KTIME)
 endif()
 # Hosted Netplay (core src/net/HostedMP): the frontend and net-utils need the define too
+# LITEV_JIT_COMPILE_STATS: JIT compile time per phase as extra replay-log columns (diagnosis only).
+option(LITEV_JIT_COMPILE_STATS "Replay log: JIT compile time per phase" OFF)
+if (LITEV_JIT_COMPILE_STATS)
+    add_compile_definitions(LITEV_JIT_COMPILE_STATS=1)
+endif()
 option(LITEV_HOSTED_NETPLAY "Hosted Netplay: one device runs every console, the others replay their own" OFF)
 if (LITEV_HOSTED_NETPLAY)
     add_compile_definitions(LITEV_HOSTED_NETPLAY=1)

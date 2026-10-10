@@ -41,6 +41,9 @@
 #include <unistd.h>
 #include <pthread.h>
 namespace melonDS { extern std::uint64_t JitCompileCount, JitProtectCalls, JitProtectFaults; }
+#ifdef LITEV_JIT_COMPILE_STATS
+#include "ARMJIT_Internal.h"
+#endif
 #if defined(LITEV_SLOWMEM_HIST) || defined(LITEV_ACCESS_STATS)
 #include <android/log.h>
 #endif
@@ -607,15 +610,18 @@ namespace MelonDSAndroid
         netplayApply(*instance, in);
         // debug.litev.markframes=<a>-<b>: the emulator thread is named "markframes" while it runs
         // recording frames a..b, so a profile can sort samples by thread name (simpleperf --sort comm)
-        static int markA = -1, markB = -1;
-        static bool markRead = false;
-        if (!markRead)
+        // (a comma-separated list of ranges works too: "437-441,7525-7570")
+        static int markA[8], markB[8], markN = -1;
+        if (markN < 0)
         {
-            markRead = true;
+            markN = 0;
             char v[PROP_VALUE_MAX] = {};
-            if (__system_property_get("debug.litev.markframes", v) > 0) sscanf(v, "%d-%d", &markA, &markB);
+            if (__system_property_get("debug.litev.markframes", v) > 0)
+                for (const char* q = v; markN < 8 && sscanf(q, "%d-%d", &markA[markN], &markB[markN]) == 2; markN++)
+                    if (!(q = strchr(q, ','))) { markN++; break; } else q++;
         }
-        const bool marked = r.frame >= markA && r.frame <= markB;
+        bool marked = false;
+        for (int k = 0; k < markN; k++) marked |= r.frame >= markA[k] && r.frame <= markB[k];
         if (marked) pthread_setname_np(pthread_self(), "markframes");
         u32 lines = instance->runFrame();
         if (marked) pthread_setname_np(pthread_self(), "EmulatorThread");
@@ -630,8 +636,20 @@ namespace MelonDSAndroid
             // JIT blocks compiled, code-protection mprotect calls, and faulting stores rewritten
             // to the slow path during this frame (docs/JIT-CODE-PROTECTION-MPROTECT.md)
             static std::uint64_t lastJit = 0, lastProt = 0, lastFlt = 0;
-            fprintf(r.log, ",%llu,%llu,%llu\n", (unsigned long long)(melonDS::JitCompileCount - lastJit),
+            fprintf(r.log, ",%llu,%llu,%llu", (unsigned long long)(melonDS::JitCompileCount - lastJit),
                     (unsigned long long)(melonDS::JitProtectCalls - lastProt), (unsigned long long)(melonDS::JitProtectFaults - lastFlt));
+#ifdef LITEV_JIT_COMPILE_STATS
+            {   // + JIT compile time per phase this frame, us (lib src/ARMJIT_Internal.h JitPhase)
+                static std::uint64_t lastPh[melonDS::JitPhase_Count];
+                static const double us = 1e6 / melonDS::JitTicksPerSec();
+                for (int p = 0; p < melonDS::JitPhase_Count; p++)
+                {
+                    fprintf(r.log, ",%.0f", (melonDS::JitCompileTicks[p] - lastPh[p]) * us);
+                    lastPh[p] = melonDS::JitCompileTicks[p];
+                }
+            }
+#endif
+            fprintf(r.log, "\n");
             lastJit = melonDS::JitCompileCount; lastProt = melonDS::JitProtectCalls; lastFlt = melonDS::JitProtectFaults;
         }
         if (r.parts)

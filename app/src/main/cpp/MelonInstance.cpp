@@ -584,6 +584,9 @@ u32 MelonInstance::runFrame()
     nds->GPU.SkipRepeatEnabled = skipRepeatMode == 2 || (skipRepeatMode == 1 && skipRepeatMp)
                               || (skipRepeatMode == 3 && (skipRepeatMp || skipRepeatAuto));
 #endif
+#ifdef LITEV_SPU_RATE_DIV
+    nds->SPU.RateDiv = (u32)std::atomic_load(&currentConfiguration)->audioQualityDiv;   // Audio quality setting
+#endif
 
     // presentation size: from the scale the renderer was actually configured with
     int screenWidth = 256 * currentScale;

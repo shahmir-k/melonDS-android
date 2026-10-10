@@ -20,6 +20,16 @@
             android:defaultValue="none" />
 
     <ListPreference
+            android:key="audio_quality"
+            android:title="@string/audio_quality"
+            android:dependency="sound_enabled"
+            android:summary="%s"
+            app:iconSpaceReserved="false"
+            android:entries="@array/audio_quality_options"
+            android:entryValues="@array/audio_quality_values"
+            android:defaultValue="4" />
+
+    <ListPreference
             android:key="audio_bitrate"
             android:title="@string/bitrate"
             android:dependency="sound_enabled"

@@ -30,5 +30,7 @@ data class EmulatorConfiguration(
         val autoFrameskipEnabled: Boolean = false,
         val fastForwardMaxFrameskip: Int = 0,
         // debug.litev.skiprepeat values: 3 auto, 2 always, 1 off (Netplay/LAN keep it on)
-        val skipRepeatMode: Int = 2
+        val skipRepeatMode: Int = 2,
+        // Audio quality: 1 full, 2 balanced (mix at half rate), 4 performance (quarter rate)
+        val audioQualityDiv: Int = 4
 )

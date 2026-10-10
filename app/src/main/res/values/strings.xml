@@ -589,6 +589,12 @@
         <item>@string/bottom_screen</item>
     </string-array>
 
+    <string name="audio_quality">Audio quality</string>
+    <string-array name="audio_quality_options">
+        <item>Full (most CPU)</item>
+        <item>Balanced (half mix rate)</item>
+        <item>Performance (quarter mix rate, fastest)</item>
+    </string-array>
     <string-array name="audio_interpolation_options">
         <item>None</item>
         <item>Linear</item>

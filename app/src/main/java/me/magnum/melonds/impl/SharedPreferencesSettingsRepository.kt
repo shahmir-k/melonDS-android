@@ -173,6 +173,7 @@ class SharedPreferencesSettingsRepository(
             autoFrameskipEnabled = isAutoFrameskipEnabled(),
             fastForwardMaxFrameskip = getFastForwardMaxFrameskip(),
             skipRepeatMode = preferences.getString("skip_repeat_frames", "2")!!.toInt(),
+            audioQualityDiv = preferences.getString("audio_quality", "4")!!.toInt(),
         )
     }
 

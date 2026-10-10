@@ -75,7 +75,8 @@ typedef struct
     float fastForwardSpeedMultiplier;
     bool autoFrameskipEnabled;
     int fastForwardMaxFrameskip;
-    int skipRepeatMode;   // debug.litev.skiprepeat values: 3 auto, 2 always, 1 Netplay/LAN only
+    int skipRepeatMode;
+    int audioQualityDiv = 4;   // Audio quality: 1 full, 2 balanced (half mix rate), 4 performance   // debug.litev.skiprepeat values: 3 auto, 2 always, 1 Netplay/LAN only
     bool showBootScreen;
     bool useJit;
     int consoleType;

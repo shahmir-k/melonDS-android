@@ -965,6 +965,14 @@ namespace MelonDSAndroid
             if (!s.running) break;
             netplayRecord(s, r->player, f, in);
             netplayApply(*r->console, in);
+#ifdef LITEV_REMOTE_GX_SINK
+            if (f == 600)
+            {
+                GPU3D& gx = r->console->getNds()->GPU.GPU3D;
+                if (gx.TimingFixed && !GPU3D::SinkVeto.load()) gx.Sink = true;
+                Platform::Log(Platform::LogLevel::Info, "Netplay: player %d's console: geometry sink %s\n", r->player, gx.Sink ? "on" : "off");
+            }
+#endif
             r->console->runFrameHeadless();
 #ifdef LITEV_NP_SPEED
             if ((f & 63) == 0) r->cpuMs = threadCpuMs();
@@ -1087,6 +1095,21 @@ namespace MelonDSAndroid
     }
 
     // Another player's console, booting `romPath` from that player's save.
+#ifdef LITEV_REMOTE_GX_SINK
+    // Netplay, every console (local and remote copies, on every device): fixed polygon timing for
+    // games known never to read geometry results, so the remote copies can skip the geometry math
+    // (GPU3D::Sink, from frame 600) and still send their frames at the owner's clock.
+    // debug.litev.remotegx=0 turns it off: it must be the same on every device of a session.
+    static bool netplayGxTiming(NDS* nds)
+    {
+        static const int prop = [] { char b[8] = {0}; return __system_property_get("debug.litev.remotegx", b) > 0 ? atoi(b) : 1; }();
+        const auto* cart = nds->NDSCartSlot.GetCart();
+        const bool on = prop != 0 && cart && GPU3D::SinkGameOK(cart->GetHeader().GameCode);
+        nds->GPU.GPU3D.TimingFixed = on;
+        return on;
+    }
+#endif
+
     static bool netplayAddRemote(int player, const std::string& romPath, const std::vector<u8>& save, const std::string& tag)
     {
         auto r = std::make_unique<NetplayRemote>();
@@ -1109,6 +1132,9 @@ namespace MelonDSAndroid
         netplaySetClock(player, nds);
         netplayLoadScript("debug.litev.npscript2", r->script, player);
         bool ok = r->console->loadRom(romPath, netplaySavePath(player, save, tag));
+#ifdef LITEV_REMOTE_GX_SINK
+        if (ok) netplayGxTiming(nds);
+#endif
         netplay->remotes.push_back(std::move(r));   // even on failure: netplayStop stops it
         return ok;
     }
@@ -1271,6 +1297,10 @@ namespace MelonDSAndroid
         }
         if (!instance->loadRom(std::move(romPath), std::move(sramPath)))
             return 2;
+#ifdef LITEV_REMOTE_GX_SINK
+        if (netplay && netplayGxTiming(instance->getNds()))
+            Platform::Log(Platform::LogLevel::Info, "Netplay: fixed geometry timing on every console (remote copies sink from frame 600)\n");
+#endif
         if (netplay)
             return 0; // no GBA slot: the other device may not have the same cartridge
 

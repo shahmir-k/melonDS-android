@@ -60,6 +60,11 @@ int targetFps;
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
+#ifdef LITEV_NP_SPEED
+// the fast-forward speed setting: in plain Netplay the session's speed drives the variables above,
+// and the fast-forward key asks the session for this
+static float ffSetting = 2.0f;
+#endif
 #ifdef LITEV_AGGRESSIVE_SKIP
 // Frameskip-based fast-forward ("Fast-forward max frameskip" setting, 0..9, default 0).
 // The limiter-only fast-forward can't speed anything up when the device already runs
@@ -135,6 +140,9 @@ Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jo
 {
     MelonDSAndroid::EmulatorConfiguration finalEmulatorConfiguration = MelonDSAndroidConfiguration::buildEmulatorConfiguration(env, emulatorConfiguration);
     fastForwardSpeedMultiplier = finalEmulatorConfiguration.fastForwardSpeedMultiplier;
+#ifdef LITEV_NP_SPEED
+    ffSetting = fastForwardSpeedMultiplier;
+#endif
 #ifdef LITEV_AUTO_FRAMESKIP
     autoFrameskipEnabled = finalEmulatorConfiguration.autoFrameskipEnabled;
     // New emulator session (the emu thread is not running yet): start from no skip.
@@ -645,6 +653,10 @@ Java_me_magnum_melonds_MelonEmulator_takeScreenshot(JNIEnv* env, jobject thiz)
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_setFastForwardEnabled(JNIEnv* env, jobject thiz, jboolean enabled)
 {
+#ifdef LITEV_NP_SPEED
+    // plain Netplay: the key asks every device to speed up (the session applies it at one frame)
+    if (MelonDSAndroid::netplayRequestSpeed(enabled, ffSetting)) return;
+#endif
     isFastForwardEnabled = enabled;
     if (enabled) {
         limitFps = fastForwardSpeedMultiplier > 0;
@@ -682,6 +694,12 @@ Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jo
 {
     MelonDSAndroid::EmulatorConfiguration newConfiguration = MelonDSAndroidConfiguration::buildEmulatorConfiguration(env, emulatorConfiguration);
 
+#ifdef LITEV_NP_SPEED
+    ffSetting = newConfiguration.fastForwardSpeedMultiplier;
+    // plain Netplay: the session's speed drives fast-forward; the setting is what the key asks for next
+    const bool npDriven = MelonDSAndroid::netplayKind() == 1;
+    if (!npDriven)
+#endif
     fastForwardSpeedMultiplier = newConfiguration.fastForwardSpeedMultiplier;
 #ifdef LITEV_AUTO_FRAMESKIP
     autoFrameskipEnabled = newConfiguration.autoFrameskipEnabled;
@@ -692,6 +710,9 @@ Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jo
 
     MelonDSAndroid::updateEmulatorConfiguration(std::make_unique<MelonDSAndroid::EmulatorConfiguration>(std::move(newConfiguration)));
 
+#ifdef LITEV_NP_SPEED
+    if (npDriven) return;
+#endif
     if (isFastForwardEnabled) {
         limitFps = fastForwardSpeedMultiplier > 0;
         targetFps = 60 * fastForwardSpeedMultiplier;
@@ -1260,6 +1281,30 @@ void* emulate(void*)
         double requestedSleepMs = 0.0;
         double actualSleepMs = 0.0;
 
+#ifdef LITEV_NP_SPEED
+        // Plain Netplay: the session's speed (the same frame on every device) is the fast-forward
+        // state: pacing, frameskip, skip-repeat and the sound follow it as for local fast-forward.
+        {
+            static bool npDriven = false;
+            float m;
+            if (MelonDSAndroid::netplaySpeed(m))
+            {
+                npDriven = true;
+                isFastForwardEnabled = m != 1.0f;
+                fastForwardSpeedMultiplier = m == 0 ? -1.0f : m;   // <= 0 = unlimited
+                limitFps = m != 0;
+                targetFps = m > 0 ? (int)(60 * m) : 60;
+            }
+            else if (npDriven)
+            {
+                npDriven = false;
+                isFastForwardEnabled = false;
+                fastForwardSpeedMultiplier = ffSetting;
+                limitFps = true;
+                targetFps = 60;
+            }
+        }
+#endif
         // All times are in ms
         double frameTimeStep = (double) nLines / ((float) targetFps * 263.0) * 1000.0;
         if (frameTimeStep < 1)

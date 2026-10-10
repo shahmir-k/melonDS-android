@@ -459,9 +459,17 @@ class EmulatorActivity : AppCompatActivity() {
                 left.forEach(::groupPlayerLeft)
                 // plain Netplay: a player silent for 10 s is gone (its app closed or its session
                 // ended); end the session here instead of waiting for its input forever
-                if (MelonEmulator.netplayKind() == 1 && withContext(Dispatchers.IO) { MelonEmulator.netplayStatus() } == "PEER LOST") {
+                val status = if (MelonEmulator.netplayKind() == 1) withContext(Dispatchers.IO) { MelonEmulator.netplayStatus() } else null
+                if (status == "PEER LOST") {
                     runGroupCommand(3 shl 8)
                     Toast.makeText(this@EmulatorActivity, getString(R.string.multiplayer_peer_lost), Toast.LENGTH_LONG).show()
+                }
+                // session speed (any player's fast-forward key): "FF 2x by P2" / "uncapped by P1" after " · "
+                val speed = status?.substringAfter(" · ", "") ?: ""
+                if (status != null && status.startsWith("Netplay") && speed != netplaySpeedShown) {
+                    netplaySpeedShown = speed
+                    Toast.makeText(this@EmulatorActivity, if (speed.isEmpty()) getString(R.string.multiplayer_speed_normal)
+                        else getString(R.string.multiplayer_speed, speed), Toast.LENGTH_SHORT).show()
                 }
                 delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
             }
@@ -1274,6 +1282,7 @@ class EmulatorActivity : AppCompatActivity() {
         if (isFinishing) DirectLink.leave(this)
     }
 
+    private var netplaySpeedShown = ""     // the session speed last toasted ("" = normal)
     private var netplayTransferDialog: AlertDialog? = null
     private var netplayTransferProgress: ProgressBar? = null
     private var netplayTransferAsking = false

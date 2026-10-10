@@ -529,7 +529,13 @@ void MelonInstance::reset()
 void MelonInstance::setFrameskipTarget(int target)
 {
     if (nds)
+#ifdef LITEV_NP_SPEED
+        // plain Netplay fast-forward: the local console may skip drawing (KeepCaptures, set at
+        // session start, draws every frame once the game captures: skipping never reaches guest state)
+        nds->GPU.SetFrameskipTarget(MelonDSAndroid::netplaySkipAllowed() ? target : 0);
+#else
         nds->GPU.SetFrameskipTarget(MelonDSAndroid::netplayActive() ? 0 : target);
+#endif
 }
 #endif
 

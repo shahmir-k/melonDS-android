@@ -700,7 +700,7 @@
     <string name="multiplayer_permission_rationale">SereneDS asks for Nearby devices access to create or join a game network, and location access to list nearby networks. The game network only carries game traffic; your location is not used or stored.</string>
     <string name="multiplayer_network_name">Network name</string>
     <string name="multiplayer_network_password">Password</string>
-    <string name="multiplayer_hotspot_confirm_hint">This device will create the network below and host the session on it. The other players open Multiplayer, choose Hotspot and pick it.</string>
+    <string name="multiplayer_hotspot_confirm_hint">This device will create a game network (DIRECT-XY, or DS_XYZ if Wi-Fi Direct is unavailable) and host the session on it. The other players open Multiplayer, choose Hotspot and tap it in the list.</string>
     <string name="multiplayer_hotspot_network">Network: %1$s</string>
     <string name="multiplayer_hotspot_password">Password: %1$s</string>
     <string name="multiplayer_confirm">Confirm</string>

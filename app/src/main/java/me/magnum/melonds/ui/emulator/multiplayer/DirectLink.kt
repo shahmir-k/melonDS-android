@@ -31,11 +31,12 @@ data class HostedNetwork(val ssid: String, val passphrase: String, val hostAddre
  * router (in Shrek races this cuts the per-exchange round trip from ~5.5 ms to ~3.3 ms).
  *
  * Hosting (a normal app cannot start a classic hotspot with its own name):
- * 1. Wi-Fi Direct group named "DIRECT-XY" (Android 10+; the shortest name Android allows, so a
- *    joiner types two characters after the prefilled "DIRECT-"). The host stays on its
+ * 1. Wi-Fi Direct group named exactly "DIRECT-XY" (Android 10+; the Wi-Fi Direct spec and
+ *    WifiP2pConfig require "DIRECT-" + 2 characters, we add nothing after them). The host stays on its
  *    normal Wi-Fi; the group shares that network's channel, so it can fail when that channel is
  *    one the radio cannot run a group on (e.g. a DFS channel).
- * 2. Fallback: local-only hotspot with the same name (hidden Android 13+ overload).
+ * 2. Fallback: local-only hotspot named "DS_XYZ" (hidden Android 13+ overload; not Wi-Fi Direct,
+ *    so the DIRECT- rule does not apply).
  * 3. Last resort: plain local-only hotspot; Android picks the name and password and the dialog
  *    shows them so players can type them in.
  * Joiners connect with a WifiNetworkSpecifier (one system approval prompt) and then talk to the
@@ -51,9 +52,10 @@ data class HostedNetwork(val ssid: String, val passphrase: String, val hostAddre
  */
 object DirectLink {
     const val NAME_PREFIX = "DIRECT-"
+    private const val HOTSPOT_PREFIX = "DS_"
     // unambiguous when typed: no 0/O, 1/I/L
     private const val NAME_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-    private val OUR_NAME = Regex("DIRECT-[A-Z0-9]{2}")
+    private val OUR_NAME = Regex("DIRECT-[A-Z0-9]{2}|DS_[A-Z0-9]{3}")
     const val PASSPHRASE = "sereneDS"
     // Wi-Fi Direct group owners always use this address (Android convention); used only when the
     // network does not report its DHCP server / gateway
@@ -81,20 +83,20 @@ object DirectLink {
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
     private var clientCallback: ConnectivityManager.NetworkCallback? = null
 
-    fun randomName() = NAME_PREFIX + (1..2).map { NAME_CHARS.random() }.joinToString("")
+    private fun randomChars(n: Int) = (1..n).map { NAME_CHARS.random() }.joinToString("")
 
-    /** A network this app could have created (other Wi-Fi Direct devices, e.g. printers, add a suffix). */
+    /** A network this app could have created (sorted first in the scan list). */
     fun isOurName(ssid: String) = OUR_NAME.matches(ssid)
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private fun connectivity(context: Context) = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     /** Creates the network this device hosts the session on (see the class comment). */
-    suspend fun host(context: Context, name: String): HostedNetwork? {
+    suspend fun host(context: Context): HostedNetwork? {
         if (!isSupported) return null
         leave(context)
-        val network = hostWifiDirect(context, name)
-            ?: (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) hostHotspot(context, name) else null)
+        val network = hostWifiDirect(context, NAME_PREFIX + randomChars(2))
+            ?: (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) hostHotspot(context, HOTSPOT_PREFIX + randomChars(3)) else null)
             ?: hostHotspot(context, null)
         hosted = network
         return network
@@ -212,13 +214,16 @@ object DirectLink {
         runCatching { wifi(context).startScan() }
     }
 
-    /** SereneDS networks in the latest scan results, strongest first. Empty without location access. */
+    /**
+     * Networks starting with DIRECT- or DS_ in the latest scan results: ours (exact format) first,
+     * then strongest first. Empty without location access.
+     */
     @SuppressLint("MissingPermission")
     fun nearbyNetworks(context: Context): List<String> = runCatching {
         @Suppress("DEPRECATION")
         wifi(context).scanResults
-            .filter { isOurName(it.SSID) }
-            .sortedByDescending { it.level }
+            .filter { it.SSID.startsWith(NAME_PREFIX) || it.SSID.startsWith(HOTSPOT_PREFIX) }
+            .sortedWith(compareByDescending<android.net.wifi.ScanResult> { isOurName(it.SSID) }.thenByDescending { it.level })
             .map { it.SSID }
             .distinct()
     }.getOrDefault(emptyList())

@@ -144,7 +144,6 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     var players by remember { mutableStateOf(emptyList<LanPlayer>()) }
     var busyText by remember { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
-    var hotspotName by remember { mutableStateOf(DirectLink.randomName()) }
     var nearbyNetworks by remember { mutableStateOf(emptyList<String>()) }
     var manualSsid by remember { mutableStateOf(DirectLink.NAME_PREFIX) }
     var manualPassword by remember { mutableStateOf(DirectLink.PASSPHRASE) }
@@ -289,7 +288,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
 
     fun hostHotspot() = withNetworkPermission {
         runAction(directStarting, directFailed) {
-            DirectLink.host(context, hotspotName) != null &&
+            DirectLink.host(context) != null &&
                 MelonEmulator.lanHost(name, maxPlayers).also { if (!it) DirectLink.leave(context) }
         }
     }
@@ -303,7 +302,6 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     fun open(next: Screen) {
         errorText = null
         if (next == Screen.HOTSPOT) withNetworkPermission(null)
-        if (next == Screen.HOST_HOTSPOT) hotspotName = DirectLink.randomName()
         screen = next
     }
 
@@ -509,7 +507,6 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                             )
                             Screen.HOST_HOTSPOT -> {
                                 Text(stringResource(R.string.multiplayer_hotspot_confirm_hint), style = MaterialTheme.typography.body2)
-                                Text(stringResource(R.string.multiplayer_hotspot_network, hotspotName), style = MaterialTheme.typography.subtitle1)
                                 Text(stringResource(R.string.multiplayer_hotspot_password, DirectLink.PASSPHRASE), style = MaterialTheme.typography.subtitle1)
                                 StartContent(
                                     playerName = playerName,
@@ -557,7 +554,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                     }
                     parent?.let { DialogButton(stringResource(R.string.multiplayer_back), enabled = idle) { open(it) } }
                     when (screen) {
-                        Screen.HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle && manualSsid.trim().length > DirectLink.NAME_PREFIX.length) {
+                        Screen.HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle && manualSsid.isNotBlank() && manualSsid.trim() != DirectLink.NAME_PREFIX) {
                             joinHotspot(manualSsid, manualPassword)
                         }
                         Screen.HOST_HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_confirm), enabled = idle) { hostHotspot() }

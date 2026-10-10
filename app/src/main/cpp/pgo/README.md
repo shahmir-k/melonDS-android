@@ -4,8 +4,16 @@
 recorded on the RG DS by instrumented `liteDS-headless` binaries built from the same core
 source, LITEV flag set and codegen (ThinLTO, -mtune=cortex-a55) as this app.
 
-Trained on (2026-10-06): Pokemon White `.ml2` (overworld), `.ml1` (intro), `.ml3` (cutscene),
-2000 frames each; Shrek `race-fresh.mln`, 1000 frames.
+Trained on (2026-10-10, lib litev-town2 incl. A7HLE/A9HLE/GX bulk levers): Pokemon White `.ml2`
+(overworld, 1500 f), `.ml1` (intro, 1000 f), `.ml3` (cutscene, 1000 f) and four record-mode segments
+of recording 20261009-144242 with their inputs (town f6500 600 f, gift box f10100 600 f, title
+f1300 700 f, overworld f17000 900 f); Shrek slot-2 race `.ml2`, 1000 f; the two-console Netplay
+race, 4200 f. The 2026-10-07 profile predated the HLE and GX levers: A9HLE::Run, A7HLE, BulkWords,
+the bulk GX executor and RunADPCMFast had no profile data, and the hot order missed every template
+(weak symbol) such as the GX executor and ARMv5::Execute.
+
+The app CMake hashes the profile into a define and relinks when hot-symbols.order changes; before
+that, replacing either file left ninja's objects up to date and the APK unchanged.
 
 Code those scenes never ran is compiled as cold, so games outside the training set can be
 slightly slower on paths only they use; a stale profile (core changed since) is still correct

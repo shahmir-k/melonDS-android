@@ -50,12 +50,25 @@ if (LITEV_PGO_USE)
     # IR-level profile plus a context-sensitive (CSPGO) pass recorded on the ThinLTO build;
     # the CS part is applied at link time, so the link needs -fprofile-use as well.
     set(LITEV_PGO_PROFILE ${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/pgo/core-cs.profdata)
+    # ninja doesn't track the profile: its hash as a define recompiles everything when it changes
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LITEV_PGO_PROFILE})
+    file(MD5 ${LITEV_PGO_PROFILE} LITEV_PGO_MD5)
+    add_compile_definitions(LITEV_PGO_ID=${LITEV_PGO_MD5})
     add_compile_options(-fprofile-use=${LITEV_PGO_PROFILE}
         -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-profile-instr-missing)
     # The profile comes from liteDS-headless, so functions that differ in this build (main
     # of the bundled faad_cli, Android-only paths) mismatch; lld warns, and the NDK links
     # with --fatal-warnings. A mismatched function just gets no profile data.
     add_link_options(-fprofile-use=${LITEV_PGO_PROFILE} -Wl,--no-lto-pgo-warn-mismatch)
+endif()
+
+# LITEV_SPLIT_FUNCS: with the PGO profile, move each function's never-run blocks out of line
+# (-fsplit-machine-functions: cold parts go to .text.split), so the hot code of big functions
+# (SubmitPolygon, ExecuteCommand, the HLE hooks) spans fewer i-cache lines on the A55. Layout only (A).
+option(LITEV_SPLIT_FUNCS "Split cold blocks out of profiled functions" OFF)
+if (LITEV_SPLIT_FUNCS AND LITEV_PGO_USE)
+    add_compile_options(-fsplit-machine-functions)
+    add_link_options(-fsplit-machine-functions)
 endif()
 
 # LITEV_LAN_STATS: measurement-only LAN multiplayer wait statistics (core src/net/LAN.cpp).
@@ -152,4 +165,6 @@ if (LITEV_HOT_ORDER)
     target_link_options(melonDS-android-frontend PRIVATE
         -Wl,--symbol-ordering-file=${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/hot-symbols.order
         -Wl,--no-warn-symbol-ordering)
+    set_property(TARGET melonDS-android-frontend APPEND PROPERTY LINK_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/hot-symbols.order)
 endif()

@@ -31,7 +31,8 @@ data class HostedNetwork(val ssid: String, val passphrase: String, val hostAddre
  * router (in Shrek races this cuts the per-exchange round trip from ~5.5 ms to ~3.3 ms).
  *
  * Hosting (a normal app cannot start a classic hotspot with its own name):
- * 1. Wi-Fi Direct group named "DIRECT-xy-sereneDS_ab12" (Android 10+). The host stays on its
+ * 1. Wi-Fi Direct group named "DIRECT-XY" (Android 10+; the shortest name Android allows, so a
+ *    joiner types two characters after the prefilled "DIRECT-"). The host stays on its
  *    normal Wi-Fi; the group shares that network's channel, so it can fail when that channel is
  *    one the radio cannot run a group on (e.g. a DFS channel).
  * 2. Fallback: local-only hotspot with the same name (hidden Android 13+ overload).
@@ -49,7 +50,10 @@ data class HostedNetwork(val ssid: String, val passphrase: String, val hostAddre
  * (android_setsocknetwork in JNI) if that matters.
  */
 object DirectLink {
-    const val NAME_PREFIX = "sereneDS_"
+    const val NAME_PREFIX = "DIRECT-"
+    // unambiguous when typed: no 0/O, 1/I/L
+    private const val NAME_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    private val OUR_NAME = Regex("DIRECT-[A-Z0-9]{2}")
     const val PASSPHRASE = "sereneDS"
     // Wi-Fi Direct group owners always use this address (Android convention); used only when the
     // network does not report its DHCP server / gateway
@@ -77,9 +81,10 @@ object DirectLink {
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
     private var clientCallback: ConnectivityManager.NetworkCallback? = null
 
-    fun randomName() = NAME_PREFIX + randomChars(4)
+    fun randomName() = NAME_PREFIX + (1..2).map { NAME_CHARS.random() }.joinToString("")
 
-    private fun randomChars(n: Int) = (1..n).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
+    /** A network this app could have created (other Wi-Fi Direct devices, e.g. printers, add a suffix). */
+    fun isOurName(ssid: String) = OUR_NAME.matches(ssid)
 
     private fun wifi(context: Context) = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private fun connectivity(context: Context) = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -104,7 +109,7 @@ object DirectLink {
         p2pChannel = channel
         // a group left over from an earlier session would make createGroup fail
         p2pAction { manager.removeGroup(channel, it) }
-        val ssid = "DIRECT-${randomChars(2)}-$name"
+        val ssid = name
         val config = WifiP2pConfig.Builder()
             .setNetworkName(ssid)
             .setPassphrase(PASSPHRASE)
@@ -212,7 +217,7 @@ object DirectLink {
     fun nearbyNetworks(context: Context): List<String> = runCatching {
         @Suppress("DEPRECATION")
         wifi(context).scanResults
-            .filter { it.SSID.contains(NAME_PREFIX) }
+            .filter { isOurName(it.SSID) }
             .sortedByDescending { it.level }
             .map { it.SSID }
             .distinct()
@@ -236,7 +241,7 @@ object DirectLink {
             val callback = object : ConnectivityManager.NetworkCallback() {
                 override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
                     if (!cont.isActive) return
-                    val host = hostAddressOf(linkProperties) ?: if (ssid.startsWith("DIRECT-")) P2P_GROUP_OWNER_ADDRESS else return
+                    val host = hostAddressOf(linkProperties) ?: if (ssid.startsWith(NAME_PREFIX)) P2P_GROUP_OWNER_ADDRESS else return
                     cm.bindProcessToNetwork(network)
                     cont.resume(host)
                 }

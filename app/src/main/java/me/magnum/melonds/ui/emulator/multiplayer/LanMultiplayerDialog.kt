@@ -146,7 +146,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     var errorText by remember { mutableStateOf<String?>(null) }
     var hotspotName by remember { mutableStateOf(DirectLink.randomName()) }
     var nearbyNetworks by remember { mutableStateOf(emptyList<String>()) }
-    var manualSsid by remember { mutableStateOf("") }
+    var manualSsid by remember { mutableStateOf(DirectLink.NAME_PREFIX) }
     var manualPassword by remember { mutableStateOf(DirectLink.PASSPHRASE) }
     var canScan by remember { mutableStateOf(false) }
     // Netplay players: the largest complete lobby seen (everyone connected, addresses known).
@@ -501,7 +501,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                 onHost = { open(Screen.HOST_HOTSPOT) },
                                 onNetworkSelected = { joinHotspot(it, DirectLink.PASSPHRASE) },
                                 ssid = manualSsid,
-                                onSsidChange = { manualSsid = it },
+                                onSsidChange = { manualSsid = it.uppercase() },
                                 password = manualPassword,
                                 onPasswordChange = { manualPassword = it },
                                 playerName = playerName,
@@ -557,7 +557,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                     }
                     parent?.let { DialogButton(stringResource(R.string.multiplayer_back), enabled = idle) { open(it) } }
                     when (screen) {
-                        Screen.HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle && manualSsid.isNotBlank()) {
+                        Screen.HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle && manualSsid.trim().length > DirectLink.NAME_PREFIX.length) {
                             joinHotspot(manualSsid, manualPassword)
                         }
                         Screen.HOST_HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_confirm), enabled = idle) { hostHotspot() }
@@ -781,7 +781,7 @@ private fun LobbyContent(hosting: Boolean, players: List<LanPlayer>, network: Ho
     network?.let {
         Text(stringResource(R.string.multiplayer_hosting_network, it.ssid, it.passphrase), style = MaterialTheme.typography.body2)
         // a plain local-only hotspot: Android chose the name, so players cannot find it by scanning
-        if (!it.wifiDirect && !it.ssid.contains(DirectLink.NAME_PREFIX)) {
+        if (!it.wifiDirect && !DirectLink.isOurName(it.ssid)) {
             Text(stringResource(R.string.multiplayer_hotspot_fallback), style = MaterialTheme.typography.caption)
         }
     }

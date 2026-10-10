@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <cstring>
@@ -110,6 +111,7 @@ namespace MelonDSAndroid
         bool exchange = true;                       // session setup with the host (exchange=0: testing, 2 players)
         bool autoDelay = true;                      // input delay from the measured round trips
         NetFaults faults;                           // testing: latency=,jitter=,loss= on received inputs
+        std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
         // Test/replay input, by applied frame: debug.litev.npscript (local player)
         std::map<int, NetplayFrameInput> script;
         // Every session records every player's applied inputs (netplay/rec_ID_pN.txt) in the same
@@ -848,6 +850,7 @@ namespace MelonDSAndroid
 
     int netplayKind() { return !netplay ? 0 : netplay->hosted ? 2 : 1; }
 
+    static constexpr double kNetplayPeerLostMs = 10000;
     std::string netplayStatus()
     {
         if (!netplay) return recordStatus();
@@ -858,6 +861,10 @@ namespace MelonDSAndroid
             for (int p = 1; p < netplay->players; p++)
                 if (netplay->input && netplay->input->Dropped(p)) return "Hosted Netplay (a player left)";
 #endif
+        // plain Netplay: every device waits for every input, so a player gone for good (its app
+        // closed, its session ended by a dropped group link) would hold the others forever
+        if (!netplay->hosted && netplay->input && netplay->input->MsSincePeer() > kNetplayPeerLostMs
+            && std::chrono::steady_clock::now() - netplay->created > std::chrono::seconds(30)) return "PEER LOST";
         return netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
     }
 

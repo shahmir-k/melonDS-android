@@ -451,12 +451,18 @@ class EmulatorActivity : AppCompatActivity() {
 
         // the multiplayer group (a Netplay lobby kept connected): pump it, follow the host's commands.
         // Also while the activity is stopped (screen off, another app on top): the group's links
-        // time out after 3 s unpumped, which dropped a sleeping device from its group mid-session.
+        // time out after 10 s unpumped, which dropped a sleeping device from its group mid-session.
         lifecycleScope.launch {
             while (true) {
                 val (request, left) = withContext(Dispatchers.IO) { MelonEmulator.groupTake() to MelonEmulator.groupLeft() }
                 if (request >= 0) runGroupCommand(request)
                 left.forEach(::groupPlayerLeft)
+                // plain Netplay: a player silent for 10 s is gone (its app closed or its session
+                // ended); end the session here instead of waiting for its input forever
+                if (MelonEmulator.netplayKind() == 1 && withContext(Dispatchers.IO) { MelonEmulator.netplayStatus() } == "PEER LOST") {
+                    runGroupCommand(3 shl 8)
+                    Toast.makeText(this@EmulatorActivity, getString(R.string.multiplayer_peer_lost), Toast.LENGTH_LONG).show()
+                }
                 delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
             }
         }
@@ -759,7 +765,7 @@ class EmulatorActivity : AppCompatActivity() {
     }
 
     /**
-     * A player's group link closed (Leave group, or its device dropped: ~3 s timeout). Plain Netplay
+     * A player's group link closed (Leave group, or its device dropped: ~10 s timeout). Plain Netplay
      * runs every player's console on every device, so the others would wait for its input forever:
      * the lobby host restarts the session without it (a fresh session: deterministic), or ends it when
      * only the leader remains. The leader leaving, or the lobby host (the group's hub), ends the

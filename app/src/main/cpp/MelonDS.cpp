@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <ctime>
 #include <cstring>
 #include <utility>
@@ -39,6 +40,18 @@
 #include <algorithm>
 #include <unistd.h>
 #include <pthread.h>
+namespace melonDS { extern std::uint64_t JitCompileCount, JitProtectCalls, JitProtectFaults; }
+#if defined(LITEV_SLOWMEM_HIST) || defined(LITEV_ACCESS_STATS)
+#include <android/log.h>
+#endif
+#ifdef LITEV_SLOWMEM_HIST
+namespace melonDS { void LitevSlowHistLine(int h, char* buf, int len); }
+#endif
+#ifdef LITEV_ACCESS_STATS
+namespace melonDS { extern std::uint64_t LitevAccess[6][0x10000]; }
+#include <algorithm>
+#include <vector>
+#endif
 #include <sched.h>
 #include <zlib.h>
 #include <thread>
@@ -365,6 +378,25 @@ namespace MelonDSAndroid
             result = r.firstDiff >= 0 ? "REPLAY DIFFERS at frame " + std::to_string(r.firstDiff)
                    : r.frame < r.frames ? "REPLAY STOPPED at frame " + std::to_string(r.frame)
                    : "REPLAY OK";
+#ifdef LITEV_SLOWMEM_HIST
+            for (int h = 0; h < 4; h++) { char line[600]; melonDS::LitevSlowHistLine(h, line, sizeof(line)); __android_log_print(ANDROID_LOG_INFO, "melonDS", "%s", line); }
+#endif
+#ifdef LITEV_ACCESS_STATS
+            {
+                static const char* kinds[6] = {"R16", "R32", "W16", "W32", "R8", "W8"};
+                std::vector<std::pair<unsigned long long, int>> v;
+                for (int k = 0; k < 6; k++)
+                    for (int a = 0; a < 0x10000; a++)
+                        if (melonDS::LitevAccess[k][a]) v.push_back({melonDS::LitevAccess[k][a], (k << 16) | a});
+                std::sort(v.rbegin(), v.rend());
+                for (size_t i = 0; i < v.size() && i < 40; i++)
+                {
+                    int k = v[i].second >> 16, a = v[i].second & 0xFFFF;
+                    if (a >= 0xF000) __android_log_print(ANDROID_LOG_INFO, "melonDS", "ACCESS %s region %02X:%X %llu", kinds[k], (a >> 4) & 0xFF, a & 0xF, v[i].first);
+                    else __android_log_print(ANDROID_LOG_INFO, "melonDS", "ACCESS %s io %08X %llu", kinds[k], a >= 0x2000 ? 0x04100000 | (a & 0xFF) : 0x04000000 | a, v[i].first);
+                }
+            }
+#endif
             if (FILE* f = fopen((r.dir + "/replay-result.txt").c_str(), "w"))
             {
                 fprintf(f, "%s\nframes %d of %d, %zu hashes\n", result.c_str(), r.frame, r.frames, r.hashes.size());
@@ -522,7 +554,7 @@ namespace MelonDSAndroid
         char name[64];
         snprintf(name, sizeof(name), rec.replay ? "/replay-%ld.csv" : "/frames.csv", (long) time(nullptr));
         rec.log = fopen((dir + name).c_str(), "w");
-        if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,ff,hash\n");
+        if (rec.log) fprintf(rec.log, "frame,period_ms,loop_ms,runframe_ms,emu_cpu_ms,drawn,ff,hash,jit,mprotect,rewrites\n");
         char prop[PROP_VALUE_MAX] = {0};
         if (__system_property_get("debug.litev.rechash", prop) > 0 && atoi(prop) == 1)
         {
@@ -592,7 +624,13 @@ namespace MelonDSAndroid
             const auto& s = instance->lastFrameStats();
             fprintf(r.log, "%d,%.3f,%.3f,%.3f,%.3f,%d,%d,", r.frame, msSince(r.prev, t0), s.loopMs, s.runFrameMs, s.emuCpuMs,
                     s.drawn ? 1 : 0, ::isFastForwardEnabled ? 1 : 0);
-            if (hash) fprintf(r.log, "%016llx\n", (unsigned long long) hash); else fputs("\n", r.log);
+            if (hash) fprintf(r.log, "%016llx", (unsigned long long) hash);
+            // JIT blocks compiled, code-protection mprotect calls, and faulting stores rewritten
+            // to the slow path during this frame (docs/JIT-CODE-PROTECTION-MPROTECT.md)
+            static std::uint64_t lastJit = 0, lastProt = 0, lastFlt = 0;
+            fprintf(r.log, ",%llu,%llu,%llu\n", (unsigned long long)(melonDS::JitCompileCount - lastJit),
+                    (unsigned long long)(melonDS::JitProtectCalls - lastProt), (unsigned long long)(melonDS::JitProtectFaults - lastFlt));
+            lastJit = melonDS::JitCompileCount; lastProt = melonDS::JitProtectCalls; lastFlt = melonDS::JitProtectFaults;
         }
         if (r.parts)
         {

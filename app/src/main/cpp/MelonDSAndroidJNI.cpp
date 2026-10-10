@@ -1252,8 +1252,17 @@ void* emulate(void*)
         if (limitFps && !noLimit)
         {
             frameLimitError += frameTimeStep - delay;
+#ifdef LITEV_PACE_CATCHUP
+            // Up to N frames behind (debug.litev.pacedebt, default 3) are caught up by running the
+            // next frames without sleeping, so a one-off slow frame (a JIT compile burst) doesn't
+            // permanently drop game time. Upstream keeps only one frame of debt.
+            static const double maxDebt = [] { char b[92] = {}; return __system_property_get("debug.litev.pacedebt", b) > 0 ? atof(b) : 3.0; }();
+            if (frameLimitError < -maxDebt * frameTimeStep)
+                frameLimitError = -maxDebt * frameTimeStep;
+#else
             if (frameLimitError < -frameTimeStep)
                 frameLimitError = -frameTimeStep;
+#endif
             if (frameLimitError > frameTimeStep)
                 frameLimitError = frameTimeStep;
 

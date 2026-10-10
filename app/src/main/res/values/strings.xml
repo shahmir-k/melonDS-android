@@ -756,6 +756,7 @@
     <string name="multiplayer_player_left_restart">%1$s left: restarting with %2$d players</string>
     <string name="multiplayer_player_left_end">%1$s left: back to normal play</string>
     <string name="multiplayer_group_host_left">The host left</string>
+    <string name="multiplayer_peer_lost">Another player stopped responding: the Netplay session ended</string>
     <string name="multiplayer_leave_group_confirm">Leave the group? You stop following the host. A running Netplay session ends here and the game restarts normally.</string>
     <string name="multiplayer_runs_consoles">runs every console</string>
     <string name="multiplayer_pick_server_hint">Tap a player to make them the host that runs every console (pick the strongest device).</string>

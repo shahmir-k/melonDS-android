@@ -144,6 +144,8 @@ android {
                     // sets GPU/GPU3D::Headless and SPU::Silent on them in MelonDS.cpp).
                     "-DLITEV_NETPLAY_HEADLESS=ON",
                     "-DLITEV_NETPLAY_CAPTURE=ON",
+                    "-DLITEV_NP_WIRE_RUNS=ON",
+                    "-DLITEV_NP_ADAPTIVE_DELAY=ON",
                     // Hosted Netplay: the host runs every console, each guest only its own
                     "-DLITEV_HOSTED_NETPLAY=ON",
                     // LockstepMP: host frames 2 ms late (OFF: on device it makes Shrek's 2P

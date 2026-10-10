@@ -1,6 +1,7 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <jni.h>
+#include <chrono>
 #include <string>
 #include <sstream>
 #include <mutex>
@@ -1080,7 +1081,7 @@ Java_me_magnum_melonds_MelonEmulator_lanToGroup(JNIEnv* env, jobject thiz)
     {
         std::lock_guard<std::mutex> lk(groupMutex);
         groupLink = melonDS::MPInterface::Take();
-        grp().SetPeerTimeout(3000);     // a dropped device is noticed in ~3 s, like Hosted
+        grp().SetPeerTimeout(10000);    // a dropped device is noticed in 10 s: at 3 s a congested Wi-Fi (200-600 ms round trips, 7-20% loss measured) dropped a live device and ended its session alone
         lanMode = LanNone;
     }
     pthread_mutex_unlock(&emuThreadMutex);
@@ -1124,6 +1125,13 @@ Java_me_magnum_melonds_MelonEmulator_groupTake(JNIEnv* env, jobject thiz)
     std::lock_guard<std::mutex> lk(groupMutex);
     if (!groupLink)
         return -1;
+    {   // the group's links time out after 3 s unpumped: say when the pump itself was late
+        static auto last = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        long gap = (long)std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count();
+        if (gap > 400) Platform::Log(Platform::LogLevel::Warn, "Group: pumped after %ld ms\n", gap);
+        last = now;
+    }
     grp().Process();
     for (const auto& p : grp().TakeLeft())
         groupLeftRows.push_back(std::to_string(p.ID) + "\t" + std::string(p.Name));

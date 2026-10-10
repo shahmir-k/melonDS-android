@@ -1245,7 +1245,10 @@ void* emulate(void*)
 
 #ifdef LITEV_FF_HEADLESS3D
         {
-            static const bool ffHeadless = [] { char b[92] = {}; return !(__system_property_get("debug.litev.ffheadless", b) > 0 && atoi(b) == 0); }();
+            // default OFF: Pokemon White builds its 3D over two frames, so the shown frame's geometry
+            // was partly built unwatched -> the renderer skipped it and the screen showed blank/stale
+            // 3D while fast-forward was held (user report 2026-10-09). debug.litev.ffheadless=1 on.
+            static const bool ffHeadless = [] { char b[92] = {}; return __system_property_get("debug.litev.ffheadless", b) > 0 && atoi(b) != 0; }();
             MelonDSAndroid::setFastForwardHeadless(ffHeadless && (noLimit || (isFastForwardEnabled && fastForwardSpeedMultiplier != 1.0f)));
         }
 #endif

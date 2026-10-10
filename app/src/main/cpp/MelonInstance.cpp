@@ -587,6 +587,7 @@ u32 MelonInstance::runFrame()
 #ifdef LITEV_SPU_RATE_DIV
     nds->SPU.RateDiv = (u32)std::atomic_load(&currentConfiguration)->audioQualityDiv;   // Audio quality setting
 #endif
+    nds->GPU.GPU3D.EdgeMarkEnabled = std::atomic_load(&currentConfiguration)->edgeOutlines;   // Edge outlines setting
 
     // presentation size: from the scale the renderer was actually configured with
     int screenWidth = 256 * currentScale;

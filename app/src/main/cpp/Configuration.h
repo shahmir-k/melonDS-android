@@ -76,6 +76,7 @@ typedef struct
     bool autoFrameskipEnabled;
     int fastForwardMaxFrameskip;
     int skipRepeatMode;
+    bool edgeOutlines = false;   // Edge outlines (DS edge marking, GL renderer)
     int audioQualityDiv = 4;   // Audio quality: 1 full, 2 balanced (half mix rate), 4 performance   // debug.litev.skiprepeat values: 3 auto, 2 always, 1 Netplay/LAN only
     bool showBootScreen;
     bool useJit;

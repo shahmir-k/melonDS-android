@@ -32,5 +32,7 @@ data class EmulatorConfiguration(
         // debug.litev.skiprepeat values: 3 auto, 2 always, 1 off (Netplay/LAN keep it on)
         val skipRepeatMode: Int = 2,
         // Audio quality: 1 full, 2 balanced (mix at half rate), 4 performance (quarter rate)
-        val audioQualityDiv: Int = 4
+        val audioQualityDiv: Int = 4,
+        // Edge outlines: DS edge marking in the OpenGL renderer
+        val edgeOutlines: Boolean = false
 )

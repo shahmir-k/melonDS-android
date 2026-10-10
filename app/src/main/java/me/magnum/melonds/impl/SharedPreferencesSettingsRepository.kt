@@ -174,6 +174,7 @@ class SharedPreferencesSettingsRepository(
             fastForwardMaxFrameskip = getFastForwardMaxFrameskip(),
             skipRepeatMode = preferences.getString("skip_repeat_frames", "2")!!.toInt(),
             audioQualityDiv = preferences.getString("audio_quality", "4")!!.toInt(),
+            edgeOutlines = preferences.getBoolean("edge_outlines", false),
         )
     }
 

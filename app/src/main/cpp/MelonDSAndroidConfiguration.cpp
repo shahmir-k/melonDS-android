@@ -32,6 +32,7 @@ MelonDSAndroid::EmulatorConfiguration MelonDSAndroidConfiguration::buildEmulator
     jint fastForwardMaxFrameskip = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "fastForwardMaxFrameskip", "I"));
     jint skipRepeatMode = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "skipRepeatMode", "I"));
     jint audioQualityDiv = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "audioQualityDiv", "I"));
+    jboolean edgeOutlines = env->GetBooleanField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "edgeOutlines", "Z"));
     jboolean enableRewind = env->GetBooleanField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "rewindEnabled", "Z"));
     jint rewindPeriodSeconds = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "rewindPeriodSeconds", "I"));
     jint rewindWindowSeconds = env->GetIntField(emulatorConfiguration, env->GetFieldID(emulatorConfigurationClass, "rewindWindowSeconds", "I"));
@@ -82,6 +83,7 @@ MelonDSAndroid::EmulatorConfiguration MelonDSAndroidConfiguration::buildEmulator
     finalEmulatorConfiguration.fastForwardMaxFrameskip = fastForwardMaxFrameskip;
     finalEmulatorConfiguration.skipRepeatMode = skipRepeatMode;
     finalEmulatorConfiguration.audioQualityDiv = audioQualityDiv;
+    finalEmulatorConfiguration.edgeOutlines = edgeOutlines;
     finalEmulatorConfiguration.showBootScreen = showBootScreen;
     finalEmulatorConfiguration.useJit = useJit;
     finalEmulatorConfiguration.consoleType = consoleType;

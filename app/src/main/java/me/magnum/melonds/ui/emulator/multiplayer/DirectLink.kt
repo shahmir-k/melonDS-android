@@ -88,6 +88,9 @@ object DirectLink {
     /** A network this app could have created (sorted first in the scan list). */
     fun isOurName(ssid: String) = OUR_NAME.matches(ssid)
 
+    /** A typed name: "direct-k7" / "ds_r4m" mean ours (always upper case); anything else is kept as typed. */
+    fun normalizeTyped(ssid: String) = ssid.trim().let { if (isOurName(it.uppercase())) it.uppercase() else it }
+
     private fun wifi(context: Context) = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private fun connectivity(context: Context) = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 

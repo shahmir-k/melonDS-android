@@ -694,7 +694,7 @@
     <string name="multiplayer_host_hotspot">Host Hotspot</string>
     <string name="multiplayer_host_hotspot_hint">Create a game network on this device</string>
     <string name="multiplayer_hotspot_unsupported">Needs Android 10 or newer.</string>
-    <string name="multiplayer_nearby_networks">Nearby SereneDS networks</string>
+    <string name="multiplayer_nearby_networks">Nearby games (tap to join)</string>
     <string name="multiplayer_no_networks">None found yet. Make sure the host has started its hotspot.</string>
     <string name="multiplayer_location_needed">Tap here to allow location access so nearby games are listed (Android only shows Wi-Fi scan results to apps that have it), or type the network name below.</string>
     <string name="multiplayer_location_off">Tap here to turn on Location so nearby games are listed (Android hides Wi-Fi scan results while it is off), or type the network name below.</string>
@@ -702,7 +702,6 @@
     <string name="multiplayer_network_name">Network name</string>
     <string name="multiplayer_network_password">Password</string>
     <string name="multiplayer_hotspot_confirm_hint">This device will create a game network (DIRECT-XY, or DS_XYZ if Wi-Fi Direct is unavailable) and host the session on it. The other players open Multiplayer, choose Hotspot and tap it in the list.</string>
-    <string name="multiplayer_hotspot_network">Network: %1$s</string>
     <string name="multiplayer_hotspot_password">Password: %1$s</string>
     <string name="multiplayer_confirm">Confirm</string>
     <string name="multiplayer_hosting_network">Network: %1$s  ·  Password: %2$s</string>

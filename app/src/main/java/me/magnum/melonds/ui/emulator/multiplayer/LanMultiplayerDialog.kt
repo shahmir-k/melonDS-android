@@ -8,9 +8,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
-import android.provider.Settings
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -164,8 +164,8 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     var netplayPlayers by remember { mutableStateOf<List<LanPlayer>?>(null) }
     // a hotspot action waiting on the runtime permission prompt
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
-    // the location prompt was asked for from the nearby-games notice
-    var scanPrompt by remember { mutableStateOf(false) }
+    // the nearby-games notice asked for location while Android had stopped showing its prompt
+    var scanPromptBlocked by remember { mutableStateOf(false) }
 
     fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     // Wi-Fi Direct / local-only hotspot: NEARBY_WIFI_DEVICES on Android 13+, location before
@@ -273,16 +273,9 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         canScan = granted(Manifest.permission.ACCESS_FINE_LOCATION)
-        // still refused and Android no longer shows its prompt ("Don't allow" twice): only the app's
-        // settings page can grant it now. (Approximate-only also lands here: scanning needs precise.)
-        if (scanPrompt && !canScan) {
-            // dialogs hand out a themed wrapper around the activity
-            val activity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }.firstNotNullOfOrNull { it as? Activity }
-            if (activity == null || !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.ACCESS_FINE_LOCATION)) {
-                openAppSettings()
-            }
-        }
-        scanPrompt = false
+        // Android did not show its prompt (refused twice before): only the app's settings page can grant it
+        if (scanPromptBlocked && !canScan) openAppSettings()
+        scanPromptBlocked = false
         val next = afterPermission
         afterPermission = null
         if (next != null) {
@@ -328,7 +321,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
 
     // joins the game network, then the LAN session at the host's address (no discovery)
     fun joinHotspot(ssid: String, password: String) = runAction(directJoining, directFailed) {
-        val host = DirectLink.join(context, ssid.trim(), password)
+        val host = DirectLink.join(context, DirectLink.normalizeTyped(ssid), password)
         host != null && MelonEmulator.lanJoin(name, host).also { if (!it) DirectLink.leave(context) }
     }
 
@@ -533,7 +526,12 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                 // or the Location switch when the permission is there but Location is off
                                 onFixScan = {
                                     if (!canScan) {
-                                        scanPrompt = true
+                                        // the screen already asked once on opening; after one refusal Android
+                                        // reports a rationale, after two it stops prompting and reports none
+                                        // dialogs hand out a themed wrapper around the activity
+                                        val activity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }.firstNotNullOfOrNull { it as? Activity }
+                                        scanPromptBlocked = activity == null ||
+                                            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.ACCESS_FINE_LOCATION)
                                         permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                                     } else {
                                         runCatching { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
@@ -543,7 +541,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                 onHost = { open(Screen.HOST_HOTSPOT) },
                                 onNetworkSelected = { joinHotspot(it, DirectLink.PASSPHRASE) },
                                 ssid = manualSsid,
-                                onSsidChange = { manualSsid = it.uppercase() },
+                                onSsidChange = { manualSsid = it },
                                 password = manualPassword,
                                 onPasswordChange = { manualPassword = it },
                                 playerName = playerName,

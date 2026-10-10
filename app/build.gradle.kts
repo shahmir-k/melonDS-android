@@ -196,6 +196,9 @@ android {
                     "-DLITEV_GXFIFO_DMA_INLINE=ON",
                     // PIPE and FIFO in one ring (FIFO->PIPE moves are counter updates; exact).
                     "-DLITEV_GXFIFO_UNIFIED=ON",
+                    // Geometry DMA in bulk: chunks of 64 words decoded and run at once
+                    // (deterministic, approximate GX timing; runtime prop debug.litev.gxbulk).
+                    "-DLITEV_GX_BULK=ON",
                     // Integer-NEON vertex/matrix math (waves 1-3).
                     "-DLITEV_NEON_GEOMETRY=ON",
                     "-DLITEV_GEOM_NEON2=ON",

@@ -591,7 +591,7 @@
 
     <string name="audio_quality">Audio quality</string>
     <string name="edge_outlines">Edge outlines</string>
-    <string name="edge_outlines_summary">Draw the dark outlines some games put around 3D models (OpenGL renderer). Costs some GPU time</string>
+    <string name="edge_outlines_summary">Draw the dark outlines some games put around 3D models (OpenGL renderer). Costs about 5% speed in those scenes</string>
     <string-array name="audio_quality_options">
         <item>Full (most CPU)</item>
         <item>Balanced (half mix rate)</item>

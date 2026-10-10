@@ -109,6 +109,7 @@ namespace MelonDSAndroid
         std::string peer;                           // the host's IP:port (exchange=0: the other player's)
         bool exchange = true;                       // session setup with the host (exchange=0: testing, 2 players)
         bool autoDelay = true;                      // input delay from the measured round trips
+        NetFaults faults;                           // testing: latency=,jitter=,loss= on received inputs
         // Test/replay input, by applied frame: debug.litev.npscript (local player)
         std::map<int, NetplayFrameInput> script;
         // Every session records every player's applied inputs (netplay/rec_ID_pN.txt) in the same
@@ -186,6 +187,9 @@ namespace MelonDSAndroid
                 else if (k == "port") session->port = atoi(v.c_str());
                 else if (k == "peer") session->peer = v;
                 else if (k == "exchange") session->exchange = atoi(v.c_str()) != 0;
+                else if (k == "latency") session->faults.LatencyMs = atoi(v.c_str());
+                else if (k == "jitter") session->faults.JitterMs = atoi(v.c_str());
+                else if (k == "loss") session->faults.LossPct = atoi(v.c_str());
 #ifdef LITEV_HOSTED_NETPLAY
                 else if (k == "hosted") session->hosted = atoi(v.c_str()) != 0;
 #endif
@@ -811,6 +815,9 @@ namespace MelonDSAndroid
         NetplaySession& s = *netplay;
         if (player == s.player)
         {
+            if (frames % 600 == 0)
+                Platform::Log(Platform::LogLevel::Info, "NETPLAY_NET f%d delay %d rtt %.1f ms stalled %.1f s\n", frames,
+                              s.input->CurrentDelay(), s.input->PeerRttMs(), s.input->StallMs() / 1000);
             s.input->SendHash(frames, hash);
             return;
         }
@@ -1166,7 +1173,11 @@ namespace MelonDSAndroid
             else
             {
 #endif
-            netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port, peers);
+            netplay->input = std::make_unique<NetplayInput>(netplay->player, netplay->delay, netplay->port, peers,
+                                                            netplay->faults.LatencyMs, netplay->faults);
+#ifdef LITEV_NP_ADAPTIVE_DELAY
+            netplay->input->Adaptive = true;    // the delay follows the round trip from here
+#endif
             Platform::Log(Platform::LogLevel::Info, "Netplay: %d players, input delay %d frames%s\n", netplay->players,
                           netplay->delay, netplay->input->Ok() ? "" : " (SOCKET FAILED)");
             for (auto& [player, addr] : peers)
@@ -1268,8 +1279,9 @@ namespace MelonDSAndroid
             else
 #endif
             {
-            if (netplayScripted(netplay->script, netplay->frame + netplay->delay))   // by applied frame: what is submitted now applies Delay frames later
-                local = netplayScriptAt(netplay->script, netplay->frame + netplay->delay);
+            const int applyAt = netplay->frame + netplay->input->CurrentDelay();
+            if (netplayScripted(netplay->script, applyAt))   // by applied frame: what is submitted now applies Delay frames later
+                local = netplayScriptAt(netplay->script, applyAt);
             netplay->input->SubmitLocal(netplay->frame, local);
             applied = netplay->input->Get(netplay->player, netplay->frame);
 #ifdef LITEV_HOSTED_NETPLAY

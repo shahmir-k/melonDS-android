@@ -1,7 +1,9 @@
 package me.magnum.melonds.ui.emulator.multiplayer
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
@@ -38,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import kotlinx.coroutines.Dispatchers
@@ -161,6 +164,8 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     var netplayPlayers by remember { mutableStateOf<List<LanPlayer>?>(null) }
     // a hotspot action waiting on the runtime permission prompt
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // the location prompt was asked for from the nearby-games notice
+    var scanPrompt by remember { mutableStateOf(false) }
 
     fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     // Wi-Fi Direct / local-only hotspot: NEARBY_WIFI_DEVICES on Android 13+, location before
@@ -257,8 +262,27 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
     }
 
     val permissionDenied = stringResource(R.string.multiplayer_error_permission_denied)
+    fun openAppSettings() {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         canScan = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+        // still refused and Android no longer shows its prompt ("Don't allow" twice): only the app's
+        // settings page can grant it now. (Approximate-only also lands here: scanning needs precise.)
+        if (scanPrompt && !canScan) {
+            // dialogs hand out a themed wrapper around the activity
+            val activity = generateSequence(context) { (it as? ContextWrapper)?.baseContext }.firstNotNullOfOrNull { it as? Activity }
+            if (activity == null || !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.ACCESS_FINE_LOCATION)) {
+                openAppSettings()
+            }
+        }
+        scanPrompt = false
         val next = afterPermission
         afterPermission = null
         if (next != null) {
@@ -505,15 +529,15 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                 networks = nearbyNetworks,
                                 canScan = canScan,
                                 locationOn = locationOn,
-                                // the prompt already ran when this screen opened (and Android stops
-                                // showing it after two refusals), so go to the system screens
+                                // Android's own prompt first (settings page only once it stops showing),
+                                // or the Location switch when the permission is there but Location is off
                                 onFixScan = {
-                                    val intent = if (!canScan) {
-                                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                                    if (!canScan) {
+                                        scanPrompt = true
+                                        permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                                     } else {
-                                        Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                                        runCatching { context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                                     }
-                                    runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                                 },
                                 enabled = busyText == null,
                                 onHost = { open(Screen.HOST_HOTSPOT) },

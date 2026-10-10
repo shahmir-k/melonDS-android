@@ -103,6 +103,9 @@ namespace MelonDSAndroid
         std::map<int, NetplayFrameInput> script;    // debug.litev.npscript2: replaces the network
         std::thread thread;
         std::map<int, u64> hashes;                  // desync check: our copy, by frame (hashLock)
+#ifdef LITEV_NP_SPEED
+        std::atomic<double> cpuMs {0};              // this console's thread CPU so far (the report)
+#endif
     };
     struct NetplaySession
     {
@@ -131,6 +134,17 @@ namespace MelonDSAndroid
         // and records what the link returns to each; every guest runs only its own console, whose
         // link replays the host's record of it. The guests' inputs travel to the host only.
         bool hosted = false;
+#ifdef LITEV_NP_SPEED
+        // Session speed (plain Netplay): what this player asks for (NetplaySpeed code, from the
+        // fast-forward key or debug.litev.npspeed) travels with its input; `speed` = the session's
+        // speed at the frame just run (the same frame on every device), `speedWho` = who asks.
+        std::atomic<int> speedRequest {0}, speed {0};
+        std::atomic<u32> speedWho {0};
+        // the per-device report (NETPLAY_SPEED, every 600 frames)
+        double runMs = 0;                           // the local console's runFrame (wall, incl. link waits)
+        std::chrono::steady_clock::time_point reportAt = std::chrono::steady_clock::now();
+        double reportCpu = 0, reportWait = 0;
+#endif
 #ifdef LITEV_HOSTED_NETPLAY
         RecordMP* record = nullptr;                 // host: the link (owned by MPInterface)
         ReplayMP* replay = nullptr;                 // guest: the link (owned by MPInterface)
@@ -803,6 +817,40 @@ namespace MelonDSAndroid
         return data;
     }
 
+#ifdef LITEV_NP_SPEED
+    static double threadCpuMs()
+    {
+        timespec ts;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+        return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+    }
+    static std::string speedName(int code)
+    {
+        if (code == NetplaySpeed::kUncapped) return "uncapped";
+        char b[16];
+        snprintf(b, sizeof(b), "%gx", NetplaySpeed::Multiplier(code));
+        return b;
+    }
+    // The fast-forward key in plain Netplay: asks the session for `multiplier` (<= 0: uncapped)
+    bool netplayRequestSpeed(bool on, float multiplier)
+    {
+        if (!netplay || netplay->hosted) return false;
+        netplay->speedRequest = on ? NetplaySpeed::Encode(multiplier) : 0;
+        return true;
+    }
+    // Plain Netplay: the session speed now (multiplier; 0 = uncapped, 1 = normal)
+    bool netplaySpeed(float& multiplier)
+    {
+        if (!netplay || netplay->hosted || !netplay->input) return false;
+        multiplier = NetplaySpeed::Multiplier(netplay->speed);
+        return true;
+    }
+    bool netplaySkipAllowed()
+    {
+        return !netplay || (!netplay->hosted && netplay->speed != 0);
+    }
+#endif
+
     // Desync check, every 60 frames: each device sends the hash of its own console to everyone;
     // the others compare it with their copy of that console. Also logged (NETPLAY_HASH) for
     // offline diffs.
@@ -820,6 +868,21 @@ namespace MelonDSAndroid
             if (frames % 600 == 0)
                 Platform::Log(Platform::LogLevel::Info, "NETPLAY_NET f%d delay %d rtt %.1f ms stalled %.1f s\n", frames,
                               s.input->CurrentDelay(), s.input->PeerRttMs(), s.input->StallMs() / 1000);
+#ifdef LITEV_NP_SPEED
+            if (frames % 600 == 0 && !s.hosted)
+            {   // per device: achieved fps, its own cost per frame, the time it waited for the others
+                auto now = std::chrono::steady_clock::now();
+                double cpu = threadCpuMs(), wait = s.input->PeerWaitMs(), remote = 0;
+                for (auto& r : s.remotes) remote = std::max(remote, r->cpuMs.load());
+                static double lastRemote = 0;
+                Platform::Log(Platform::LogLevel::Info, "NETPLAY_SPEED f%d speed %s by 0x%x fps %.1f | local run %.2f cpu %.2f ms/f | "
+                              "busiest remote console cpu %.2f ms/f | wait for peers %.2f ms/f | delay %d rtt %.1f ms\n", frames,
+                              speedName(s.speed).c_str(), s.speedWho.load(), 600 / std::chrono::duration<double>(now - s.reportAt).count(),
+                              s.runMs / 600, (cpu - s.reportCpu) / 600, (remote - lastRemote) / 600, (wait - s.reportWait) / 600,
+                              s.input->CurrentDelay(), s.input->PeerRttMs());
+                s.reportAt = now; s.reportCpu = cpu; s.reportWait = wait; s.runMs = 0; lastRemote = remote;
+            }
+#endif
             s.input->SendHash(frames, hash);
             return;
         }
@@ -865,6 +928,15 @@ namespace MelonDSAndroid
         // closed, its session ended by a dropped group link) would hold the others forever
         if (!netplay->hosted && netplay->input && netplay->input->MsSincePeer() > kNetplayPeerLostMs
             && std::chrono::steady_clock::now() - netplay->created > std::chrono::seconds(30)) return "PEER LOST";
+#ifdef LITEV_NP_SPEED
+        if (!netplay->hosted && !netplay->waiting && netplay->speed != 0)
+        {   // who sped the session up: shown next to the fps, toasted on change
+            std::string who;
+            for (int p = 0; p < NetplayInput::kMaxPlayers; p++)
+                if ((netplay->speedWho >> p) & 1) who += (who.empty() ? "P" : ",P") + std::to_string(p + 1);
+            return "Netplay · " + (netplay->speed == NetplaySpeed::kUncapped ? std::string("uncapped") : "FF " + speedName(netplay->speed)) + " by " + who;
+        }
+#endif
         return netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
     }
 
@@ -894,6 +966,9 @@ namespace MelonDSAndroid
             netplayRecord(s, r->player, f, in);
             netplayApply(*r->console, in);
             r->console->runFrameHeadless();
+#ifdef LITEV_NP_SPEED
+            if ((f & 63) == 0) r->cpuMs = threadCpuMs();
+#endif
             hostedEndFrame(*r->console, r->player, f, in);
             netplayHash(*r->console, r->player, f + 1);
         }
@@ -1258,6 +1333,10 @@ namespace MelonDSAndroid
         instance->start();
         if (netplay)
         {
+#if defined(LITEV_NP_SPEED) && defined(LITEV_AGGRESSIVE_SKIP)
+            instance->getNds()->GPU.KeepCaptures = !netplay->hosted;    // fast-forward frameskip never skips a capture
+            instance->getNds()->GPU.KeepCapturesSeen = false;
+#endif
             netplay->running = true;
             for (auto& r : netplay->remotes)
             {
@@ -1289,6 +1368,22 @@ namespace MelonDSAndroid
             const int applyAt = netplay->frame + netplay->input->CurrentDelay();
             if (netplayScripted(netplay->script, applyAt))   // by applied frame: what is submitted now applies Delay frames later
                 local = netplayScriptAt(netplay->script, applyAt);
+#ifdef LITEV_NP_SPEED
+            if (!netplay->hosted)
+            {
+                // debug.litev.npspeed=<multiplier> (testing / the uncapped benchmark: -1 or 0 = uncapped;
+                // unset or 1 = off, the key decides): this player asks for that speed while it is set;
+                // re-read every 120 frames
+                static int propCode = -1;
+                if (netplay->frame % 120 == 0)
+                {
+                    char b[PROP_VALUE_MAX] = {0};
+                    const float v = __system_property_get("debug.litev.npspeed", b) > 0 && b[0] ? (float)atof(b) : 1.0f;
+                    propCode = v != 1.0f ? NetplaySpeed::Encode(v) : -1;
+                }
+                NetplaySpeed::Set(local, propCode >= 0 ? propCode : netplay->speedRequest.load());
+            }
+#endif
             netplay->input->SubmitLocal(netplay->frame, local);
             applied = netplay->input->Get(netplay->player, netplay->frame);
 #ifdef LITEV_HOSTED_NETPLAY
@@ -1310,7 +1405,22 @@ namespace MelonDSAndroid
                 instance->getNds()->GPU.Headless = v == 1;
                 instance->getNds()->GPU.DiagNoDraw = v == 2 ? 1 : v == 3 ? 2 : 0;   // 2: no 2D, 3: no 3D
             }
+#ifdef LITEV_NP_SPEED
+            auto runStart = std::chrono::steady_clock::now();
+#endif
             u32 lines = instance->runFrame();
+#ifdef LITEV_NP_SPEED
+            if (!netplay->hosted)
+            {
+                netplay->runMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - runStart).count();
+                u32 who = 0;
+                int code = netplay->input->SpeedAt(frame, &who);
+                if (code != netplay->speed || who != netplay->speedWho)
+                    Platform::Log(Platform::LogLevel::Info, "NETPLAY_SPEED switch f%d %s by 0x%x\n", frame, speedName(code).c_str(), who);
+                netplay->speedWho = who;
+                netplay->speed = code;
+            }
+#endif
             hostedEndFrame(*instance, netplay->player, frame, applied);
 #ifdef LITEV_HOSTED_NETPLAY
             // guest: wait for the host's record of this frame and compare

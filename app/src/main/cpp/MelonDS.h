@@ -45,6 +45,14 @@ namespace MelonDSAndroid {
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     extern std::string netplayStatus();
     extern int netplayKind();   // 0 none, 1 Netplay, 2 Hosted Netplay
+#ifdef LITEV_NP_SPEED
+    // Plain Netplay session speed: the fast-forward key asks every device for `multiplier` (<= 0:
+    // uncapped; false = not in plain Netplay); netplaySpeed = the session's speed now (0 = uncapped);
+    // netplaySkipAllowed = frameskip may run (not in Netplay, or the session is fast-forwarding)
+    extern bool netplayRequestSpeed(bool on, float multiplier);
+    extern bool netplaySpeed(float& multiplier);
+    extern bool netplaySkipAllowed();
+#endif
     // Ends every Netplay wait (stopping: the emulator thread may be waiting on a player who left)
     extern void netplayAbort();
     // Record mode (single player): "record DIR", "replay DIR" or "stop", run at the next frame

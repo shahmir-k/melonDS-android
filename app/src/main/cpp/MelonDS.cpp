@@ -1008,6 +1008,13 @@ namespace MelonDSAndroid
             instance->skipRepeatAuto = on;
     }
 #endif
+#ifdef LITEV_FF_HEADLESS3D
+    // fast-forward: frames whose 3D isn't rendered build geometry unwatched (GPU::FFHeadless3D)
+    void setFastForwardHeadless(bool on) {
+        if (instance && !netplay)
+            instance->getNds()->GPU.FFHeadless3D = on;
+    }
+#endif
 
     int loadRom(std::string romPath, std::string sramPath, RomGbaSlotConfig* gbaSlotConfig)
     {

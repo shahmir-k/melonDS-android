@@ -67,6 +67,9 @@ namespace MelonDSAndroid {
 #ifdef LITEV_SKIP_REPEAT_FRAMES
     // Skip repeated frames "Auto": the emu loop's controller sets whether it is on (emu thread)
     extern void setSkipRepeatAuto(bool on);
+#ifdef LITEV_FF_HEADLESS3D
+    extern void setFastForwardHeadless(bool on);
+#endif
 #endif
 
     /**

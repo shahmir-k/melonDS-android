@@ -1243,6 +1243,12 @@ void* emulate(void*)
             noLimit = __system_property_get("debug.litev.nolimit", b) > 0 && atoi(b) != 0;
         }
 
+#ifdef LITEV_FF_HEADLESS3D
+        {
+            static const bool ffHeadless = [] { char b[92] = {}; return !(__system_property_get("debug.litev.ffheadless", b) > 0 && atoi(b) == 0); }();
+            MelonDSAndroid::setFastForwardHeadless(ffHeadless && (noLimit || (isFastForwardEnabled && fastForwardSpeedMultiplier != 1.0f)));
+        }
+#endif
         if (limitFps && !noLimit)
         {
             frameLimitError += frameTimeStep - delay;

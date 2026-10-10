@@ -169,9 +169,8 @@ object DirectLink {
         val callback = object : WifiManager.LocalOnlyHotspotCallback() {
             override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
                 reservation = res
-                val network = if (name != null) {
-                    HostedNetwork(name, PASSPHRASE, null, wifiDirect = false)
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // read back what actually came up: a device may ignore the requested name/password
+                val network = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val config = res.softApConfiguration
                     @Suppress("DEPRECATION")
                     HostedNetwork(config.ssid.orEmpty().removeSurrounding("\""), config.passphrase.orEmpty(), null, wifiDirect = false)

@@ -321,7 +321,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
 
     // joins the game network, then the LAN session at the host's address (no discovery)
     fun joinHotspot(ssid: String, password: String) = runAction(directJoining, directFailed) {
-        val host = DirectLink.join(context, DirectLink.normalizeTyped(ssid), password)
+        val host = DirectLink.join(context, ssid, password)
         host != null && MelonEmulator.lanJoin(name, host).also { if (!it) DirectLink.leave(context) }
     }
 
@@ -597,7 +597,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                     parent?.let { DialogButton(stringResource(R.string.multiplayer_back), enabled = idle) { open(it) } }
                     when (screen) {
                         Screen.HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_role_join), enabled = idle && manualSsid.isNotBlank() && manualSsid.trim() != DirectLink.NAME_PREFIX) {
-                            joinHotspot(manualSsid, manualPassword)
+                            joinHotspot(DirectLink.normalizeTyped(manualSsid), manualPassword)
                         }
                         Screen.HOST_HOTSPOT -> DialogButton(stringResource(R.string.multiplayer_confirm), enabled = idle) { hostHotspot() }
                         Screen.WIFI -> {

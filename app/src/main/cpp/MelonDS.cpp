@@ -571,7 +571,20 @@ namespace MelonDSAndroid
             }
         }
         netplayApply(*instance, in);
+        // debug.litev.markframes=<a>-<b>: the emulator thread is named "markframes" while it runs
+        // recording frames a..b, so a profile can sort samples by thread name (simpleperf --sort comm)
+        static int markA = -1, markB = -1;
+        static bool markRead = false;
+        if (!markRead)
+        {
+            markRead = true;
+            char v[PROP_VALUE_MAX] = {};
+            if (__system_property_get("debug.litev.markframes", v) > 0) sscanf(v, "%d-%d", &markA, &markB);
+        }
+        const bool marked = r.frame >= markA && r.frame <= markB;
+        if (marked) pthread_setname_np(pthread_self(), "markframes");
         u32 lines = instance->runFrame();
+        if (marked) pthread_setname_np(pthread_self(), "EmulatorThread");
         NDS& nds = *instance->getNds();
         u64 hash = ((r.frame + 1) % 60) == 0 ? hostedState(nds, in, r.frame) : 0;
         if (r.log)

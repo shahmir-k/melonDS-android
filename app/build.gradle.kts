@@ -170,7 +170,7 @@ android {
                     "-DLITEV_GL_SORT_OPAQUE=ON",
                     "-DLITEV_GL_BATCH_NEEDOPAQUE=ON",
                     "-DLITEV_HYB_MERGE_1X_2D=ON",
-                    "-DLITEV_GL_WBUF_EARLYZ=ON", "-DLITEV_GL_OPAQUE_NODISCARD=ON",
+                    "-DLITEV_GL_WBUF_EARLYZ=ON", "-DLITEV_GL_OPAQUE_NODISCARD=ON", "-DLITEV_JIT_REGALLOC_SUFFIX=ON", "-DLITEV_JIT_IMMLOGICAL_CACHE=ON", "-DLITEV_JIT_PATCHMAP_RESERVE=ON",
                     "-DLITEV_GL_SKIP_NOOP_EDGE=ON",
                     "-DLITEV_HYB_MERGE_FASTLINES=ON",
                     // Skip inert 32 kHz RTC ticks while no RTC IRQ is armed (B).

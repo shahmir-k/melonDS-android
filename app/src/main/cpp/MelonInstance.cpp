@@ -666,9 +666,20 @@ u32 MelonInstance::runFrame()
     void* fbTop = nullptr;
     void* fbBottom = nullptr;
 #ifdef LITEV_SKIP_REPEAT_FRAMES
-    const bool skipPresent = nds->GPU.SkipRepeat;   // nothing drawn this frame: keep the last one on screen
+    bool skipPresent = nds->GPU.SkipRepeat;   // nothing drawn this frame: keep the last one on screen
 #else
-    const bool skipPresent = false;
+    bool skipPresent = false;
+#endif
+#ifdef LITEV_FF_SKIP_PRESENT
+    // frameskip (fast-forward): a frame whose drawing was skipped publishes no new picture, so
+    // presenting it would merge and show the last one again (GPU merge + present thread work,
+    // 2 of 3 presents at skip 2). Keep the last presented frame on screen instead. A recording
+    // draws every frame (it keeps display captures) but still shows only the scheduled ones.
+    // debug.litev.ffskippresent=0 turns it off.
+    static const bool ffSkipPresent = [] { char b[PROP_VALUE_MAX] = {}; return !(__system_property_get("debug.litev.ffskippresent", b) > 0 && atoi(b) == 0); }();
+    // (not on a frame whose picture a rewind state or screenshot takes: it reads the frame texture)
+    skipPresent |= ffSkipPresent && nds->GPU.SkipDisplay && !rewindManager.ShouldCaptureState(frame + 1)
+                   && !screenshotRenderer->isScreenshotPending();
 #endif
     auto* hybrid = !skipPresent && currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
     bool ramFramebuffers = false;

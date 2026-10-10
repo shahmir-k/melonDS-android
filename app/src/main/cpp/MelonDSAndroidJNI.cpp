@@ -79,6 +79,31 @@ static int ffFrameskipTarget(float m, int max)
     if (s < 1) s = 1;
     return s < max ? s : max;
 }
+#ifdef LITEV_FF_ADAPTIVE_SKIP
+// Fast-forward below its target speed skips more frames, up to the max frameskip setting: a
+// shown frame costs the emulator ~1 ms more than a skipped one (2D snapshots, the full 3D bank),
+// and with 30 Hz 3D a deeper skip leaves more banks unwatched (FF_HEADLESS3D). PW town at 2.5x:
+// skip 2/3/4 = 118/125/129 game fps. Judged per 30-frame window of loop work vs the target
+// frame period: one level up per slow window, one down after 4 windows under 85%.
+// debug.litev.ffadapt=0 turns it off.
+static int ffAdaptiveSkip(int base, int max, double workMs, double stepMs)
+{
+    static const bool on = [] { char b[PROP_VALUE_MAX] = {}; return !(__system_property_get("debug.litev.ffadapt", b) > 0 && atoi(b) == 0); }();
+    static int extra = 0, n = 0, calm = 0;
+    static double sum = 0;
+    if (base < 0 || !on) { extra = n = calm = 0; sum = 0; return base; }
+    sum += workMs;
+    if (++n >= 30)
+    {
+        const double avg = sum / n;
+        n = 0; sum = 0;
+        if (avg > stepMs * 1.03 && base + extra < max) { extra++; calm = 0; }
+        else if (avg < stepMs * 0.85 && extra > 0) { if (++calm >= 4) { extra--; calm = 0; } }
+        else calm = 0;
+    }
+    return std::max(base, std::min(base + extra, max));
+}
+#endif
 #endif
 #ifdef LITEV_AUTO_FRAMESKIP
 // Adaptive frameskip (user setting) that holds real-time speed instead of slow-mo when a
@@ -1243,6 +1268,24 @@ void* emulate(void*)
             noLimit = __system_property_get("debug.litev.nolimit", b) > 0 && atoi(b) != 0;
         }
 
+        // debug.litev.ffhold=<multiplier>:<frames> (measurement): fast-forward is held at that
+        // multiplier for the first <frames> frames after launch, as if the player held the key
+        // (devreplay of the real fast-forward path, then its release). Read once.
+        {
+            static float holdM = 0; static int holdN = 0, holdFrame = 0; static bool holdOn = false;
+            static const bool holdRead = [] { char b[PROP_VALUE_MAX] = {}; if (__system_property_get("debug.litev.ffhold", b) > 0) sscanf(b, "%f:%d", &holdM, &holdN); return true; }();
+            (void)holdRead;
+            const bool want = holdM != 0 && holdFrame++ < holdN;
+            if (want != holdOn)
+            {
+                holdOn = want;
+                if (want) fastForwardSpeedMultiplier = holdM;
+                isFastForwardEnabled = want;
+                limitFps = !want || fastForwardSpeedMultiplier > 0;
+                targetFps = want ? 60 * fastForwardSpeedMultiplier : 60;
+                LOG_INFO("LITEV_FFHOLD", "fast-forward %s at frame %d", want ? "held" : "released", holdFrame);
+            }
+        }
 #ifdef LITEV_FF_HEADLESS3D
         {
             // only banks that no shown frame renders are built unwatched (GPU::FFHeadlessDecide);
@@ -1372,6 +1415,9 @@ void* emulate(void*)
         // at once. The lib clamps targets to GPU::LITEV_FRAMESKIP_MAX.
         {
             int ffWant = isFastForwardEnabled ? ffFrameskipTarget(fastForwardSpeedMultiplier, ffMaxFrameskip) : -1;
+#ifdef LITEV_FF_ADAPTIVE_SKIP
+            if (limitFps) ffWant = ffAdaptiveSkip(ffWant, ffMaxFrameskip, delay, frameTimeStep);
+#endif
             if (ffWant != ffSkipApplied) {
                 if (ffWant >= 0 || ffSkipApplied > 0)
                     MelonDSAndroid::setFrameskip(ffWant >= 0 ? ffWant : 0);

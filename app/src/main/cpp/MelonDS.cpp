@@ -564,7 +564,9 @@ namespace MelonDSAndroid
         }
         instance->setInputDeferred(true);
 #ifdef LITEV_AGGRESSIVE_SKIP
-        nds->GPU.KeepCaptures = true;
+        // debug.litev.reckeepcap=0 (measurement only): frameskip skips capture frames as in normal
+        // play, to measure what fast-forward gives outside a recording (the replay may differ)
+        nds->GPU.KeepCaptures = !(__system_property_get("debug.litev.reckeepcap", prop) > 0 && atoi(prop) == 0);
         nds->GPU.KeepCapturesSeen = false;
 #endif
         clock_gettime(CLOCK_MONOTONIC, &rec.prev);

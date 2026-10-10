@@ -39,6 +39,7 @@ public:
 private:
     std::mutex frameLock;
     std::condition_variable presentFrameReadyCondition;
+    std::condition_variable renderFrameFreeCondition;   // a frame went back to a queue getRenderFrame takes from
     std::array<Frame, FRAME_QUEUE_SIZE> frames{};
     std::queue<Frame*> freeQueue{};
     std::deque<Frame*> presentQueue{};

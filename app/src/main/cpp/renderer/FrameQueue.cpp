@@ -15,6 +15,11 @@ Frame* FrameQueue::getRenderFrame()
 
     Frame* frame;
 
+    // Every frame can be in flight in queued async presents (the hybrid renderer's present
+    // thread holds them until it hands them over), e.g. when the emulator outruns the present
+    // thread with frameskip: wait for one instead of taking a frame from an empty queue.
+    renderFrameFreeCondition.wait(lock, [this] { return !freeQueue.empty() || !presentQueue.empty(); });
+
     // If there are no free frames, use oldest present frame
     if (freeQueue.empty())
     {
@@ -60,6 +65,7 @@ Frame* FrameQueue::getPresentFrame(std::optional<std::chrono::time_point<std::ch
 
     presentQueue.clear();
     previousFrame = frame;
+    renderFrameFreeCondition.notify_one();
     if (isNew) *isNew = true;
     return frame;
 }
@@ -94,12 +100,14 @@ void FrameQueue::pushRenderedFrame(Frame* frame)
     std::unique_lock lock(frameLock);
     presentQueue.push_front(frame);
     presentFrameReadyCondition.notify_one();
+    renderFrameFreeCondition.notify_one();
 }
 
 void FrameQueue::discardRenderedFrame(Frame* frame)
 {
     std::unique_lock lock(frameLock);
     freeQueue.push(frame);
+    renderFrameFreeCondition.notify_one();
 }
 
 void FrameQueue::clear()

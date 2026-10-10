@@ -163,7 +163,7 @@ android {
                     "-DLITEV_HYB_CAPTURE_OFFTHREAD=ON",
                     "-DLITEV_JIT_BLOCKXFER_MAINRAM=ON",
                     "-DLITEV_SPU_ADPCM_TABLE=ON",
-                    "-DLITEV_FF_HEADLESS3D=ON",
+                    "-DLITEV_FF_HEADLESS3D=ON", "-DLITEV_PACE_CATCHUP=ON",
                     "-DLITEV_LAN_EARLY_REPLY=ON", "-DLITEV_LAN_RX_SPIN=ON",
                     "-DLITEV_SKIP_REPEAT_FRAMES=ON",
                     "-DLITEV_MASTERBRIGHT_LATCH=ON",

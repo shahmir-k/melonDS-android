@@ -151,6 +151,14 @@ target_include_directories(melonDS-android-frontend PUBLIC
 )
 target_link_libraries(melonDS-android-frontend android core net-utils oboe faad enet rcheevos EGL GLESv3 mediandk z)
 
+# Recordings name the build that made them (meta.txt "build"): app and core commits, "-dirty" if modified
+add_custom_target(sereneds_build_id
+        COMMAND ${CMAKE_COMMAND} -DAPP=${CMAKE_CURRENT_SOURCE_DIR} -DLIB=${CMAKE_CURRENT_SOURCE_DIR}/${CORE-LIB}
+                -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sereneds_build_id.h -P ${CMAKE_CURRENT_SOURCE_DIR}/build_id.cmake
+        BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/sereneds_build_id.h)
+add_dependencies(melonDS-android-frontend sereneds_build_id)
+target_include_directories(melonDS-android-frontend PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
 # LITEV_LINKOPT (app half). The core is a STATIC archive and the final shared
 # object libmelonDS-android-frontend.so is linked here, so the link flag belongs
 # on this target. The core applies -fno-plt to its own TUs; mirror it onto this

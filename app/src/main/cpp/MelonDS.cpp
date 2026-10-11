@@ -30,6 +30,7 @@
 #endif
 #include "LitevCores.h"
 #include <sys/system_properties.h>
+#include "sereneds_build_id.h"
 #include <sys/stat.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -569,6 +570,14 @@ namespace MelonDSAndroid
                 fprintf(f, "game %s\nrtc %d %d %d %d %d %d\nrenderer %d\njit %d\n", gameCode,
                         rec.rtc[0], rec.rtc[1], rec.rtc[2], rec.rtc[3], rec.rtc[4], rec.rtc[5],
                         (int) currentConfiguration->renderer, (int) currentConfiguration->useJit);
+                // the build and every debug.litev.* override, so the replay can use the same ones
+                fprintf(f, "build %s\n", SERENEDS_BUILD_ID);
+                __system_property_foreach([](const prop_info* pi, void* file) {
+                    char name[PROP_NAME_MAX], value[PROP_VALUE_MAX];
+                    __system_property_read(pi, name, value);   // minSdk 24: no read_callback
+                    if (!strncmp(name, "debug.litev.", 12) && value[0])
+                        fprintf((FILE*) file, "prop %s %s\n", name, value);
+                }, f);
                 fclose(f);
             }
             rec.inputs = fopen((dir + "/inputs.txt").c_str(), "w");

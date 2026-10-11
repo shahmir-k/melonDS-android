@@ -76,6 +76,13 @@
             android:entryValues="@array/fps_counter_position_values"
             android:defaultValue="hidden" />
 
+    <SwitchPreference
+            android:key="fps_counter_large"
+            android:title="@string/fps_counter_large"
+            android:summary="@string/fps_counter_large_summary"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false" />
+
     <ListPreference
             android:key="dsi_camera_source"
             android:title="@string/dsi_camera_source"

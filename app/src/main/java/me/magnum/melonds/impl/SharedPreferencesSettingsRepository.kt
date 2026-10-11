@@ -338,6 +338,10 @@ class SharedPreferencesSettingsRepository(
         return FpsCounterPosition.valueOf(fpsCounterPreference.uppercase())
     }
 
+    override fun isFpsCounterLarge(): Boolean {
+        return preferences.getBoolean("fps_counter_large", false)
+    }
+
     override fun getDSiCameraSource(): DSiCameraSourceType {
         val dsiCameraSource = preferences.getString("dsi_camera_source", "physical_cameras")!!
         return DSiCameraSourceType.valueOf(dsiCameraSource.uppercase())

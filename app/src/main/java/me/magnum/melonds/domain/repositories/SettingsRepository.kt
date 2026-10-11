@@ -38,6 +38,7 @@ interface SettingsRepository {
     fun isThreadedRenderingEnabled(): Flow<Boolean>
     fun isSoftwareAccurate3DEnabled(): Flow<Boolean>
     fun getFpsCounterPosition(): FpsCounterPosition
+    fun isFpsCounterLarge(): Boolean
     fun getDSiCameraSource(): DSiCameraSourceType
     fun getDSiCameraStaticImage(): Uri?
 

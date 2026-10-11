@@ -320,13 +320,19 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         val o = overlay ?: return
         val shader = overlayShader ?: return
         if (o != overlayDrawn) {
-            // rasterise the text (white, premultiplied alpha) and place its quad
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = o.textSize }
+            // rasterise the text (white with a black outline, premultiplied alpha) and place its quad
+            val stroke = maxOf(2f, o.textSize / 12f)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = o.textSize; strokeWidth = stroke; strokeJoin = Paint.Join.ROUND }
             val fm = paint.fontMetrics
-            overlayW = paint.measureText(o.text).toInt() + 2
-            overlayH = (fm.descent - fm.ascent).toInt() + 2
+            val pad = stroke.toInt() + 1
+            overlayW = paint.measureText(o.text).toInt() + 2 * pad
+            overlayH = (fm.descent - fm.ascent).toInt() + 2 * pad
             val bitmap = Bitmap.createBitmap(overlayW, overlayH, Bitmap.Config.ARGB_8888)
-            Canvas(bitmap).drawText(o.text, 1f, 1f - fm.ascent, paint)
+            val canvas = Canvas(bitmap)
+            paint.style = Paint.Style.STROKE; paint.color = Color.BLACK
+            canvas.drawText(o.text, pad.toFloat(), pad - fm.ascent, paint)
+            paint.style = Paint.Style.FILL; paint.color = Color.WHITE
+            canvas.drawText(o.text, pad.toFloat(), pad - fm.ascent, paint)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, overlayTexture)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
@@ -362,9 +368,9 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         GLES30.glVertexAttribPointer(shader.attribPos, 2, GLES30.GL_FLOAT, false, 4 * Float.SIZE_BYTES, 0)
         GLES30.glVertexAttribPointer(shader.attribUv, 2, GLES30.GL_FLOAT, false, 4 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES)
         GLES30.glUniform1i(shader.uniformTex, 0)
-        // out = text * (1 - under) + under * (1 - text alpha): the inverse colour where the text is
+        // premultiplied "over": the outline keeps the white text readable on white menus
         GLES30.glEnable(GLES30.GL_BLEND)
-        GLES30.glBlendFunc(GLES30.GL_ONE_MINUS_DST_COLOR, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glBlendFunc(GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 6)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glBindVertexArray(0)

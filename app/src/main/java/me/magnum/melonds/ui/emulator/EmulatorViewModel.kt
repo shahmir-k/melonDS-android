@@ -883,6 +883,10 @@ class EmulatorViewModel @Inject constructor(
         return settingsRepository.getFpsCounterPosition()
     }
 
+    fun isFpsCounterLarge(): Boolean {
+        return settingsRepository.isFpsCounterLarge()
+    }
+
     private suspend fun getRomEnabledCheats(romInfo: RomInfo): List<Cheat> {
         if (!settingsRepository.areCheatsEnabled() || !emulatorSession.areCheatsEnabled()) {
             return emptyList()

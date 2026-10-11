@@ -1,5 +1,7 @@
 package me.magnum.melonds.ui.emulator
 
+import android.graphics.Paint
+import android.util.TypedValue
 import me.magnum.melonds.ui.emulator.model.NetplayTransfer
 import me.magnum.melonds.impl.NetplayRomCache
 import me.magnum.melonds.utils.SizeUtils
@@ -37,6 +39,7 @@ import androidx.core.os.ConfigurationCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.isGone
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
@@ -187,6 +190,7 @@ class EmulatorActivity : AppCompatActivity() {
     lateinit var appForegroundStateObserver: AppForegroundStateObserver
 
     private var presentation: ExternalPresentation? = null
+    private var defaultFpsTextSize = 0f
 
     private lateinit var handler: Handler
     private val displayListener = object : DisplayManager.DisplayListener {
@@ -534,7 +538,8 @@ class EmulatorActivity : AppCompatActivity() {
                     if (fps == null) {
                         binding.textFps.text = null
                     } else {
-                        binding.textFps.text = getString(R.string.info_fps, fps) + if (netplay.isEmpty()) "" else "  ·  $netplay"
+                        // the large counter is sized for "FPS: 100", so it leaves the Netplay status out
+                        binding.textFps.text = getString(R.string.info_fps, fps) + if (netplay.isEmpty() || viewModel.isFpsCounterLarge()) "" else "  ·  $netplay"
                     }
                     updateFpsOverlay()
                 }
@@ -861,8 +866,8 @@ class EmulatorActivity : AppCompatActivity() {
         window.setSustainedPerformanceMode(viewModel.isSustainedPerformanceModeEnabled())
     }
 
-    // The counter is drawn by the screen renderer in the colour opposite to the pixels under it
-    // (white text vanished on white menus); the TextView only lays it out, with invisible text.
+    // The counter is drawn by the screen renderer, white with a black outline (plain white text vanished
+    // on white menus); the TextView only lays it out, with invisible text.
     private fun updateFpsOverlay() {
         val view = binding.textFps
         view.setTextColor(android.graphics.Color.TRANSPARENT)
@@ -915,6 +920,26 @@ class EmulatorActivity : AppCompatActivity() {
                 FpsCounterPosition.HIDDEN -> { /* Do nothing here */ }
             }
             binding.textFps.layoutParams = newParams
+            setupFpsCounterSize()
+        }
+    }
+
+    // Large counter: "FPS: 100" fills the screen width inside the padding (about a quarter of the screen area),
+    // at most half the screen height
+    private fun setupFpsCounterSize() {
+        val view = binding.textFps
+        if (defaultFpsTextSize == 0f) defaultFpsTextSize = view.textSize
+        if (!viewModel.isFpsCounterLarge()) {
+            view.setTextSize(TypedValue.COMPLEX_UNIT_PX, defaultFpsTextSize)
+            return
+        }
+        binding.root.doOnLayout { root ->
+            val paint = Paint(view.paint).apply { textSize = 100f }
+            val fm = paint.fontMetrics
+            val byWidth = 100f * (root.width - 2 * view.paddingLeft) * 0.98f / paint.measureText(getString(R.string.info_fps, 100))
+            val byHeight = 100f * root.height * 0.5f / (fm.descent - fm.ascent)
+            view.setTextSize(TypedValue.COMPLEX_UNIT_PX, minOf(byWidth, byHeight))
+            updateFpsOverlay()
         }
     }
 

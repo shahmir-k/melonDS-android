@@ -150,6 +150,7 @@ android {
                     "-DLITEV_REMOTE_GX_SINK=ON",
                     "-DLITEV_NP_SPEED=ON",
                     "-DLITEV_NP_FLOAT=ON",
+                    "-DLITEV_SCHED_LEAN=ON",
                     // Hosted Netplay: the host runs every console, each guest only its own
                     "-DLITEV_HOSTED_NETPLAY=ON",
                     // LockstepMP: host frames 2 ms late (OFF: on device it makes Shrek's 2P

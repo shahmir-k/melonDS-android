@@ -236,6 +236,7 @@ android {
                     // fixed cores {0,1,2}; tile worker count from the fastest non-emu cluster.
                     // RG DS placement unchanged; big.LITTLE keeps render off the little cores.
                     "-DLITEV_TOPO_PIN=ON",
+                    "-DLITEV_NP_FLOAT=ON",
                     // Dirty-incremental VRAM shadow snapshots instead of full memcpy.
                     "-DLITEV_SNAP_DIRTY=ON",
                     // Staged deep prefetch in BuildFrameGeom (A; runtime prop

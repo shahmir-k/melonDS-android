@@ -998,6 +998,9 @@ namespace MelonDSAndroid
         if (!netplay)
             return;
         netplay->running = false;
+#if defined(LITEV_NP_FLOAT) && defined(LITEV_TOPO_PIN)
+        LitevTopo::NetplayFloat() = 0;   // (the emu thread's 300-frame sweep re-masks it, as on the way in)
+#endif
         netplayStopLink();
         netplay->input = nullptr;   // wakes a Get() waiting for the peer
         for (auto& r : netplay->remotes)
@@ -1368,6 +1371,14 @@ namespace MelonDSAndroid
             instance->getNds()->GPU.KeepCapturesSeen = false;
 #endif
             netplay->running = true;
+#if defined(LITEV_NP_FLOAT) && defined(LITEV_TOPO_PIN)
+            {   // debug.litev.npfloat: 0 role masks, 1 remote consoles float over every core (default), 2 the local emu too
+                char b[8] = {0};
+                const int fl = __system_property_get("debug.litev.npfloat", b) > 0 ? atoi(b) : 1;
+                LitevTopo::NetplayFloat() = fl;
+                Platform::Log(Platform::LogLevel::Info, "Netplay: thread placement npfloat=%d\n", fl);
+            }
+#endif
             for (auto& r : netplay->remotes)
             {
                 r->console->start();

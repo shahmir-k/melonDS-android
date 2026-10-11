@@ -872,11 +872,11 @@ namespace MelonDSAndroid
             if (frames % 600 == 0 && !s.hosted)
             {   // per device: achieved fps, its own cost per frame, the time it waited for the others
                 auto now = std::chrono::steady_clock::now();
-                double cpu = threadCpuMs(), wait = s.input->PeerWaitMs(), remote = 0;
+                double cpu = threadCpuMs(), wait = s.input->StallMs(), remote = 0;   // remote consoles waiting for their input
                 for (auto& r : s.remotes) remote = std::max(remote, r->cpuMs.load());
                 static double lastRemote = 0;
                 Platform::Log(Platform::LogLevel::Info, "NETPLAY_SPEED f%d speed %s by 0x%x fps %.1f | local run %.2f cpu %.2f ms/f | "
-                              "busiest remote console cpu %.2f ms/f | wait for peers %.2f ms/f | delay %d rtt %.1f ms\n", frames,
+                              "busiest remote console cpu %.2f ms/f | remote consoles waited for input %.2f ms/f | delay %d rtt %.1f ms\n", frames,
                               speedName(s.speed).c_str(), s.speedWho.load(), 600 / std::chrono::duration<double>(now - s.reportAt).count(),
                               s.runMs / 600, (cpu - s.reportCpu) / 600, (remote - lastRemote) / 600, (wait - s.reportWait) / 600,
                               s.input->CurrentDelay(), s.input->PeerRttMs());
@@ -1453,13 +1453,22 @@ namespace MelonDSAndroid
 #ifdef LITEV_NP_SPEED
             if (!netplay->hosted)
             {
-                netplay->runMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - runStart).count();
+                const double runNow = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - runStart).count();
+                netplay->runMs += runNow;
+                // never waits: the speed decided from the inputs already here (NetplayInput::SpeedAt)
                 u32 who = 0;
-                int code = netplay->input->SpeedAt(frame, &who);
+                int from = -1;
+                int code = netplay->input->SpeedAt(frame, &who, &from);
                 if (code != netplay->speed || who != netplay->speedWho)
-                    Platform::Log(Platform::LogLevel::Info, "NETPLAY_SPEED switch f%d %s by 0x%x\n", frame, speedName(code).c_str(), who);
+                    Platform::Log(Platform::LogLevel::Info, "NETPLAY_SPEED switch f%d %s by 0x%x (applied at f%d)\n",
+                                  from + NetplayInput::kSpeedLag, speedName(code).c_str(), who, frame);
                 netplay->speedWho = who;
                 netplay->speed = code;
+                // the adaptive delay sizes itself in frames of the current period (uncapped: the local work)
+                static double workEma = 16.667;
+                workEma = workEma * 0.9 + runNow * 0.1;
+                const float m = NetplaySpeed::Multiplier(code);
+                netplay->input->SetFramePeriodUs(m > 0 ? (int)(1e6 / (60 * m)) : (int)(workEma * 1000));
             }
 #endif
             hostedEndFrame(*instance, netplay->player, frame, applied);

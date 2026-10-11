@@ -149,6 +149,7 @@ android {
                     "-DLITEV_SPU_SILENT_LAZY=ON",
                     "-DLITEV_REMOTE_GX_SINK=ON",
                     "-DLITEV_NP_SPEED=ON",
+                    "-DLITEV_MP_BEACON_TSF=ON",
                     "-DLITEV_NP_FLOAT=ON",
                     "-DLITEV_SCHED_LEAN=ON",
                     "-DLITEV_MP_FUTEX=ON", "-DLITEV_SPU_CAPTURE_CHMAJOR=ON", "-DLITEV_MP_POLL_INLINE=ON", "-DLITEV_JIT_VWRAM_LOAD=ON",

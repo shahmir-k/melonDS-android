@@ -29,7 +29,6 @@ so Netplay peers must run the same version. Pervasive cycle-timing changes are n
 software renderer is approximate; "Accurate software 3D" keeps melonDS's reference renderer.
 
 # Missing Features
-*  Local Multiplayer
 *  DSi SD card support
 *  Customizable button skins
 *  More display filters

@@ -7,6 +7,27 @@ Android port of [melonDS](https://melonds.kuribo64.net/), a DS and DSi emulator.
 |---|---|---|---|
 |![Screenshot 1](./.github/images/screenshot_mobile0.png)|![Screenshot 2](./.github/images/screenshot_mobile1.png)|![Screenshot 3](./.github/images/screenshot_mobile2.png)|![Screenshot 4](./.github/images/screenshot_mobile3.png)|
 
+# What SereneDS changes
+SereneDS (`com.sereneds.app`) is a fork of this app and of the melonDS core
+([quickmelonDS](https://github.com/shahmir-k/quickmelonDS), based on upstream melonDS of 2026-06-07).
+It is tuned for in-order ARM handhelds such as the Anbernic RG DS (Cortex-A55). The full list, with
+measurements and the exactness class of every item: **[docs/OPTIMIZATIONS.md](docs/OPTIMIZATIONS.md)**.
+
+*  **JIT (ARM64):** the dispatcher runs in generated code, with block linking, inline caches, a return-address stack, lazy flags, pinned guest registers, wider fastmem (DTCM, block transfers, user-bank STM), code laid out for the in-order A55 (emu CPU −5%), and cheaper compiling (fewer scene-entry hitches).
+*  **HLE:** hot Nintendo SDK routines are recognised by their exact code bytes and run natively, with a fallback to the game's code: OS IRQ/wake-ups, HBlank IRQ, GX display lists, NNS G3D models/materials/animation, LZ decompression, card reads, `_ll_sdiv`, and the ARM7 sound driver. Matches Pokémon Black/White/White 2 (most hooks) and Mario Kart DS / The Sims 3 (some). PW emu CPU −19..−28%.
+*  **Scheduler/timing:** event-true CPU slices, instant/lazy divider and sqrt, batched SPU/Wi-Fi/cart events, idle-loop skipping (deterministic approximations, see below).
+*  **3D:** a default hybrid OpenGL renderer (3D on the GPU at 3x, 2D on the CPU) with many Mali GPU-cost levers. Also a DraStic-style multi-threaded tile software renderer, plus a faster geometry engine (NEON math, bulk GX DMA, early reject, lean clipping).
+*  **2D/presentation/audio:** threaded NEON 2D, repeated 30 Hz frames skipped, pacing catch-up, NEON/table/batched audio, and an Audio quality setting.
+*  **Threads and build:** render threads kept off the emulator core (largest single lever, +45%), role-based pinning, PGO/CSPGO, ThinLTO, hot-function ordering, `-mtune=cortex-a55` (together −14% emu CPU).
+*  **Multiplayer:** new lockstep **Netplay** (2-16 players, inputs only, desync check, cross-game ROM sharing, adaptive delay that holds 60 fps up to ~1 s one-way latency in tests, synchronized fast-forward), new **Hosted Netplay** (one device runs every console), and faster, more robust LAN.
+*  **App:** record mode for exact-replay bug reports, a stronger fast-forward (R2, ~2x+), an Edge outlines setting (default off), Auto frameskip (default on), and dual-screen handheld support (RG DS, AYN Thor).
+*  **Correctness:** fixes to upstream bugs (a JIT Thumb literal bug that froze Pokémon White battles, a savestate divider/sqrt gap, an uninitialised MP ACK, a GXFIFO stall-queue overflow) and to our own levers (for example SM64DS).
+
+**What we don't change:** emulation stays deterministic and multiplayer-safe. Speed-first approximations
+are deterministic and version-locked: every SereneDS build of the same version agrees with every other,
+so Netplay peers must run the same version. Pervasive cycle-timing changes are not allowed. The fast tile
+software renderer is approximate; "Accurate software 3D" keeps melonDS's reference renderer.
+
 # Missing Features
 *  Local Multiplayer
 *  DSi SD card support

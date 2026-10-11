@@ -754,7 +754,11 @@ namespace MelonDSAndroid
         if (netplay->record) { netplay->record->SetClock(player, std::move(clock)); netplay->record->Link().SetWake(player, *nds); return; }
         if (netplay->replay) { netplay->replay->SetClock(std::move(clock)); return; }
 #endif
+#ifdef LITEV_MP_FASTPOLL
+        ((LockstepMP&) MPInterface::Get()).SetClockSource(player, nds->SysTimestampPtr());   // (a plain read, several per client poll)
+#else
         ((LockstepMP&) MPInterface::Get()).SetClock(player, std::move(clock));
+#endif
         ((LockstepMP&) MPInterface::Get()).SetWake(player, *nds);
     }
 

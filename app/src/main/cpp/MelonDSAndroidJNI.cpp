@@ -392,22 +392,24 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
     bool isNew = false;
     Frame* presentationFrame = MelonDSAndroid::getPresentationFrame(deadlineTime, &isNew);
     // debug.litev.presentlog=1: one record per vsync callback (what the screen shows), dumped
-    // 40 at a time: "dt_ms,new,emuFrame step,drops,age_ms,deadline_ms" (age = ready -> taken;
-    // deadline = how long it would wait for a frame, -1 none). tools/record/presents.py
+    // 40 at a time: "dt_ms,new,emuFrame step,drops,age_ms,deadline_ms,repeats" (age = ready -> taken;
+    // deadline = how long it would wait for a frame, -1 none; repeats = frames skip-repeat left
+    // undrawn since the last record, identical to the picture shown). tools/record/presents.py
     {
         static const bool presLog = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.presentlog", b) > 0 && atoi(b) != 0; }();
         if (presLog)
         {
-            static char line[4000]; static int n = 0, len = 0, lastEmu = 0, lastDrops = 0;
+            static char line[4000]; static int n = 0, len = 0, lastEmu = 0, lastDrops = 0, lastRep = 0;
             static int64_t lastNs = 0;
             const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
             const int drops = g_presentDrops.load(std::memory_order_relaxed);
+            const int rep = g_framesRepeat.load(std::memory_order_relaxed);
             const int emu = presentationFrame ? presentationFrame->emuFrame : 0;
             if (n == 0) len = snprintf(line, sizeof(line), "t=%lld", (long long)(now / 1000000));
-            len += snprintf(line + len, sizeof(line) - len, " %.1f,%d,%d,%d,%.1f,%.1f", lastNs ? (now - lastNs) / 1e6 : 0.0, isNew ? 1 : 0,
+            len += snprintf(line + len, sizeof(line) - len, " %.1f,%d,%d,%d,%.1f,%.1f,%d", lastNs ? (now - lastNs) / 1e6 : 0.0, isNew ? 1 : 0,
                             emu - lastEmu, drops - lastDrops, isNew && presentationFrame ? (now - presentationFrame->readyNs) / 1e6 : 0.0,
-                            deadlineNs > 0 ? (deadlineNs - now) / 1e6 : -1.0);
-            lastNs = now; lastEmu = emu; lastDrops = drops;
+                            deadlineNs > 0 ? (deadlineNs - now) / 1e6 : -1.0, rep - lastRep);
+            lastNs = now; lastEmu = emu; lastDrops = drops; lastRep = rep;
             if (++n >= 40) { LOG_INFO("LITEV_PRES", "%s", line); n = 0; }
         }
     }

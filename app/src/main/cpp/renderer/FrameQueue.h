@@ -20,6 +20,8 @@ constexpr std::size_t FRAME_QUEUE_SIZE = 9;
 extern std::atomic<int> g_presentDrops;
 // emulated frames whose drawing frameskip skipped (never shown)
 extern std::atomic<int> g_framesHidden;
+// emulated frames skip-repeat did not draw because nothing visible changed (debug.litev.presentlog)
+extern std::atomic<int> g_framesRepeat;
 
 struct Frame {
     GLuint frameTexture{};

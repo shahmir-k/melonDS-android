@@ -1319,6 +1319,12 @@ namespace MelonDSAndroid
 #ifdef LITEV_NP_ADAPTIVE_DELAY
             netplay->input->Adaptive = true;    // the delay follows the round trip from here
 #endif
+#ifdef LITEV_NP_QUIET_HB
+            {   // plain Netplay: heartbeats only where needed; debug.litev.npquiet=0 turns it off
+                char b[PROP_VALUE_MAX] = {0};
+                netplay->input->QuietHeartbeat = !(__system_property_get("debug.litev.npquiet", b) > 0 && atoi(b) == 0);
+            }
+#endif
             Platform::Log(Platform::LogLevel::Info, "Netplay: %d players, input delay %d frames%s\n", netplay->players,
                           netplay->delay, netplay->input->Ok() ? "" : " (SOCKET FAILED)");
             for (auto& [player, addr] : peers)

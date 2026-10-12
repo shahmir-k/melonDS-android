@@ -159,7 +159,7 @@ android {
                     // Netplay input receive thread at nice -16 (thread priority only; RG DS 1 2P Shrek vs Mac peer 53.6 vs 53.75 fps: neutral).
                     "-DLITEV_NP_RX_PRIO=ON",
                     // Netplay I/O off the emulator thread + lean receive loop; lockstep wakes only sleeping consoles (both exact)
-                    "-DLITEV_NP_LEAN_IO=ON", "-DLITEV_MP_LAZYWAKE=ON", "-DLITEV_NP_BATCH=ON",
+                    "-DLITEV_NP_LEAN_IO=ON", "-DLITEV_MP_LAZYWAKE=ON", "-DLITEV_NP_BATCH=ON", "-DLITEV_NP_QUIET_HB=ON",
                     // Hosted Netplay: the host runs every console, each guest only its own
                     "-DLITEV_HOSTED_NETPLAY=ON",
                     // LockstepMP: host frames 2 ms late (OFF: on device it makes Shrek's 2P

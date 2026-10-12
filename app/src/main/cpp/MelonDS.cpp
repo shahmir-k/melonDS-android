@@ -1388,11 +1388,10 @@ namespace MelonDSAndroid
 #endif
             netplay->running = true;
 #if defined(LITEV_NP_FLOAT) && defined(LITEV_TOPO_PIN)
-            {   // debug.litev.npfloat: 0 role masks, 1 remote consoles float over every core, 2 the local
-                // emu too (default: the local console waits for the remotes every frame, so pinning it
-                // to its own core idles that core; headless 8P MKDS RG DS 26 vs 28-29 ms/frame)
+            {   // debug.litev.npfloat: 0 role masks, 1 remote consoles float over every core (default), 2 the
+                // local emu too (in-app RG DS: 8P avg +1.7% but worst 1 s -6%, 2P worst 1 s -5%: stays 1)
                 char b[8] = {0};
-                const int fl = __system_property_get("debug.litev.npfloat", b) > 0 ? atoi(b) : 2;
+                const int fl = __system_property_get("debug.litev.npfloat", b) > 0 ? atoi(b) : 1;
                 LitevTopo::NetplayFloat() = fl;
                 Platform::Log(Platform::LogLevel::Info, "Netplay: thread placement npfloat=%d\n", fl);
             }

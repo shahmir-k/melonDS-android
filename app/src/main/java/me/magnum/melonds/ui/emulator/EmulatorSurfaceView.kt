@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.render.PresentFrameWrapper
 import me.magnum.melonds.ui.emulator.model.RuntimeRendererConfiguration
 import me.magnum.melonds.ui.emulator.render.EmulatorRenderer
@@ -21,6 +22,9 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
     private var surface: Surface? = null
     private var windowSurface: EGLSurface? = null
     private var renderer: EmulatorRenderer? = null
+    private val skipStatic by lazy { MelonEmulator.litevProp("presentskipstatic", 1) != 0 }
+    private var lastStaticKey: Any? = null
+    private var staticDraws = 0
 
     private enum class SurfaceState {
         UNINITIALIZED,
@@ -90,6 +94,16 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
                 surfaceState = SurfaceState.READY
             }
 
+            // LITEV present skip (debug.litev.presentskipstatic=0: off): a surface whose frame
+            // would be identical to the one it already shows skips the draw and the swap
+            val key = if (skipStatic && surfaceState == SurfaceState.READY) renderer?.staticFrameKey(presentFrameWrapper) else null
+            if (key != null && key == lastStaticKey) {
+                if (staticDraws >= 2) return
+                staticDraws++
+            } else {
+                lastStaticKey = key
+                staticDraws = 1
+            }
             renderer?.drawFrame(presentFrameWrapper)
             glContext.swapBuffers(windowSurface!!)
         }

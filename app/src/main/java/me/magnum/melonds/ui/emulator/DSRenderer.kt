@@ -265,6 +265,21 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         }
     }
 
+    private data class StaticKey(val valid: Boolean, val background: RuntimeBackground?, val loaded: Boolean, val mustLoad: Boolean,
+                                 val posDirty: Boolean, val overlay: Overlay?, val width: Float, val height: Float)
+
+    // a surface showing no DS screen (e.g. the control display of a dual-screen device) draws the
+    // same background + overlay every frame
+    override fun staticFrameKey(presentFrameWrapper: PresentFrameWrapper): Any? {
+        synchronized(configurationLock) {
+            if (mustUpdateConfiguration || screenIndices != 0) return null
+        }
+        synchronized(backgroundLock) {
+            return StaticKey(presentFrameWrapper.isValidFrame, background, isBackgroundLoaded, mustLoadBackground,
+                             isBackgroundPositionDirty, overlay, width, height)
+        }
+    }
+
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {
         synchronized(configurationLock) {
             if (mustUpdateConfiguration) {

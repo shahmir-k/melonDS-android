@@ -673,7 +673,8 @@ u32 MelonInstance::runFrame()
     void* fbTop = nullptr;
     void* fbBottom = nullptr;
 #ifdef LITEV_SKIP_REPEAT_FRAMES
-    bool skipPresent = nds->GPU.SkipRepeat;   // nothing drawn this frame: keep the last one on screen
+    bool skipPresent = nds->GPU.SkipRepeat;   // nothing visible changed this frame: keep the last one on screen
+    if (skipPresent) g_framesRepeat.fetch_add(1, std::memory_order_relaxed);
 #else
     bool skipPresent = false;
 #endif

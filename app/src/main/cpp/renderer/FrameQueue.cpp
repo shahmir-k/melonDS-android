@@ -5,6 +5,7 @@
 
 std::atomic<int> g_presentDrops{0};
 std::atomic<int> g_framesHidden{0};
+std::atomic<int> g_framesRepeat{0};
 
 FrameQueue::FrameQueue()
 {

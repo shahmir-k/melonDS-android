@@ -156,6 +156,8 @@ android {
                     // Exact host-only levers (loose-ends sweep 2026-10-12; RG DS headless non-PGO emu CPU -0.3..-1.7%; need the next PGO retrain:
                     // MEM_SPLIT changes ARM9IORead32, GX_VTX_PREFETCH SubmitPolygon). JIT_PRETOUCH: +16 MB RSS per static JIT slice.
                     "-DLITEV_MEM_SPLIT=ON", "-DLITEV_GX_VTX_PREFETCH=ON", "-DLITEV_JIT_PRETOUCH=ON",
+                    // Netplay input receive thread at nice -16 (thread priority only; RG DS 1 2P Shrek vs Mac peer 53.6 vs 53.75 fps: neutral).
+                    "-DLITEV_NP_RX_PRIO=ON",
                     // Netplay I/O off the emulator thread + lean receive loop; lockstep wakes only sleeping consoles (both exact)
                     "-DLITEV_NP_LEAN_IO=ON", "-DLITEV_MP_LAZYWAKE=ON", "-DLITEV_NP_BATCH=ON",
                     // Hosted Netplay: the host runs every console, each guest only its own

@@ -119,6 +119,8 @@ static int    autoFsSkip     = 0;    // current adaptive raster-skip level (0..3
 static double autoFsEmaMs    = 0.0;  // FAST EMA of per-frame wall time (attack signal)
 static int    autoFsCooldown = 0;    // frames to wait after a change (let it settle)
 static int    autoFsHeadroom = 0;    // consecutive low-load frames (slow-release counter)
+static int    autoFsRelease  = 30;   // headroom frames needed to release a level (backs off on flapping)
+static int    autoFsSinceRelease = 1000;   // frames since the last release
 #endif
 
 #ifdef LITEV_SKIP_REPEAT_FRAMES
@@ -146,7 +148,7 @@ Java_me_magnum_melonds_MelonEmulator_setupEmulator(JNIEnv* env, jobject thiz, jo
 #ifdef LITEV_AUTO_FRAMESKIP
     autoFrameskipEnabled = finalEmulatorConfiguration.autoFrameskipEnabled;
     // New emulator session (the emu thread is not running yet): start from no skip.
-    autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
+    autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0; autoFsRelease = 30; autoFsSinceRelease = 1000;
 #endif
 #ifdef LITEV_SKIP_REPEAT_FRAMES
     skipRepeatAuto.reset();
@@ -389,6 +391,26 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
 
     bool isNew = false;
     Frame* presentationFrame = MelonDSAndroid::getPresentationFrame(deadlineTime, &isNew);
+    // debug.litev.presentlog=1: one record per vsync callback (what the screen shows), dumped
+    // 40 at a time: "dt_ms,new,emuFrame step,drops,age_ms,deadline_ms" (age = ready -> taken;
+    // deadline = how long it would wait for a frame, -1 none). tools/record/presents.py
+    {
+        static const bool presLog = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.presentlog", b) > 0 && atoi(b) != 0; }();
+        if (presLog)
+        {
+            static char line[4000]; static int n = 0, len = 0, lastEmu = 0, lastDrops = 0;
+            static int64_t lastNs = 0;
+            const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+            const int drops = g_presentDrops.load(std::memory_order_relaxed);
+            const int emu = presentationFrame ? presentationFrame->emuFrame : 0;
+            if (n == 0) len = snprintf(line, sizeof(line), "t=%lld", (long long)(now / 1000000));
+            len += snprintf(line + len, sizeof(line) - len, " %.1f,%d,%d,%d,%.1f,%.1f", lastNs ? (now - lastNs) / 1e6 : 0.0, isNew ? 1 : 0,
+                            emu - lastEmu, drops - lastDrops, isNew && presentationFrame ? (now - presentationFrame->readyNs) / 1e6 : 0.0,
+                            deadlineNs > 0 ? (deadlineNs - now) / 1e6 : -1.0);
+            lastNs = now; lastEmu = emu; lastDrops = drops;
+            if (++n >= 40) { LOG_INFO("LITEV_PRES", "%s", line); n = 0; }
+        }
+    }
     // Nothing new since the last present (paused, or the game runs under 60 fps): keep what is on
     // screen instead of redrawing and swapping every display again. That GPU/DRAM traffic slows
     // the emulator threads on the RG DS (a paused app made a two-console emulation ~40% slower).
@@ -1400,25 +1422,43 @@ void* emulate(void*)
         // Never during LAN multiplayer: there the frame time is spent waiting on the network,
         // which skipping rendering cannot shorten, and the skips show up as multi-second freezes.
         if (autoFrameskipEnabled && !isFastForwardEnabled && lanMode == LanNone) {
-            autoFsEmaMs = (autoFsEmaMs <= 0.0) ? delay : (autoFsEmaMs * 0.7 + delay * 0.3);
+            // One frame's sample is clamped to 2x the budget and the EMA is slow (alpha 0.1):
+            // a one-off hitch (savestate load, area load, JIT compile burst) can't raise the
+            // level by itself. Skipping drawing doesn't shorten those frames anyway; the old
+            // controller (alpha 0.3, unclamped, jump 2) latched level 3 on PW's load-in and its
+            // 120-frame-per-level release kept the picture at 15 then 30 fps for ~6 s while
+            // the work was 5 ms of a 16.7 ms budget and the counter read 60 (RG DS 2, 2026-10-12).
+            // Release after 30 frames of headroom; an attack soon after a release doubles the
+            // next release wait (30 .. 480 frames) so a scene at the threshold can't flap.
+            // debug.litev.autofsold=1: the old controller (A/B).
+            static const bool oldFs = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.autofsold", b) > 0 && atoi(b) != 0; }();
+            const double w = oldFs || delay < frameTimeStep * 2 ? delay : frameTimeStep * 2;
+            const double alpha = oldFs ? 0.3 : 0.1;
+            autoFsEmaMs = (autoFsEmaMs <= 0.0) ? (oldFs || w < frameTimeStep ? w : frameTimeStep)
+                                               : (autoFsEmaMs * (1 - alpha) + w * alpha);
             if (autoFsCooldown > 0) autoFsCooldown--;
+            autoFsSinceRelease++;
 
             if (autoFsEmaMs > frameTimeStep * 1.15) {
                 autoFsHeadroom = 0;                        // behind -> attack
                 if (autoFsCooldown == 0 && autoFsSkip < 3) {
-                    int step = (autoFsEmaMs > frameTimeStep * 1.9) ? 2 : 1;
+                    int step = (oldFs && autoFsEmaMs > frameTimeStep * 1.9) ? 2 : 1;
                     autoFsSkip = (autoFsSkip + step > 3) ? 3 : autoFsSkip + step;
                     MelonDSAndroid::setFrameskip(autoFsSkip);
-                    LOG_INFO("LITEV_AUTOFS", "skip level %d (ema %.2f ms)", autoFsSkip, autoFsEmaMs);
-                    autoFsCooldown = 5;
+                    if (!oldFs && autoFsSinceRelease < 300)
+                        autoFsRelease = autoFsRelease * 2 < 480 ? autoFsRelease * 2 : 480;
+                    LOG_INFO("LITEV_AUTOFS", "skip level %d (ema %.2f ms, release %d)", autoFsSkip, autoFsEmaMs, autoFsRelease);
+                    autoFsCooldown = oldFs ? 5 : 15;   // let the new level show in the EMA
                 }
             } else if (autoFsEmaMs < frameTimeStep * 0.70) {
-                if (++autoFsHeadroom >= 120 && autoFsSkip > 0) {   // sustained headroom -> release
+                if (!oldFs && autoFsSinceRelease >= 300) autoFsRelease = 30;   // the last release held
+                if (++autoFsHeadroom >= (oldFs ? 120 : autoFsRelease) && autoFsSkip > 0) {   // headroom -> release
                     autoFsSkip--;
                     MelonDSAndroid::setFrameskip(autoFsSkip);
                     LOG_INFO("LITEV_AUTOFS", "skip level %d (ema %.2f ms)", autoFsSkip, autoFsEmaMs);
                     autoFsHeadroom = 0;
                     autoFsCooldown = 5;
+                    autoFsSinceRelease = 0;
                 }
             } else {
                 autoFsHeadroom = 0;                        // stable band -> hold
@@ -1426,7 +1466,7 @@ void* emulate(void*)
         } else if (autoFsSkip != 0) {
             // Setting turned off, or fast-forward engaged, while a skip was applied ->
             // clear it; the controller restarts from 0 when it next runs.
-            autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0;
+            autoFsSkip = 0; autoFsEmaMs = 0.0; autoFsCooldown = 0; autoFsHeadroom = 0; autoFsRelease = 30; autoFsSinceRelease = 1000;
             MelonDSAndroid::setFrameskip(0);
             LOG_INFO("LITEV_AUTOFS", "skip level 0 (inactive)");
         }
@@ -1508,9 +1548,34 @@ void* emulate(void*)
             }
         }
 
+        // debug.litev.presentlog=1: per emulated frame "work_ms,sleep_ms", 60 per line
+        {
+            static const bool presLog = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.presentlog", b) > 0 && atoi(b) != 0; }();
+            if (presLog)
+            {
+                static char line[2048]; static int n = 0, len = 0;
+                if (n == 0) len = snprintf(line, sizeof(line), "t=%lld", (long long)(std::chrono::steady_clock::now().time_since_epoch().count() / 1000000));
+                len += snprintf(line + len, sizeof(line) - len, " %.1f,%.1f",
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(frameDuration).count() / 1e6, actualSleepMs);
+                if (++n >= 60) { LOG_INFO("LITEV_EMUF", "%s", line); n = 0; }
+            }
+        }
+
         observedFrames++;
         if (observedFrames >= 30) {
-            fps = (observedFrames * 1000.0) / (lastTick - lastMeasureFpsTick);
+            // The counter shows frames that reached the screen: emulated frames minus the ones
+            // frameskip didn't draw and the drawn ones the presenter replaced before a vsync
+            // showed them (skip-repeat frames count: they look the same as the one shown).
+            // Fast-forward shows the emulated rate (most frames are meant to be skipped there).
+            // debug.litev.fpsemu=1: always the emulated rate.
+            static const bool fpsEmu = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fpsemu", b) > 0 && atoi(b) != 0; }();
+            static int lastHidden = 0, lastDrops = 0;
+            const int hidden = g_framesHidden.load(std::memory_order_relaxed), drops = g_presentDrops.load(std::memory_order_relaxed);
+            int shown = observedFrames;
+            if (!fpsEmu && !isFastForwardEnabled && limitFps && !noLimit)
+                shown -= (hidden - lastHidden) + (drops - lastDrops);
+            lastHidden = hidden; lastDrops = drops;
+            fps = ((shown > 0 ? shown : 0) * 1000.0) / (lastTick - lastMeasureFpsTick);
             lastMeasureFpsTick = lastTick;
             observedFrames = 0;
         }

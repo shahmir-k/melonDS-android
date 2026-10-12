@@ -1,5 +1,10 @@
 #include "FrameQueue.h"
 #include <Platform.h>
+#include <sys/system_properties.h>
+#include <cstdlib>
+
+std::atomic<int> g_presentDrops{0};
+std::atomic<int> g_framesHidden{0};
 
 FrameQueue::FrameQueue()
 {
@@ -25,6 +30,7 @@ Frame* FrameQueue::getRenderFrame()
     {
         frame = presentQueue.back();
         presentQueue.pop_back();
+        g_presentDrops++;
     }
     else
     {
@@ -55,15 +61,23 @@ Frame* FrameQueue::getPresentFrame(std::optional<std::chrono::time_point<std::ch
         previousFrame = nullptr;
     }
 
-    Frame* frame = presentQueue.front();
-    presentQueue.pop_front();
-
-    for (auto f : presentQueue)
+    // Show the OLDEST waiting frame and keep at most one more for the next vsync. The emulator
+    // paces on its own clock and a frame's work time varies (2-11 ms in PW), so when its finish
+    // time sits near the vsync deadline two frames land in one vsync and none in the next:
+    // taking the newest (upstream) held one vsync and then dropped a frame, ~1-30 times a
+    // second, while the counter read 60. One frame of slack absorbs that jitter (it adds up to
+    // one vsync of latency while frames arrive in pairs). Fast-forward / catch-up bursts still
+    // drop down to the newest two. debug.litev.presentfifo=0: newest only (upstream).
+    static const bool fifo = [] { char b[92] = {}; return !(__system_property_get("debug.litev.presentfifo", b) > 0 && atoi(b) == 0); }();
+    const size_t keep = fifo ? 2 : 1;   // presentQueue: front = newest
+    while (presentQueue.size() > keep)
     {
-        freeQueue.push(f);
+        freeQueue.push(presentQueue.back());
+        presentQueue.pop_back();
+        g_presentDrops++;
     }
-
-    presentQueue.clear();
+    Frame* frame = presentQueue.back();
+    presentQueue.pop_back();
     previousFrame = frame;
     renderFrameFreeCondition.notify_one();
     if (isNew) *isNew = true;
@@ -97,6 +111,7 @@ void FrameQueue::validateRenderFrame(Frame* frame, int requiredWidth, int requir
 
 void FrameQueue::pushRenderedFrame(Frame* frame)
 {
+    frame->readyNs = std::chrono::steady_clock::now().time_since_epoch().count();
     std::unique_lock lock(frameLock);
     presentQueue.push_front(frame);
     presentFrameReadyCondition.notify_one();

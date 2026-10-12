@@ -109,6 +109,7 @@ private:
     u32 inputMask;
     bool inputDeferred = false;
     FrameStats frameStats;
+    u32 lastRetiredPresented = 0;   // SoftRenderer::RetiredFrames() at the last present
     bool touching = false;
     u16 touchX = 0, touchY = 0;
     bool headlessRendererSet = false;

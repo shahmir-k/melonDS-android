@@ -688,6 +688,20 @@ u32 MelonInstance::runFrame()
     skipPresent |= ffSkipPresent && nds->GPU.SkipDisplay && !rewindManager.ShouldCaptureState(frame + 1)
                    && !screenshotRenderer->isScreenshotPending();
 #endif
+#ifdef LITEV_AGGRESSIVE_SKIP
+    if (nds->GPU.SkipThisFrame) g_framesHidden.fetch_add(1, std::memory_order_relaxed);   // the on-screen fps counter
+#endif
+    // The async 2D pipeline finishes a frame one or two VBlanks after it was drawn. A frame that
+    // finished on a frame that draws nothing (skip-repeat, frameskip) is presented now instead of
+    // at the next drawn frame: with skip-repeat at 30 Hz every picture used to wait for the
+    // next drawn VBlank (and the wait changed whenever the drawn/skipped pattern did).
+    // debug.litev.presentretire=0: only drawn frames present (A/B).
+    static const bool presentRetire = [] { char b[PROP_VALUE_MAX] = {}; return !(__system_property_get("debug.litev.presentretire", b) > 0 && atoi(b) == 0); }();
+    auto* softRend = presentRetire ? dynamic_cast<SoftRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
+    if (skipPresent && softRend && softRend->RetiredFrames() != lastRetiredPresented
+        && !(nds->CPUStop & CPUStop_Sleep))
+        skipPresent = false;
+    if (!skipPresent && softRend) lastRetiredPresented = softRend->RetiredFrames();
     auto* hybrid = !skipPresent && currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
     bool ramFramebuffers = false;
     bool presentedAsync = false;

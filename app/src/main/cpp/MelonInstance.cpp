@@ -777,7 +777,14 @@ u32 MelonInstance::runFrame()
             int fid = litevFbHashFrame++;
             if (litevFbHashEnabled == 1) {
                 int scale = screenWidth / 256; if (scale < 1) scale = 1;
-                litevFbHash(arrayTex, screenWidth, 192 * scale, fid);
+                // logged by emulated frame number: runs that present different frames still
+                // compare frame by frame. LITEV_GLHI_DEFER: read on the renderer's GL worker,
+                // after this frame's calls
+                const int emuFrame = (int)nds->NumFrames;
+                auto hash = [&] { litevFbHash(arrayTex, screenWidth, 192 * scale, emuFrame); };
+                if (auto* gl = dynamic_cast<GLRenderer*>(&nds->GPU.GetRenderer())) gl->RunGL(hash);
+                else hash();
+                (void)fid;
             }
         }
     }

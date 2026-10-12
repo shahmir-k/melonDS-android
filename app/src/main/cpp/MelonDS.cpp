@@ -955,15 +955,18 @@ namespace MelonDSAndroid
 
     static void netplayRemoteLoop(NetplayRemote* r)
     {
-        // Off the emulator's core, above the render threads (nice -10): the local console waits
-        // for this one every frame, so it must not queue behind rendering.
+        // Placement: LitevTopo RemoteConsole (debug.litev.npfloat), priority below.
 #ifdef LITEV_TOPO_PIN
         LitevTopo::PinSelf(LitevTopo::CoreRole::RemoteConsole);
 #else
         const auto& cores = LitevCores::Get();
         sched_setaffinity(0, sizeof(cores.OtherSet), &cores.OtherSet);
 #endif
-        int nice = -16;
+        // debug.litev.npnice: remote consoles' nice. Default -10 = the local emulator's: remotes
+        // above it (the old -16) made the local console, which waits for them every frame, queue
+        // behind them (headless 8P MKDS, RG DS: 29.8 vs 26 ms/frame wall)
+        char nb[8] = {0};
+        int nice = __system_property_get("debug.litev.npnice", nb) > 0 ? atoi(nb) : -10;
         while (setpriority(PRIO_PROCESS, 0, nice) != 0 && nice < 0) nice++;
         Platform::Log(Platform::LogLevel::Info, "Netplay: player %d's console thread at nice %d\n", r->player, nice);
         pthread_setname_np(pthread_self(), "NetplayRemote");
@@ -1385,7 +1388,8 @@ namespace MelonDSAndroid
 #endif
             netplay->running = true;
 #if defined(LITEV_NP_FLOAT) && defined(LITEV_TOPO_PIN)
-            {   // debug.litev.npfloat: 0 role masks, 1 remote consoles float over every core (default), 2 the local emu too
+            {   // debug.litev.npfloat: 0 role masks, 1 remote consoles float over every core (default), 2 the
+                // local emu too (in-app RG DS: 8P avg +1.7% but worst 1 s -6%, 2P worst 1 s -5%: stays 1)
                 char b[8] = {0};
                 const int fl = __system_property_get("debug.litev.npfloat", b) > 0 ? atoi(b) : 1;
                 LitevTopo::NetplayFloat() = fl;

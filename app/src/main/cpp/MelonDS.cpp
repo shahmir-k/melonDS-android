@@ -968,6 +968,20 @@ namespace MelonDSAndroid
         char nb[8] = {0};
         int nice = __system_property_get("debug.litev.npnice", nb) > 0 ? atoi(nb) : -10;
         while (setpriority(PRIO_PROCESS, 0, nice) != 0 && nice < 0) nice++;
+#ifdef LITEV_NP_BATCH
+        // SCHED_BATCH (nice kept): never preempts the thread that wakes it. Every lockstep wake
+        // (the local console, the in-game host, wakes the others at each exchange) used to hand
+        // the waker's core to the woken console: in-app 8P MKDS the local console was runnable
+        // but preempted ~40% of its wall time. A woken console still takes an idle core at once.
+        static const bool batch = [] { char b[PROP_VALUE_MAX] = {0}; return !(__system_property_get("debug.litev.npbatch", b) > 0 && atoi(b) == 0); }();
+        if (batch)
+        {
+            sched_param sp {};
+            const bool ok = sched_setscheduler(0, SCHED_BATCH, &sp) == 0;
+            setpriority(PRIO_PROCESS, 0, nice);   // (setscheduler keeps it; re-assert)
+            Platform::Log(Platform::LogLevel::Info, "Netplay: player %d's console thread SCHED_BATCH %s\n", r->player, ok ? "on" : "FAILED");
+        }
+#endif
         Platform::Log(Platform::LogLevel::Info, "Netplay: player %d's console thread at nice %d\n", r->player, nice);
         pthread_setname_np(pthread_self(), "NetplayRemote");
 

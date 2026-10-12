@@ -153,6 +153,8 @@ android {
                     "-DLITEV_MP_BEACON_TSF=ON",
                     "-DLITEV_SCHED_LEAN=ON",
                     "-DLITEV_MP_FUTEX=ON", "-DLITEV_SPU_CAPTURE_CHMAJOR=ON", "-DLITEV_MP_POLL_INLINE=ON", "-DLITEV_JIT_VWRAM_LOAD=ON",
+                    // Netplay I/O off the emulator thread + lean receive loop; lockstep wakes only sleeping consoles (both exact)
+                    "-DLITEV_NP_LEAN_IO=ON", "-DLITEV_MP_LAZYWAKE=ON", "-DLITEV_NP_BATCH=ON",
                     // Hosted Netplay: the host runs every console, each guest only its own
                     "-DLITEV_HOSTED_NETPLAY=ON",
                     // LockstepMP: host frames 2 ms late (OFF: on device it makes Shrek's 2P

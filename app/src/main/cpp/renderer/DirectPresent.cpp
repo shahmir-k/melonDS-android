@@ -53,7 +53,7 @@ void Draw(const Mesh& m, GLuint tex)
 bool Available()
 {
 #ifdef LITEV_HYB_DIRECT_PRESENT
-    static const bool on = [] { char b[PROP_VALUE_MAX] = {}; return !(__system_property_get("debug.litev.directpresent", b) > 0 && atoi(b) == 0); }();
+    static const bool on = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.directpresent", b) > 0 && atoi(b) != 0; }();   // default off: measured no CPU saving (it moves), uncapped slower
     return on && !Broken;   // a window the present thread could not use: back to the FrameRenderThread
 #else
     return false;

@@ -537,6 +537,12 @@
         <item>Memory expansion</item>
     </string-array>
 
+    <string name="emulated_battery">Emulated battery</string>
+    <string-array name="emulated_battery_options">
+        <item>Always full</item>
+        <item>Real device battery (single player only)</item>
+    </string-array>
+
     <string-array name="console_type_options">
         <item>@string/console_ds</item>
         <item>@string/console_dsi</item>

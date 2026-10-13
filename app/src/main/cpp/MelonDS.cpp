@@ -1439,6 +1439,7 @@ namespace MelonDSAndroid
     u32 loop()
     {
         MPInterface::Get().Process();
+        if (!netplay) instance->updateBattery();
         if (netplay)
         {
             NetplayFrameInput local;

@@ -175,6 +175,10 @@ object MelonEmulator {
 
     external fun recordMode(): Int     // 0 none, 1 recording, 2 replaying
 
+    // the host battery the guest sees in single player; percent < 0 = always full (Netplay, LAN
+    // and record mode always pin full natively)
+    external fun setHostBattery(percent: Int, charging: Boolean)
+
     external fun recordMark(): Int     // flag this moment for investigation; the frame, -1 when not recording
 
     external fun takeScreenshot(): Boolean

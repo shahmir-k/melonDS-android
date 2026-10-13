@@ -1059,6 +1059,12 @@ Java_me_magnum_melonds_MelonEmulator_recordMark(JNIEnv* env, jobject thiz)
     return MelonDSAndroid::recordMark();
 }
 
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_setHostBattery(JNIEnv* env, jobject thiz, jint percent, jboolean charging)
+{
+    MelonDSAndroid::setHostBattery(percent, charging);
+}
+
 JNIEXPORT jint JNICALL
 Java_me_magnum_melonds_MelonEmulator_recordMode(JNIEnv* env, jobject thiz)
 {

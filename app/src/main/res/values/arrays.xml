@@ -5,6 +5,11 @@
         <item>linear</item>
     </string-array>
 
+    <string-array name="emulated_battery_values">
+        <item>full</item>
+        <item>device</item>
+    </string-array>
+
     <string-array name="console_type_values">
         <item>ds</item>
         <item>dsi</item>

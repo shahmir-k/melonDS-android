@@ -86,11 +86,14 @@ public:
     void unloadRetroAchievementsData();
     std::string getRichPresenceStatus();
     std::vector<RetroAchievements::RARuntimeAchievement> getRuntimeAchievements();
+    void updateBattery();
 
 private:
     void updateRenderer();
     void blitAcceleratedFrame(melonDS::u32 srcArrayTex, melonDS::u32 dstTex, int dstWidth, int dstHeight);
     void setBatteryLevels();
+    int batteryTarget();
+    int appliedBattery = 100;
     void setDateTime();
     void saveRewindState(RewindSaveState* rewindSaveState);
 

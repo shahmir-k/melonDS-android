@@ -22,6 +22,15 @@
             app:iconSpaceReserved="false"
             android:defaultValue="true" />
 
+    <ListPreference
+            android:key="emulated_battery"
+            android:title="@string/emulated_battery"
+            android:summary="%s"
+            app:iconSpaceReserved="false"
+            android:entries="@array/emulated_battery_options"
+            android:entryValues="@array/emulated_battery_values"
+            android:defaultValue="full" />
+
     <Preference
             android:key="backup_internal_layout"
             android:title="@string/backup_internal_layout"

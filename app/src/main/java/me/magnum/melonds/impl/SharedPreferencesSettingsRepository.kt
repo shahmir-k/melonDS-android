@@ -200,6 +200,10 @@ class SharedPreferencesSettingsRepository(
         return preferences.getBoolean("enable_rewind", false)
     }
 
+    override fun useDeviceBattery(): Boolean {
+        return preferences.getString("emulated_battery", "full") == "device"
+    }
+
     override fun isSustainedPerformanceModeEnabled(): Boolean {
         return preferences.getBoolean("enable_sustained_performance", false)
     }

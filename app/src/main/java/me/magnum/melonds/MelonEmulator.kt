@@ -141,6 +141,8 @@ object MelonEmulator {
     // Both return what the key shows (1 fast, 0 normal), -1 = not in Netplay (the key is local).
     external fun netplayToggleFastForward(): Int
     external fun netplayFastForwardShown(): Int
+    // the session speed: "" normal, else "FF 2x by P2" / "uncapped by P1"
+    external fun netplaySpeedLabel(): String
 
     fun saveState(path: Uri): Boolean {
         return saveStateInternal(path.toString())

@@ -44,6 +44,7 @@ namespace MelonDSAndroid {
                                std::string cacheDir, u64 cacheMaxBytes);
     // "" when not in Netplay, else "Netplay", "waiting for other player" or "DESYNC"
     extern std::string netplayStatus();
+    extern std::string netplaySpeedLabel();  // the session speed: "" normal, else "FF 2x by P2" / "uncapped by P1"
     extern int netplayKind();   // 0 none, 1 Netplay, 2 Hosted Netplay
 #ifdef LITEV_NP_SPEED
     // Netplay session speed (plain and Hosted): ONE state; netplayToggleSpeed = a press of the

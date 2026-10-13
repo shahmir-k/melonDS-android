@@ -5,6 +5,7 @@
 #include <string>
 #include <sstream>
 #include <mutex>
+#include <atomic>
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -62,6 +63,7 @@ std::atomic_bool isThreadReallyPaused = false;
 int observedFrames = 0;
 float fps = 0;
 int targetFps;
+static std::atomic<bool> ambientSteady30{false};   // Just Play step 2: "Keep playing" at a steady 30 fps (until the session ends)
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
@@ -1333,6 +1335,53 @@ Java_me_magnum_melonds_MelonEmulator_ambientNearby(JNIEnv* env, jobject thiz)
 }
 
 // the counters (cumulative), "key=value" pairs separated by spaces; "" = not running
+// Step 2. The overlay's diagnostics line while linked ("" = not in a Just Play session)
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientDiagLine(JNIEnv* env, jobject thiz)
+{
+    std::string r;
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (ambientPtr)
+    {
+        const auto d = ambientPtr->GetDiag();
+        if (d.Linked)
+        {
+            char b[160];
+            snprintf(b, sizeof(b), "link %.0f ms, wait %.1f ms/f, %.1f exch/f, max ~%.0f fps", d.RttMs, d.WaitMs, d.ExchPerFrame, d.CeilingFps);
+            r = b;
+        }
+        else ambientSteady30 = false;       // (the session ended: back to full speed)
+    }
+#endif
+    return env->NewStringUTF(r.c_str());
+}
+
+// Step 2: "" or, once per session when the link slowed this game for 5 s, "fps \t wait ms \t round trip ms \t
+// exchanges a frame \t ceiling fps \t game code" for the prompt
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientTakePrompt(JNIEnv* env, jobject thiz)
+{
+    std::string r;
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (ambientPtr && ambientPtr->TakePrompt())
+    {
+        const auto d = ambientPtr->GetDiag();
+        char b[160];
+        snprintf(b, sizeof(b), "%.0f\t%.1f\t%.0f\t%.1f\t%.0f\t", d.Fps, d.WaitMs, d.RttMs, d.ExchPerFrame, d.CeilingFps);
+        r = std::string(b) + MelonDSAndroid::romGameCode();
+    }
+#endif
+    return env->NewStringUTF(r.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientSetSteady30(JNIEnv* env, jobject thiz, jboolean on)
+{
+    ambientSteady30 = on;
+}
+
 JNIEXPORT jstring JNICALL
 Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
 {
@@ -1530,7 +1579,7 @@ void* emulate(void*)
         }
 #endif
         // All times are in ms
-        double frameTimeStep = (double) nLines / ((float) targetFps * 263.0) * 1000.0;
+        double frameTimeStep = (double) nLines / ((float) (ambientSteady30 && !isFastForwardEnabled ? 30 : targetFps) * 263.0) * 1000.0;
         if (frameTimeStep < 1)
             frameTimeStep = 1;
 

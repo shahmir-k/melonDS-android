@@ -513,6 +513,17 @@ class EmulatorActivity : AppCompatActivity() {
             }
         }
 
+        // Just Play step 2: the link slowed this game for 5 s -> ask (once per session; the game keeps running)
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    val prompt = withContext(Dispatchers.IO) { MelonEmulator.ambientTakePrompt() }
+                    if (prompt.isNotEmpty()) AmbientWireless.showSlowdownPrompt(this@EmulatorActivity, prompt)
+                    delay(1000)
+                }
+            }
+        }
+
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 permissionHandler.observePermissionRequests().collect {

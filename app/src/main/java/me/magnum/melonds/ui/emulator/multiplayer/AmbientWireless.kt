@@ -1,6 +1,11 @@
 package me.magnum.melonds.ui.emulator.multiplayer
 
 import android.content.Context
+import android.widget.CheckBox
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import me.magnum.melonds.R
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
@@ -144,5 +149,41 @@ object AmbientWireless {
     /** The app is in the foreground (announcing) or not (peers expire this device in 6 s). */
     fun setForeground(foreground: Boolean) {
         MelonEmulator.ambientSetForeground(foreground)
+    }
+
+    /**
+     * Step 2: the wireless link (not the device) held this game below 58 fps for 5 s. Shown once per session, not for a
+     * game the player said not to ask about again. The game keeps running (pausing would stall the other players).
+     * prompt = "fps \t wait ms \t round trip ms \t exchanges/frame \t ceiling fps \t game code" (MelonEmulator.ambientTakePrompt).
+     */
+    fun showSlowdownPrompt(context: Context, prompt: String) {
+        val f = prompt.split('\t')
+        val game = f.getOrNull(5).orEmpty()
+        val prefs = context.getSharedPreferences("ambient_prompt", Context.MODE_PRIVATE)
+        if (game in prefs.getStringSet("never", emptySet())!!) return
+        val pad = (16 * context.resources.displayMetrics.density).toInt()
+        val steady = CheckBox(context).apply { setText(R.string.local_wireless_slow_steady30) }
+        val never = CheckBox(context).apply { setText(R.string.local_wireless_slow_never) }
+        val body = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(TextView(context).apply {
+                text = context.getString(R.string.local_wireless_slow_message, f.getOrNull(0), f.getOrNull(2), f.getOrNull(1), f.getOrNull(3), f.getOrNull(4))
+            })
+            addView(steady)
+            addView(never)
+        }
+        val dialog = AlertDialog.Builder(context)
+            .setTitle(R.string.local_wireless_slow_title)
+            .setView(body)
+            .setPositiveButton(R.string.local_wireless_slow_keep) { _, _ ->
+                MelonEmulator.ambientSetSteady30(steady.isChecked)
+                if (never.isChecked && game.isNotEmpty())
+                    prefs.edit().putStringSet("never", prefs.getStringSet("never", emptySet())!! + game).apply()
+            }
+            // Netplay needs a mid-game hand-off (step 3); until then the option is shown, not offered
+            .setNeutralButton(R.string.local_wireless_slow_netplay, null)
+            .show()
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = false
     }
 }

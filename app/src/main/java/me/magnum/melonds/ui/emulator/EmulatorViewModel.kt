@@ -1093,7 +1093,7 @@ class EmulatorViewModel @Inject constructor(
         sessionCoroutineScope.launch {
             while (isActive) {
                 delay(1.seconds)
-                _netplayStatus.value = MelonEmulator.netplayStatus()
+                _netplayStatus.value = MelonEmulator.netplayStatus().ifEmpty { MelonEmulator.ambientDiagLine() }
                 _currentFps.value = emulatorManager.getFps().roundToInt()
             }
         }

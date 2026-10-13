@@ -6,6 +6,13 @@ import org.junit.Test
 
 class AmbientHandoffScreenTest {
     @Test
+    fun onlyTwoPlayerSlowdownOffersAutomaticHandoff() {
+        assertFalse(AmbientHandoffScreen.SlowLan(42, 1).canOffer)
+        assertTrue(AmbientHandoffScreen.SlowLan(42, 2).canOffer)
+        assertFalse(AmbientHandoffScreen.SlowLan(42, 3).canOffer)
+    }
+
+    @Test
     fun onlyPreCommitProgressCanRequestRollback() {
         val cancellable = listOf(
             AmbientHandoffPhase.OFFERED,

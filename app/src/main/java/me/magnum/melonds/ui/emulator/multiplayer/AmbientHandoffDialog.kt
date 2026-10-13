@@ -23,7 +23,10 @@ enum class AmbientHandoffPhase {
 
 sealed interface AmbientHandoffScreen {
     /** The game is still using LAN; choosing a mode starts an offer, not an immediate backend switch. */
-    data class SlowLan(val fps: Int) : AmbientHandoffScreen
+    data class SlowLan(val fps: Int, val activePlayers: Int) : AmbientHandoffScreen {
+        /** The first native handoff slice is strictly one linked peer plus this player. */
+        val canOffer: Boolean get() = activePlayers == 2
+    }
 
     /** A linked peer has offered to switch. This peer must independently consent. */
     data class IncomingOffer(val epoch: Long, val mode: AmbientHandoffMode, val peerName: String) : AmbientHandoffScreen
@@ -41,6 +44,9 @@ sealed interface AmbientHandoffScreen {
 
     /** The native side has rolled back to LAN before this is shown. */
     data class Failed(val reason: String) : AmbientHandoffScreen
+
+    /** Neither a committed Netplay session nor a resumed LAN session has been confirmed yet. */
+    data class Unresolved(val reason: String) : AmbientHandoffScreen
 }
 
 /**
@@ -63,12 +69,18 @@ fun AmbientHandoffDialog(
             title = stringResource(R.string.ambient_handoff_slow_title),
             onDismiss = onKeepLan,
             content = { padding ->
-                DialogText(padding, stringResource(R.string.ambient_handoff_slow_body, screen.fps))
+                DialogText(
+                    padding,
+                    if (screen.canOffer) stringResource(R.string.ambient_handoff_slow_body, screen.fps)
+                    else stringResource(R.string.ambient_handoff_two_player_limit, screen.fps, screen.activePlayers),
+                )
             },
             buttons = {
                 DialogButton(stringResource(R.string.ambient_handoff_keep_lan), onClick = onKeepLan)
-                DialogButton(stringResource(R.string.multiplayer_option_netplay), onClick = { onOffer(AmbientHandoffMode.NETPLAY) })
-                DialogButton(stringResource(R.string.multiplayer_option_hosted), onClick = { onOffer(AmbientHandoffMode.HOSTED_NETPLAY) })
+                if (screen.canOffer) {
+                    DialogButton(stringResource(R.string.multiplayer_option_netplay), onClick = { onOffer(AmbientHandoffMode.NETPLAY) })
+                    DialogButton(stringResource(R.string.multiplayer_option_hosted), onClick = { onOffer(AmbientHandoffMode.HOSTED_NETPLAY) })
+                }
             },
         )
 
@@ -122,6 +134,17 @@ fun AmbientHandoffDialog(
             },
             buttons = {
                 DialogButton(stringResource(R.string.ambient_handoff_keep_lan), onClick = onDismissFailure)
+            },
+        )
+
+        is AmbientHandoffScreen.Unresolved -> BaseDialog(
+            title = stringResource(R.string.ambient_handoff_unresolved_title),
+            onDismiss = { },
+            content = { padding ->
+                Column(Modifier.padding(padding)) {
+                    Text(stringResource(R.string.ambient_handoff_unresolved_body))
+                    Text(screen.reason, color = MaterialTheme.colors.error, modifier = Modifier.padding(top = 8.dp))
+                }
             },
         )
     }

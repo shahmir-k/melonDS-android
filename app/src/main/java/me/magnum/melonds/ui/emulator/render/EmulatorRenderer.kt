@@ -14,4 +14,10 @@ interface EmulatorRenderer {
     fun directPresentLayout(): DirectPresentLayout? = null
 }
 
-class DirectPresentLayout(val vertices: FloatArray, val linear: Boolean, val width: Int, val height: Int, val version: Int)
+// screens: x, y, u, v, alpha per vertex, drawn with the screen program and filter; background and
+// overlay (program 0: none): x, y, u, v per vertex, each with its own program and texture
+class DirectPresentLayout(
+    val vertices: FloatArray, val program: Int, val filter: Int, val width: Int, val height: Int, val version: Int,
+    val bgProgram: Int, val bgTexture: Int, val bgVertices: FloatArray?,
+    val overlayProgram: Int, val overlayTexture: Int, val overlayVertices: FloatArray?,
+)

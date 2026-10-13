@@ -58,7 +58,9 @@ object MelonEmulator {
 
     // LITEV_HYB_DIRECT_PRESENT: the GL renderer's present thread draws into the game window
     external fun directPresentAvailable(): Boolean
-    external fun setDirectPresent(surface: Long, vertices: FloatArray?, linear: Boolean, width: Int, height: Int)
+    external fun setDirectPresent(surface: Long, width: Int, height: Int, program: Int, filter: Int, vertices: FloatArray?,
+                                  bgProgram: Int, bgTexture: Int, bgVertices: FloatArray?,
+                                  overlayProgram: Int, overlayTexture: Int, overlayVertices: FloatArray?)
 
     external fun setupAchievements(achievements: Array<RASimpleAchievement>, leaderboards: Array<RASimpleLeaderboard>, richPresenceScript: String?)
 

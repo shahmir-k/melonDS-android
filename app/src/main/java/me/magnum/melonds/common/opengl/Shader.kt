@@ -7,7 +7,7 @@ private const val INVALID_ATTRIBUTE = -1
 class Shader(
     private val vertexShaderId: Int,
     private val fragmentShaderId: Int,
-    private val programId: Int,
+    val programId: Int,
     val textureFiltering: Int,
 ) {
     val attribUv: Int

@@ -356,15 +356,30 @@ Java_me_magnum_melonds_MelonEmulator_directPresentAvailable(JNIEnv* env, jobject
 }
 
 // FrameRenderThread: hand the window surface (EGLSurface handle; 0 = take it back) to the GL
-// renderer's present thread, with the screens' quads (5 floats per vertex) (LITEV_HYB_DIRECT_PRESENT)
-JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_setDirectPresent(JNIEnv* env, jobject thiz, jlong surface, jfloatArray vertices, jboolean linear, jint width, jint height)
+// renderer's present thread, with what to draw (LITEV_HYB_DIRECT_PRESENT)
+static std::vector<float> litevFloats(JNIEnv* env, jfloatArray a)
 {
-    if (!surface || !vertices) { DirectPresent::Set(EGL_NO_SURFACE, nullptr, 0, false, 0, 0); return; }
-    const jsize n = env->GetArrayLength(vertices);
-    jfloat* v = env->GetFloatArrayElements(vertices, nullptr);
-    DirectPresent::Set((EGLSurface)surface, v, n / 5, linear, width, height);
-    env->ReleaseFloatArrayElements(vertices, v, JNI_ABORT);
+    std::vector<float> v;
+    if (!a) return v;
+    v.resize(env->GetArrayLength(a));
+    env->GetFloatArrayRegion(a, 0, (jsize)v.size(), v.data());
+    return v;
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_setDirectPresent(JNIEnv* env, jobject thiz, jlong surface, jint width, jint height,
+    jint program, jint filter, jfloatArray vertices, jint bgProgram, jint bgTexture, jfloatArray bgVertices,
+    jint overlayProgram, jint overlayTexture, jfloatArray overlayVertices)
+{
+    DirectPresent::Layout l;
+    if (surface)
+    {
+        l.Surface = (EGLSurface)surface; l.Width = width; l.Height = height;
+        l.Program = program; l.Filter = filter; l.Verts = litevFloats(env, vertices);
+        l.BgProgram = bgProgram; l.BgTexture = bgTexture; l.BgVerts = litevFloats(env, bgVertices);
+        l.OvlProgram = overlayProgram; l.OvlTexture = overlayTexture; l.OvlVerts = litevFloats(env, overlayVertices);
+    }
+    DirectPresent::Set(std::move(l));
 }
 
 JNIEXPORT jint JNICALL

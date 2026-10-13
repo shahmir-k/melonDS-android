@@ -88,8 +88,10 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
                 (directOwner == null || directOwner === this)) renderer?.directPresentLayout() else null
             if (layout != null) {
                 if (directVersion != layout.version) {
+                    android.opengl.GLES30.glFinish()   // textures this thread just wrote (overlay text) are complete for the other context
                     glContext.releaseSurface()
-                    MelonEmulator.setDirectPresent(windowSurface!!.nativeHandle, layout.vertices, layout.linear, layout.width, layout.height)
+                    MelonEmulator.setDirectPresent(windowSurface!!.nativeHandle, layout.width, layout.height, layout.program, layout.filter, layout.vertices,
+                        layout.bgProgram, layout.bgTexture, layout.bgVertices, layout.overlayProgram, layout.overlayTexture, layout.overlayVertices)
                     directVersion = layout.version
                     directOwner = this
                 }
@@ -128,7 +130,7 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
 
     private fun takeBackDirect() {
         if (directVersion < 0) return
-        MelonEmulator.setDirectPresent(0L, null, false, 0, 0)   // returns once the present thread let go
+        MelonEmulator.setDirectPresent(0L, 0, 0, 0, 0, null, 0, 0, null, 0, 0, null)   // returns once the present thread let go
         directVersion = -1
         if (directOwner === this) directOwner = null
     }

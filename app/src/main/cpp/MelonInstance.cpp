@@ -107,6 +107,18 @@ namespace {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
         LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
                  frameId, (unsigned long long)htop, (unsigned long long)hbot);
+        // debug.litev.fbdump=N: also write frame N's two screens (raw RGBA, w x perScreenH each)
+        static const int dumpAt = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fbdump", b) > 0 ? atoi(b) : -1; }();
+        if (frameId >= dumpAt && frameId < dumpAt + 3 && dumpAt >= 0) {
+            for (int layer = 0; layer < 2; layer++) {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+                glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arrayTex, 0, layer);
+                glReadPixels(0, 0, w, perScreenH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, prevRead);
+                char path[128]; snprintf(path, sizeof(path), "/sdcard/Download/fbdump-%d-%d-%dx%d.rgba", frameId, layer, w, perScreenH);
+                if (FILE* f = fopen(path, "wb")) { fwrite(buf.data(), 1, sz, f); fclose(f); }
+            }
+        }
     }
     // SOFTWARE-renderer FBHASH: GetFramebuffers returns RAM pointers to the final
     // composited 256x192 RGBA output (top+bottom), so hash them directly on the CPU --
@@ -118,6 +130,13 @@ namespace {
         uint64_t hbot = bottom ? litevFnv1a((const uint8_t*)bottom, sz) : 0;
         LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
                  frameId, (unsigned long long)htop, (unsigned long long)hbot);
+        static const int dumpAt = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fbdump", b) > 0 ? atoi(b) : -1; }();
+        if (dumpAt >= 0 && frameId >= dumpAt && frameId < dumpAt + 3)
+            for (int layer = 0; layer < 2; layer++) {
+                const void* p = layer ? bottom : top;
+                char path[128]; snprintf(path, sizeof(path), "/sdcard/Download/fbdump-%d-%d-256x192.rgba", frameId, layer);
+                if (FILE* f = p ? fopen(path, "wb") : nullptr) { fwrite(p, 1, sz, f); fclose(f); }
+            }
     }
     // Bar-scan (debug.litev.barscan): objective black-bar detector for the TOP software framebuffer
     // (256x192 RGBA). A horizontal black bar = a run of fully-black rows, so we log per frame the
@@ -741,7 +760,7 @@ u32 MelonInstance::runFrame()
                 if (--checkCtr <= 0) { checkCtr = 30; litevRefreshFbHashEnabled(); litevRefreshBarScan(); }
                 int fid = litevFbHashFrame++;
                 if (litevFbHashEnabled == 1)
-                    litevFbHashRam(fbTop, fbBottom, fid);
+                    litevFbHashRam(fbTop, fbBottom, (int)nds->NumFrames);
                 if (litevBarScanEnabled == 1)
                     litevBarScan(fbTop, fid);
             }
@@ -777,7 +796,14 @@ u32 MelonInstance::runFrame()
             int fid = litevFbHashFrame++;
             if (litevFbHashEnabled == 1) {
                 int scale = screenWidth / 256; if (scale < 1) scale = 1;
-                litevFbHash(arrayTex, screenWidth, 192 * scale, fid);
+                // logged by emulated frame number: runs that present different frames still
+                // compare frame by frame. LITEV_GLHI_DEFER: read on the renderer's GL worker,
+                // after this frame's calls
+                const int emuFrame = (int)nds->NumFrames;
+                auto hash = [&] { litevFbHash(arrayTex, screenWidth, 192 * scale, emuFrame); };
+                if (auto* gl = dynamic_cast<GLRenderer*>(&nds->GPU.GetRenderer())) gl->RunGL(hash);
+                else hash();
+                (void)fid;
             }
         }
     }

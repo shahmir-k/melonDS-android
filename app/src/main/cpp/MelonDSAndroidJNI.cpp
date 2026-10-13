@@ -1638,8 +1638,9 @@ void* emulate(void*)
         //   so it doesn't oscillate back into slow-mo at the threshold.
         // Only runs when fast-forward is off. All frameskip changes happen here, on the
         // emu thread, so they never race runFrame.
-        // Never during linked multiplayer: there the frame time is spent waiting on the network,
-        // which skipping rendering cannot shorten, and the skips show up as multi-second freezes.
+        // Never during linked multiplayer: network wait makes the controller mistake link latency
+        // for CPU pressure. Skipping draws can recover some emulated speed, but it cannot reduce
+        // the link's round trip and can hide three out of four displayed frames.
         // Just Play leaves lanMode == LanNone; check its active MP links too. Discovery alone keeps
         // the solo player's adaptive frameskip available.
         static const bool ambientAutoFs = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.ambientautofs", b) > 0 && atoi(b) != 0; }();

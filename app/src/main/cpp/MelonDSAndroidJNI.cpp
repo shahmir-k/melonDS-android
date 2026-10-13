@@ -1359,15 +1359,20 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
     if (ambientPtr)
     {
         const auto s = ambientPtr->GetStats();
-        char b[512];
+        char b[768];
         snprintf(b, sizeof(b), "frames=%llu nearby=%u links=%u opened=%llu presence_tx=%llu presence_rx=%llu link_tx=%llu link_rx=%llu "
                  "beacons=%llu blocked_us=%llu exchanges=%llu frame_blocked_us=%u frame_exchanges=%u rtt_ms=%u "
-                 "slow_fps_x100=%u slow_wait_us=%u slow_exchanges_x100=%u slow_offer=%u",
+                 "slow_fps_x100=%u slow_wait_us=%u slow_exchanges_x100=%u slow_offer=%u "
+                 "host_wait_us=%llu host_wait_calls=%llu host_wait_misses=%llu host_wait_timeouts=%llu "
+                 "client_wait_us=%llu client_wait_calls=%llu client_wait_misses=%llu",
                  (unsigned long long)s.Frames, s.Nearby, s.Links, (unsigned long long)s.LinksOpened, (unsigned long long)s.PresenceTx,
                  (unsigned long long)s.PresenceRx, (unsigned long long)s.LinkTx, (unsigned long long)s.LinkRx,
                  (unsigned long long)s.BeaconsInjected, (unsigned long long)s.BlockedUs, (unsigned long long)s.Exchanges,
                  s.LastFrameBlockedUs, s.LastFrameExchanges, s.MaxRttMs, s.SlowFpsX100, s.SlowWaitUsPerFrame,
-                 s.SlowExchangesPerFrameX100, s.SlowdownPending ? 1u : 0u);
+                 s.SlowExchangesPerFrameX100, s.SlowdownPending ? 1u : 0u,
+                 (unsigned long long)s.HostWaitUs, (unsigned long long)s.HostWaitCalls, (unsigned long long)s.HostWaitMisses,
+                 (unsigned long long)s.HostWaitTimeouts,
+                 (unsigned long long)s.ClientWaitUs, (unsigned long long)s.ClientWaitCalls, (unsigned long long)s.ClientWaitMisses);
         r = b;
     }
 #endif

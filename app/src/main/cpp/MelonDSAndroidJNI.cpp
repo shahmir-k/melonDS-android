@@ -446,7 +446,11 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
 
     if (presentationFrame != nullptr)
     {
-        eglWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0);
+        // debug.litev.presentlean bit 16: skip the server-side wait when the frame's render has
+        // already finished (a zero-timeout poll); diagnostic of the present's first-command cost
+        static const bool pollFirst = [] { char b[PROP_VALUE_MAX] = {}; return (__system_property_get("debug.litev.presentlean", b) > 0 ? atoi(b) : 3) & 16; }();
+        if (!pollFirst || eglClientWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0, 0) != EGL_CONDITION_SATISFIED_KHR)
+            eglWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0);
         env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, true, (jint) presentationFrame->frameTexture);
         // record mode footage, on this thread's GL context (the hardware encoder does the rest)
         {

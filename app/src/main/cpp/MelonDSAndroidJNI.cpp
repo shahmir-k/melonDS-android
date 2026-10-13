@@ -1063,6 +1063,13 @@ Java_me_magnum_melonds_MelonEmulator_netplayFastForwardShown(JNIEnv* env, jobjec
 #endif
 }
 
+// Netplay: the session speed ("" normal, else "FF 2x by P2" / "uncapped by P1")
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplaySpeedLabel(JNIEnv* env, jobject thiz)
+{
+    return env->NewStringUTF(MelonDSAndroid::netplaySpeedLabel().c_str());
+}
+
 JNIEXPORT jstring JNICALL
 Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
 {

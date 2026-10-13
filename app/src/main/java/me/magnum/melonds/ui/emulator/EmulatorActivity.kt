@@ -497,9 +497,13 @@ class EmulatorActivity : AppCompatActivity() {
                     runGroupCommand(3 shl 8)
                     Toast.makeText(this@EmulatorActivity, getString(R.string.multiplayer_peer_lost), Toast.LENGTH_LONG).show()
                 }
-                // session speed (any player's fast-forward key): "FF 2x by P2" / "uncapped by P1" after " · "
-                val speed = status?.substringAfter(" · ", "") ?: ""
-                if (status != null && status.contains("Netplay") && speed != netplaySpeedShown) {
+                // session speed (any player's fast-forward key): "FF 2x by P2" / "uncapped by P1", "" = normal.
+                // The session's own state (not parsed from the status: a wait or a player who left hid it).
+                // No session: nothing to announce; the next one starts from normal speed.
+                val speed = if (status != null) withContext(Dispatchers.IO) { MelonEmulator.netplaySpeedLabel() } else ""
+                if (status == null) {
+                    netplaySpeedShown = ""
+                } else if (speed != netplaySpeedShown) {
                     netplaySpeedShown = speed
                     Toast.makeText(this@EmulatorActivity, if (speed.isEmpty()) getString(R.string.multiplayer_speed_normal)
                         else getString(R.string.multiplayer_speed, speed), Toast.LENGTH_SHORT).show()

@@ -946,31 +946,41 @@ namespace MelonDSAndroid
     int netplayKind() { return !netplay ? 0 : netplay->hosted ? 2 : 1; }
 
     static constexpr double kNetplayPeerLostMs = 10000;
+    // The session speed for the fast-forward notice and the status line: "" = normal, else e.g.
+    // "FF 2x by P2" / "uncapped by P1". The session's own state, whatever else the status says (a
+    // wait, a player who left): the notice once parsed it out of the status text, so a "waiting" or
+    // "a player left" status read as normal speed.
+    std::string netplaySpeedLabel()
+    {
+#ifdef LITEV_NP_SPEED
+        if (!netplay || netplay->speed == 0) return "";
+        std::string who;
+        for (int p = 0; p < NetplayInput::kMaxPlayers; p++)
+            if ((netplay->speedWho >> p) & 1) who += (who.empty() ? "P" : ",P") + std::to_string(p == kHostedServerId ? 1 : p + 1);
+        return (netplay->speed == NetplaySpeed::kUncapped ? std::string("uncapped") : "FF " + speedName(netplay->speed)) + (who.empty() ? "" : " by " + who);
+#else
+        return "";
+#endif
+    }
+
     std::string netplayStatus()
     {
         if (!netplay) return recordStatus();
         if (netplay->lostHost) return "HOST LEFT";
         if (netplay->desyncFrame >= 0) return "DESYNC";
-#ifdef LITEV_HOSTED_NETPLAY
-        if (netplay->record)
-            for (int p = 1; p < netplay->players; p++)
-                if (netplay->input && netplay->input->Dropped(p)) return "Hosted Netplay (a player left)";
-#endif
         // plain Netplay: every device waits for every input, so a player gone for good (its app
         // closed, its session ended by a dropped group link) would hold the others forever
         if (!netplay->hosted && netplay->input && netplay->input->MsSincePeer() > kNetplayPeerLostMs
             && std::chrono::steady_clock::now() - netplay->created > std::chrono::seconds(30)) return "PEER LOST";
-#ifdef LITEV_NP_SPEED
-        if (!netplay->waiting && netplay->speed != 0)
-        {   // who sped the session up: shown next to the fps, toasted on change
-            std::string who;
-            for (int p = 0; p < NetplayInput::kMaxPlayers; p++)
-                if ((netplay->speedWho >> p) & 1) who += (who.empty() ? "P" : ",P") + std::to_string(p == kHostedServerId ? 1 : p + 1);
-            return (netplay->hosted ? "Hosted Netplay · " : "Netplay · ") + (netplay->speed == NetplaySpeed::kUncapped ? std::string("uncapped") : "FF " + speedName(netplay->speed))
-                   + (who.empty() ? "" : " by " + who);
-        }
+        std::string status = netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
+#ifdef LITEV_HOSTED_NETPLAY
+        if (netplay->record)
+            for (int p = 1; p < netplay->players; p++)
+                if (netplay->input && netplay->input->Dropped(p)) { status = "Hosted Netplay (a player left)"; break; }
 #endif
-        return netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
+        // the session speed, next to the fps (toasted on change from netplaySpeedLabel)
+        const std::string speed = netplaySpeedLabel();
+        return speed.empty() ? status : status + " · " + speed;
     }
 
     static void netplayRemoteLoop(NetplayRemote* r)

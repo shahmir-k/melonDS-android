@@ -162,7 +162,6 @@ object AmbientWireless {
         val prefs = context.getSharedPreferences("ambient_prompt", Context.MODE_PRIVATE)
         if (game in prefs.getStringSet("never", emptySet())!!) return
         val pad = (16 * context.resources.displayMetrics.density).toInt()
-        val steady = CheckBox(context).apply { setText(R.string.local_wireless_slow_steady30) }
         val never = CheckBox(context).apply { setText(R.string.local_wireless_slow_never) }
         val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -170,20 +169,15 @@ object AmbientWireless {
             addView(TextView(context).apply {
                 text = context.getString(R.string.local_wireless_slow_message, f.getOrNull(0), f.getOrNull(2), f.getOrNull(1), f.getOrNull(3), f.getOrNull(4))
             })
-            addView(steady)
             addView(never)
         }
-        val dialog = AlertDialog.Builder(context)
+        AlertDialog.Builder(context)
             .setTitle(R.string.local_wireless_slow_title)
             .setView(body)
             .setPositiveButton(R.string.local_wireless_slow_keep) { _, _ ->
-                MelonEmulator.ambientSetSteady30(steady.isChecked)
                 if (never.isChecked && game.isNotEmpty())
                     prefs.edit().putStringSet("never", prefs.getStringSet("never", emptySet())!! + game).apply()
             }
-            // Netplay needs a mid-game hand-off (step 3); until then the option is shown, not offered
-            .setNeutralButton(R.string.local_wireless_slow_netplay, null)
             .show()
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = false
     }
 }

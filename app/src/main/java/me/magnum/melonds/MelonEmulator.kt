@@ -118,10 +118,9 @@ object MelonEmulator {
     external fun ambientNearby(): Array<String>     // "id \t name \t game \t ip:port \t ggid \t build \t linked"
     external fun ambientStats(): String             // "key=value ..." counters (cumulative), "" = not running
     // step 2: the overlay line while linked ("" = no session); the slowdown prompt, once per session ("" = none):
-    // "fps \t wait ms \t round trip ms \t exchanges/frame \t ceiling fps \t game code"; steady 30 fps until the session ends
+    // "fps \t wait ms \t round trip ms \t exchanges/frame \t ceiling fps \t game code"
     external fun ambientDiagLine(): String
     external fun ambientTakePrompt(): String
-    external fun ambientSetSteady30(on: Boolean)
 
     // Group: the Netplay lobby kept connected while its session runs, so the host's commands
     // (mode switch, Hosted server change, end) reach everyone. Commands: (server << 16) |

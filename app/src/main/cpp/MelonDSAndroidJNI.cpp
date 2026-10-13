@@ -63,7 +63,6 @@ std::atomic_bool isThreadReallyPaused = false;
 int observedFrames = 0;
 float fps = 0;
 int targetFps;
-static std::atomic<bool> ambientSteady30{false};   // Just Play step 2: "Keep playing" at a steady 30 fps (until the session ends)
 float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
@@ -1361,7 +1360,6 @@ Java_me_magnum_melonds_MelonEmulator_ambientDiagLine(JNIEnv* env, jobject thiz)
             snprintf(b, sizeof(b), "link %.0f ms, wait %.1f ms/f, %.1f exch/f, max ~%.0f fps", d.RttMs, d.WaitMs, d.ExchPerFrame, d.CeilingFps);
             r = b;
         }
-        else ambientSteady30 = false;       // (the session ended: back to full speed)
     }
 #endif
     return env->NewStringUTF(r.c_str());
@@ -1384,12 +1382,6 @@ Java_me_magnum_melonds_MelonEmulator_ambientTakePrompt(JNIEnv* env, jobject thiz
     }
 #endif
     return env->NewStringUTF(r.c_str());
-}
-
-JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_ambientSetSteady30(JNIEnv* env, jobject thiz, jboolean on)
-{
-    ambientSteady30 = on;
 }
 
 JNIEXPORT jstring JNICALL
@@ -1589,7 +1581,7 @@ void* emulate(void*)
         }
 #endif
         // All times are in ms
-        double frameTimeStep = (double) nLines / ((float) (ambientSteady30 && !isFastForwardEnabled ? 30 : targetFps) * 263.0) * 1000.0;
+        double frameTimeStep = (double) nLines / ((float) targetFps * 263.0) * 1000.0;
         if (frameTimeStep < 1)
             frameTimeStep = 1;
 

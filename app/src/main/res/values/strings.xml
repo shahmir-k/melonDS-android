@@ -203,9 +203,7 @@
     <string name="local_wireless_slow_title">Wireless is slowing this game</string>
     <string name="local_wireless_slow_message">%1$s fps: the wireless link (%2$s ms round trip) holds every frame %3$s ms (%4$s exchanges a frame); this link allows about %5$s fps.</string>
     <string name="local_wireless_slow_keep">Keep playing</string>
-    <string name="local_wireless_slow_steady30">Steady 30 fps instead (until this session ends)</string>
     <string name="local_wireless_slow_never">Don\'t ask again for this game</string>
-    <string name="local_wireless_slow_netplay">Switch to Netplay (coming soon)</string>
     <string name="local_wireless_counters">Links %1$s, ping %2$s ms, waited %3$s us last frame</string>
     <string name="netplay_rom_cache_max_size">Max. Netplay ROM cache size (games received from other players)</string>
     <string name="netplay_rom_cache_clear">Clear Netplay ROM cache</string>

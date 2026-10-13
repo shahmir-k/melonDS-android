@@ -1,5 +1,6 @@
 package me.magnum.melonds.ui.emulator.model
 
+import android.net.Uri
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.ConsoleType
 import me.magnum.melonds.domain.model.rom.Rom
@@ -15,6 +16,7 @@ sealed class EmulatorState {
     data object RomLoadError : EmulatorState()
     data class FirmwareLoadError(val reason: MelonEmulator.FirmwareLoadResult) : EmulatorState()
     data class RomNotFoundError(val romPath: String) : EmulatorState()
+    data class RomStoragePermissionRequired(val romUri: Uri, val rom: Rom?) : EmulatorState()
 
     fun isRunning() = this is RunningRom || this is RunningFirmware
 }

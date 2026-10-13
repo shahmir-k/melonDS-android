@@ -38,6 +38,11 @@
     <string name="size_gb">GB</string>
 
     <string name="error_rom_not_found">Could not find ROM</string>
+    <string name="error_rom_access">ROM folder access needed</string>
+    <string name="error_rom_access_info">This app does not have permission to read the ROM on the external SD card. Select the folder containing the ROM to grant access, then the game will resume launching.</string>
+    <string name="error_rom_wrong_directory">Select the original ROM folder on the external SD card (not a parent or a different folder) so the game and its save files remain accessible.</string>
+    <string name="reselect_rom_directory">Select ROM folder</string>
+    <string name="try_again">Try again</string>
     <string name="error_rom_not_found_info">The ROM you have selected has not been found. Make sure the selected ROM can be found in the current ROM search directory.\n%1$s</string>
     <string name="error_load_rom">Could not load ROM</string>
     <string name="error_load_rom_message">There was a problem loading the ROM. Make sure it\'s not corrupted and try again.</string>

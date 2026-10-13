@@ -176,8 +176,14 @@ void customizeFirmware(const EmulatorConfiguration& configuration, Firmware& fir
     }
 
     if (replaceMac)
-    {
         mac[0] &= 0xFC; // ensure the MAC isn't a broadcast MAC
+
+    // Just Play local wireless: a MAC unique to this install (locally administered), whatever the firmware
+    if (instanceId == 0 && MelonDSAndroid::ambientFirmwareMac(mac.data()))
+        replaceMac = true;
+
+    if (replaceMac)
+    {
         header.MacAddr = mac;
         header.UpdateChecksum();
     }

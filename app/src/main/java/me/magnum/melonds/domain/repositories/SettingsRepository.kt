@@ -24,6 +24,8 @@ interface SettingsRepository {
     fun getRomIconFiltering(): RomIconFiltering
     fun getRomCacheMaxSize(): SizeUnit
     fun getNetplayRomCacheMaxSize(): SizeUnit
+    // Just Play local wireless: 0 everyone nearby, 1 only while in a wireless menu, 2 hidden, 3 lobby only
+    fun getLocalWirelessMode(): Int
 
     fun getDefaultConsoleType(): ConsoleType
     fun getFirmwareConfiguration(): FirmwareConfiguration

@@ -29,6 +29,7 @@ import me.magnum.melonds.domain.model.rom.config.RuntimeEnum
 import me.magnum.melonds.domain.repositories.SettingsRepository
 import me.magnum.melonds.domain.services.EmulatorManager
 import me.magnum.melonds.impl.camera.DSiCameraSourceMultiplexer
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientWireless
 import me.magnum.melonds.ui.emulator.rewind.model.RewindSaveState
 import me.magnum.melonds.ui.emulator.rewind.model.RewindWindow
 
@@ -90,6 +91,7 @@ class AndroidEmulatorManager(
             val fileRomProcessor = romFileProcessorFactory.getFileRomProcessorForDocument(fileRomDocument)
             val romUri = fileRomProcessor?.getRealRomUri(rom) ?: return@withContext RomLaunchResult.LaunchFailedRomNotSupported
 
+            AmbientWireless.configure(context, settingsRepository)
             setupEmulator(getRomEmulatorConfiguration(rom))
 
             val sram = try {
@@ -121,6 +123,7 @@ class AndroidEmulatorManager(
                 messageQueue.start()
                 MelonEmulator.setupCheats(cheats.toTypedArray())
                 MelonEmulator.startEmulation()
+                AmbientWireless.start(context)
 
                 RomLaunchResult.LaunchSuccessful(loadResult != MelonEmulator.LoadResult.SUCCESS_GBA_FAILED)
             }
@@ -212,6 +215,7 @@ class AndroidEmulatorManager(
     }
 
     override fun stopEmulator() {
+        AmbientWireless.stop()
         MelonEmulator.stopEmulation()
         cameraManager.stopCurrentCameraSource()
         messageQueue.stop()

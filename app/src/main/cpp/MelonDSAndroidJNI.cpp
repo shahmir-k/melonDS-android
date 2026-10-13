@@ -12,6 +12,7 @@
 #include <time.h>
 #include <sched.h>
 #include <sys/system_properties.h>
+#include <arpa/inet.h>
 #include <MelonDS.h>
 #include "renderer/RecordVideo.h"
 #include <MelonDSAudio.h>
@@ -31,6 +32,9 @@
 #include "Platform.h"
 #include "net/MPInterface.h"
 #include "net/LAN.h"
+#ifdef LITEV_AMBIENT_LAN
+#include "net/AmbientLAN.h"
+#endif
 #include "net/NetplayInput.h"
 #include "LitevCores.h"
 #include "SkipRepeatAuto.h"
@@ -44,6 +48,7 @@ enum GbaSlotType {
 
 void* emulate(void*);
 static void lanEndAll();
+static void ambientInstall();
 MelonDSAndroid::RomGbaSlotConfig* buildGbaSlotConfig(GbaSlotType slotType, const char* romPath, const char* savePath);
 
 pthread_t emuThread;
@@ -342,6 +347,7 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
 
     pthread_mutex_init(&emuThreadMutex, NULL);
     pthread_cond_init(&emuThreadCond, NULL);
+    ambientInstall();       // (before the emulator thread runs)
     pthread_create(&emuThread, NULL, emulate, NULL);
     pthread_setname_np(emuThread, "EmulatorThread");
 
@@ -829,8 +835,10 @@ static void lanApplyRecvTimeout()
     melonDS::MPInterface::Get().SetRecvTimeout(ms > 0 ? ms : kLanRecvTimeoutMs);
 }
 
+static void ambientUninstall();
 static void lanEndAll()
 {
+    ambientUninstall();     // (the lobby / a session replaces Just Play while it is open)
     if (lanMode == LanDiscovering)
         lan().EndDiscovery();
     else if (lanMode == LanHosting || lanMode == LanJoined)
@@ -878,6 +886,64 @@ static std::vector<std::string> lanPlayerRows(melonDS::LAN& l)
     return rows;
 }
 
+// ---- Just Play local wireless (LITEV_AMBIENT_LAN) ----------------------------------------------
+// Installed as the MPInterface when a game starts (unless the setting is "Lobby only", or Netplay runs). The LAN lobby
+// replaces it while open (lanEndAll) and it comes back when the lobby closes (lanLeave). Installs / removals happen
+// with the emulator thread parked or not running; ambientMu guards the pointer the app's other threads use (NSD peers,
+// foreground, the nearby list, the counters). The device id comes from the app's per-install identity key.
+#ifdef LITEV_AMBIENT_LAN
+static std::mutex ambientMu;
+static melonDS::AmbientLAN* ambientPtr = nullptr;       // owned by MPInterface while installed
+static melonDS::AmbientLAN::Config ambientCfg;
+static int ambientMode = -1;                            // -1 off ("Lobby only" / not configured), else AmbientLAN::Visibility
+static bool ambientFg = true;
+static std::vector<std::pair<u32, u16>> ambientPeers;   // NSD finds, kept across installs
+
+static void ambientUninstall()
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (!ambientPtr) return;
+    ambientPtr = nullptr;
+    if (melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
+        melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+}
+
+static void ambientInstall()
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (ambientPtr || ambientMode < 0 || MelonDSAndroid::netplayActive() || melonDS::MPInterface::GetType() != melonDS::MPInterface_Dummy)
+        return;
+    std::string code = MelonDSAndroid::romGameCode();
+    if (code.size() != 4) return;       // (firmware boot: no game)
+    melonDS::AmbientLAN::Config c = ambientCfg;
+    memcpy(c.GameCode, code.data(), 4);
+    c.Vis = ambientMode;
+    auto a = std::make_unique<melonDS::AmbientLAN>(c);
+    if (!a->Ok()) return;
+    a->SetForeground(ambientFg);
+    for (auto& [ip, port] : ambientPeers) a->AddPeerAddress(ip, port);
+    ambientPtr = a.get();
+    melonDS::MPInterface::Set(std::move(a), melonDS::MPInterface_Ambient);
+    lanApplyRecvTimeout();
+}
+
+namespace MelonDSAndroid
+{
+// the console MAC for Just Play (unique per install; two consoles with one MAC cannot see each other)
+bool ambientFirmwareMac(u8* mac)
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    // (not in Netplay: every device builds every console there, their MACs must not depend on the device)
+    if (ambientMode < 0 || !ambientCfg.DeviceID || netplayActive()) return false;
+    melonDS::AmbientLAN::MacFromID(ambientCfg.DeviceID, mac);
+    return true;
+}
+}
+#else
+static void ambientUninstall() {}
+static void ambientInstall() {}
+#endif
+
 // ---- Group: a Netplay lobby kept connected while its session runs -----------------------------
 // At the host's Start every device keeps its lobby link (a LAN, port 7064; the session itself uses
 // 7100) as the group's control channel, not installed as the MPInterface: the host sends group
@@ -909,7 +975,10 @@ Java_me_magnum_melonds_MelonEmulator_lanHost(JNIEnv* env, jobject thiz, jstring 
     if (ok)
         lanMode = LanHosting;
     else
+    {
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+        ambientInstall();
+    }
     pthread_mutex_unlock(&emuThreadMutex);
     return ok;
 }
@@ -926,7 +995,10 @@ Java_me_magnum_melonds_MelonEmulator_lanStartDiscovery(JNIEnv* env, jobject thiz
     if (ok)
         lanMode = LanDiscovering;
     else
+    {
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
+        ambientInstall();
+    }
     pthread_mutex_unlock(&emuThreadMutex);
     return ok;
 }
@@ -978,6 +1050,7 @@ Java_me_magnum_melonds_MelonEmulator_lanJoin(JNIEnv* env, jobject thiz, jstring 
     {
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
         lanMode = LanNone;
+        ambientInstall();
     }
     pthread_mutex_unlock(&emuThreadMutex);
     return ok;
@@ -1149,6 +1222,7 @@ Java_me_magnum_melonds_MelonEmulator_lanLeave(JNIEnv* env, jobject thiz)
     if (!lanLockParked())
         return;
     lanEndAll();
+    ambientInstall();       // the lobby closed: back to Just Play
     pthread_mutex_unlock(&emuThreadMutex);
 }
 
@@ -1190,6 +1264,95 @@ Java_me_magnum_melonds_MelonEmulator_groupToLan(JNIEnv* env, jobject thiz)
     }
     pthread_mutex_unlock(&emuThreadMutex);
     return ok;
+}
+
+// Just Play: mode 0 everyone nearby, 1 only while the game's wireless is on, 2 hidden, 3 lobby only (off). Called
+// before a game starts (the MAC comes from the id); a change of mode while running applies its visibility now, and
+// "lobby only" / back on from the next game.
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientConfigure(JNIEnv* env, jobject thiz, jlong deviceId, jstring name, jint mode, jint buildId)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    ambientCfg.DeviceID = (u64)deviceId;
+    ambientCfg.Name = lanJString(env, name);
+    ambientCfg.BuildID = (u32)buildId;
+    ambientMode = mode >= 0 && mode <= 2 ? mode : -1;
+    if (ambientPtr && ambientMode >= 0) ambientPtr->SetVisibility(ambientMode);
+#endif
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientSetForeground(JNIEnv* env, jobject thiz, jboolean fg)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    ambientFg = fg;
+    if (ambientPtr) ambientPtr->SetForeground(fg);
+#endif
+}
+
+// a SereneDS device found by NSD (_sereneds._udp): presence goes there by unicast too (routers that drop broadcast)
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientAddPeer(JNIEnv* env, jobject thiz, jstring ip, jint port)
+{
+#ifdef LITEV_AMBIENT_LAN
+    in_addr a;
+    if (inet_pton(AF_INET, lanJString(env, ip).c_str(), &a) != 1 || port <= 0 || port > 65535) return;
+    std::lock_guard<std::mutex> g(ambientMu);
+    for (auto& e : ambientPeers) if (e.first == a.s_addr && e.second == (u16)port) return;
+    ambientPeers.push_back({a.s_addr, (u16)port});
+    if (ambientPtr) ambientPtr->AddPeerAddress(a.s_addr, (u16)port);
+#endif
+}
+
+// this device's presence port (advertised over NSD), 0 = Just Play not running
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientPort(JNIEnv* env, jobject thiz)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    return ambientPtr ? ambientPtr->GetUnicastPort() : 0;
+#else
+    return 0;
+#endif
+}
+
+// nearby devices, one row each: "id \t name \t game \t ip:port \t ggid \t build \t linked"
+JNIEXPORT jobjectArray JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientNearby(JNIEnv* env, jobject thiz)
+{
+    std::vector<std::string> rows;
+#ifdef LITEV_AMBIENT_LAN
+    {
+        std::lock_guard<std::mutex> g(ambientMu);
+        if (ambientPtr) rows = ambientPtr->NearbyRows();
+    }
+#endif
+    return lanStringArray(env, rows);
+}
+
+// the counters (cumulative), "key=value" pairs separated by spaces; "" = not running
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
+{
+    std::string r;
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (ambientPtr)
+    {
+        const auto s = ambientPtr->GetStats();
+        char b[512];
+        snprintf(b, sizeof(b), "frames=%llu nearby=%u links=%u opened=%llu presence_tx=%llu presence_rx=%llu link_tx=%llu link_rx=%llu "
+                 "beacons=%llu blocked_us=%llu exchanges=%llu frame_blocked_us=%u frame_exchanges=%u rtt_ms=%u",
+                 (unsigned long long)s.Frames, s.Nearby, s.Links, (unsigned long long)s.LinksOpened, (unsigned long long)s.PresenceTx,
+                 (unsigned long long)s.PresenceRx, (unsigned long long)s.LinkTx, (unsigned long long)s.LinkRx,
+                 (unsigned long long)s.BeaconsInjected, (unsigned long long)s.BlockedUs, (unsigned long long)s.Exchanges,
+                 s.LastFrameBlockedUs, s.LastFrameExchanges, s.MaxRttMs);
+        r = b;
+    }
+#endif
+    return env->NewStringUTF(r.c_str());
 }
 
 JNIEXPORT jobjectArray JNICALL

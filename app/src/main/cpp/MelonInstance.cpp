@@ -1260,7 +1260,7 @@ void setHostBattery(int percent, bool charging) { hostBattery.store(percent < 0 
 int MelonInstance::batteryTarget()
 {
     int b = hostBattery.load(std::memory_order_relaxed);
-    if (b < 0 || MelonDSAndroid::netplayActive() || MPInterface::GetType() != MPInterface_Dummy
+    if (b < 0 || MelonDSAndroid::netplayActive() || (MPInterface::GetType() != MPInterface_Dummy && MPInterface::GetType() != MPInterface_Ambient)
         || MelonDSAndroid::recordMode() != 0 || litevFbHashOn())
         return 100;
     return b;

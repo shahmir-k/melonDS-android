@@ -166,6 +166,16 @@ namespace MelonDSAndroid
 
     bool netplayActive() { return netplay != nullptr; }
 
+    std::string romGameCode()
+    {
+        melonDS::NDS* nds = instance ? instance->getNds() : nullptr;
+        if (!nds || !nds->NDSCartSlot.GetCart()) return "";
+        return std::string(nds->NDSCartSlot.GetCart()->GetHeader().GameCode, 4);
+    }
+#ifndef LITEV_AMBIENT_LAN
+    bool ambientFirmwareMac(u8*) { return false; }
+#endif
+
     static std::string netplayPending; // set by the lobby, used by the next setup()
     // the user's ROM library: where another player's console finds that player's game
     static std::vector<std::string> netplayLibrary;

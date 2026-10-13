@@ -502,6 +502,7 @@ fun LanMultiplayerDialog(defaultPlayerName: String, onEndSession: suspend () -> 
                                 OptionRow(stringResource(R.string.multiplayer_option_hosted), stringResource(R.string.multiplayer_option_hosted_hint), idle) { pick(Goal.HOSTED) }
                                 OptionRow(stringResource(R.string.multiplayer_option_lan), stringResource(R.string.multiplayer_option_lan_hint), idle) { pick(Goal.LAN) }
                                 OptionRow(stringResource(R.string.multiplayer_option_usb), stringResource(R.string.multiplayer_option_usb_hint), idle) { pick(Goal.USB) }
+                                AmbientNearbySection()
                             }
                             Screen.SAME -> Text(stringResource(R.string.multiplayer_same_mode_hint), style = MaterialTheme.typography.body2)
                             Screen.LEAVE_GROUP -> Text(stringResource(R.string.multiplayer_leave_group_confirm), style = MaterialTheme.typography.body2)
@@ -838,4 +839,29 @@ private fun LobbyContent(hosting: Boolean, players: List<LanPlayer>, network: Ho
     }
     Text(stringResource(hint), style = MaterialTheme.typography.body2)
     if (onPickServer != null) Text(stringResource(R.string.multiplayer_pick_server_hint), style = MaterialTheme.typography.caption)
+}
+
+// Just Play local wireless: who is nearby (no lobby needed; their games see each other directly) and the link counters
+@Composable
+private fun AmbientNearbySection() {
+    var rows by remember { mutableStateOf(emptyList<List<String>>()) }
+    var stats by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        while (true) {
+            rows = MelonEmulator.ambientNearby().map { it.split('\t') }
+            stats = MelonEmulator.ambientStats()
+            delay(1000)
+        }
+    }
+    if (stats.isEmpty()) return     // (Just Play off: "Lobby only", or the lobby is open)
+    Text(stringResource(R.string.local_wireless_nearby, rows.size), style = MaterialTheme.typography.subtitle2)
+    rows.forEach { r ->
+        // id, name, game, address, ggid, build, linked
+        val linked = r.getOrNull(6) == "1"
+        Text("${r.getOrNull(1).orEmpty()} - ${r.getOrNull(2).orEmpty()}${if (linked) " (" + stringResource(R.string.local_wireless_linked) + ")" else ""}",
+            style = MaterialTheme.typography.body2)
+    }
+    val st = stats.split(' ').mapNotNull { it.split('=').takeIf { kv -> kv.size == 2 }?.let { kv -> kv[0] to kv[1] } }.toMap()
+    Text(stringResource(R.string.local_wireless_counters, st["links"] ?: "0", st["rtt_ms"] ?: "0", st["frame_blocked_us"] ?: "0"),
+        style = MaterialTheme.typography.caption)
 }

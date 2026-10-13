@@ -165,4 +165,16 @@
         <item>rom_dir</item>
         <item>internal_dir</item>
     </string-array>
+    <string-array name="local_wireless_mode_options">
+        <item>@string/local_wireless_everyone</item>
+        <item>@string/local_wireless_menu</item>
+        <item>@string/local_wireless_hidden</item>
+        <item>@string/local_wireless_lobby</item>
+    </string-array>
+    <string-array name="local_wireless_mode_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </string-array>
 </resources>

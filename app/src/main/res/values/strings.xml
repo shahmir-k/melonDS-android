@@ -193,6 +193,14 @@
     <string name="rom_icon_filtering">Icon filtering</string>
     <string name="max_rom_cache_size">Max. ROM cache size</string>
     <string name="clear_extracted_rom_cache">Clear extracted ROM cache</string>
+    <string name="local_wireless_mode">Local wireless (Just Play)</string>
+    <string name="local_wireless_everyone">Everyone nearby</string>
+    <string name="local_wireless_menu">Only while in a wireless menu</string>
+    <string name="local_wireless_hidden">Hidden</string>
+    <string name="local_wireless_lobby">Lobby only</string>
+    <string name="local_wireless_nearby">Just Play: %1$d nearby (no lobby needed, just open the game\'s wireless menu)</string>
+    <string name="local_wireless_linked">connected</string>
+    <string name="local_wireless_counters">Links %1$s, ping %2$s ms, waited %3$s us last frame</string>
     <string name="netplay_rom_cache_max_size">Max. Netplay ROM cache size (games received from other players)</string>
     <string name="netplay_rom_cache_clear">Clear Netplay ROM cache</string>
     <string name="netplay_transfer_title">Netplay: share a game</string>

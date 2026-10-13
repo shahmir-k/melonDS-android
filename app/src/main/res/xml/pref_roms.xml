@@ -37,6 +37,16 @@
             android:summary="@string/cache_size_calculating"
             app:iconSpaceReserved="false" />
 
+    <!-- Just Play local wireless: who sees this device's game wirelessly (no lobby) -->
+    <ListPreference
+            android:key="local_wireless_mode"
+            android:title="@string/local_wireless_mode"
+            android:summary="%s"
+            app:iconSpaceReserved="false"
+            android:defaultValue="0"
+            android:entries="@array/local_wireless_mode_options"
+            android:entryValues="@array/local_wireless_mode_values" />
+
     <!-- Games received from other players in Netplay. Real size = 256MB * (2 ^ netplay_rom_cache_max_size) -->
     <SeekBarPreference
             android:key="netplay_rom_cache_max_size"

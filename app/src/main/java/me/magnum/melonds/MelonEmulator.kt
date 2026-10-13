@@ -117,6 +117,7 @@ object MelonEmulator {
     external fun ambientPort(): Int
     external fun ambientNearby(): Array<String>     // "id \t name \t game \t ip:port \t ggid \t build \t linked"
     external fun ambientStats(): String             // "key=value ..." counters (cumulative), "" = not running
+    external fun ambientDismissSlowdownPrompt()      // keep LAN; the detector will not offer again this link session
 
     // Group: the Netplay lobby kept connected while its session runs, so the host's commands
     // (mode switch, Hosted server change, end) reach everyone. Commands: (server << 16) |

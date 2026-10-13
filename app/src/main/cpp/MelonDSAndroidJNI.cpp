@@ -1361,15 +1361,26 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
         const auto s = ambientPtr->GetStats();
         char b[512];
         snprintf(b, sizeof(b), "frames=%llu nearby=%u links=%u opened=%llu presence_tx=%llu presence_rx=%llu link_tx=%llu link_rx=%llu "
-                 "beacons=%llu blocked_us=%llu exchanges=%llu frame_blocked_us=%u frame_exchanges=%u rtt_ms=%u",
+                 "beacons=%llu blocked_us=%llu exchanges=%llu frame_blocked_us=%u frame_exchanges=%u rtt_ms=%u "
+                 "slow_fps_x100=%u slow_wait_us=%u slow_exchanges_x100=%u slow_offer=%u",
                  (unsigned long long)s.Frames, s.Nearby, s.Links, (unsigned long long)s.LinksOpened, (unsigned long long)s.PresenceTx,
                  (unsigned long long)s.PresenceRx, (unsigned long long)s.LinkTx, (unsigned long long)s.LinkRx,
                  (unsigned long long)s.BeaconsInjected, (unsigned long long)s.BlockedUs, (unsigned long long)s.Exchanges,
-                 s.LastFrameBlockedUs, s.LastFrameExchanges, s.MaxRttMs);
+                 s.LastFrameBlockedUs, s.LastFrameExchanges, s.MaxRttMs, s.SlowFpsX100, s.SlowWaitUsPerFrame,
+                 s.SlowExchangesPerFrameX100, s.SlowdownPending ? 1u : 0u);
         r = b;
     }
 #endif
     return env->NewStringUTF(r.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientDismissSlowdownPrompt(JNIEnv* env, jobject thiz)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (ambientPtr) ambientPtr->DismissSlowdownPrompt();
+#endif
 }
 
 JNIEXPORT jobjectArray JNICALL

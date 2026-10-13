@@ -46,10 +46,13 @@ namespace MelonDSAndroid {
     extern std::string netplayStatus();
     extern int netplayKind();   // 0 none, 1 Netplay, 2 Hosted Netplay
 #ifdef LITEV_NP_SPEED
-    // Plain Netplay session speed: the fast-forward key asks every device for `multiplier` (<= 0:
-    // uncapped; false = not in plain Netplay); netplaySpeed = the session's speed now (0 = uncapped);
-    // netplaySkipAllowed = frameskip may run (not in Netplay, or the session is fast-forwarding)
-    extern bool netplayRequestSpeed(bool on, float multiplier);
+    // Netplay session speed (plain and Hosted): ONE state; netplayToggleSpeed = a press of the
+    // fast-forward key (toggles normal <-> `multiplier`, <= 0: uncapped; returns what the key shows,
+    // 1 fast / 0 normal, -1 = not in Netplay); netplaySpeedShown = what the key shows now (same codes);
+    // netplaySpeed = the session's speed now (0 = uncapped); netplaySkipAllowed = frameskip may run
+    // (not in Netplay, or a plain session is fast-forwarding)
+    extern int netplayToggleSpeed(float multiplier);
+    extern int netplaySpeedShown();
     extern bool netplaySpeed(float& multiplier);
     extern bool netplaySkipAllowed();
 #endif

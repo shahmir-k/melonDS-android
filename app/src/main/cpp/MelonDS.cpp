@@ -139,10 +139,12 @@ namespace MelonDSAndroid
         // link replays the host's record of it. The guests' inputs travel to the host only.
         bool hosted = false;
 #ifdef LITEV_NP_SPEED
-        // Session speed (plain Netplay): what this player asks for (NetplaySpeed code, from the
-        // fast-forward key or debug.litev.npspeed) travels with its input; `speed` = the session's
-        // speed at the frame just run (the same frame on every device), `speedWho` = who asks.
-        std::atomic<int> speedRequest {0}, speed {0};
+        // Session speed: ONE state for the whole session; any player's fast-forward key toggles it
+        // (NetplayInput::ToggleSpeed: a press travels with that player's input). `speed` = the
+        // session's speed at the frame just run (plain Netplay: the same frame on every device; Hosted:
+        // the host decides, its guests follow its frame markers), `speedWho` = whose press set it
+        // (NetplayInput player bits; the Hosted host = kHostedServerId).
+        std::atomic<int> speed {0};
         std::atomic<u32> speedWho {0};
         // the per-device report (NETPLAY_SPEED, every 600 frames)
         double runMs = 0;                           // the local console's runFrame (wall, incl. link waits)
@@ -754,7 +756,11 @@ namespace MelonDSAndroid
 #ifdef LITEV_HOSTED_NETPLAY
         NetplaySession& s = *netplay;
         if (!s.record) return;
+#ifdef LITEV_NP_SPEED
+        s.record->EndFrame(player, frame, hostedState(*console.getNds(), in, frame), in, (u32)s.speed.load() | s.speedWho.load() << 8);
+#else
         s.record->EndFrame(player, frame, hostedState(*console.getNds(), in, frame), in);
+#endif
         thread_local std::vector<u8> out;
         out.clear();
         s.record->TakeRecords(player, out);
@@ -850,17 +856,24 @@ namespace MelonDSAndroid
         snprintf(b, sizeof(b), "%gx", NetplaySpeed::Multiplier(code));
         return b;
     }
-    // The fast-forward key in plain Netplay: asks the session for `multiplier` (<= 0: uncapped)
-    bool netplayRequestSpeed(bool on, float multiplier)
+    // The fast-forward key in Netplay: toggles the session speed between normal and `multiplier`
+    // (<= 0: uncapped). Returns what the key now shows (1 fast, 0 normal), -1 = not in Netplay.
+    int netplayToggleSpeed(float multiplier)
     {
-        if (!netplay || netplay->hosted) return false;
-        netplay->speedRequest = on ? NetplaySpeed::Encode(multiplier) : 0;
-        return true;
+        if (!netplay || !netplay->input) return -1;
+        return netplay->input->ToggleSpeed(NetplaySpeed::Encode(multiplier)) != 0;
     }
-    // Plain Netplay: the session speed now (multiplier; 0 = uncapped, 1 = normal)
+    // What the fast-forward key shows in Netplay (the session speed, or this player's press in
+    // flight): 1 fast, 0 normal, -1 = not in Netplay
+    int netplaySpeedShown()
+    {
+        if (!netplay || !netplay->input) return -1;
+        return netplay->input->ShownSpeed() != 0;
+    }
+    // Netplay: the session speed now (multiplier; 0 = uncapped, 1 = normal)
     bool netplaySpeed(float& multiplier)
     {
-        if (!netplay || netplay->hosted || !netplay->input) return false;
+        if (!netplay || !netplay->input) return false;
         multiplier = NetplaySpeed::Multiplier(netplay->speed);
         return true;
     }
@@ -948,12 +961,13 @@ namespace MelonDSAndroid
         if (!netplay->hosted && netplay->input && netplay->input->MsSincePeer() > kNetplayPeerLostMs
             && std::chrono::steady_clock::now() - netplay->created > std::chrono::seconds(30)) return "PEER LOST";
 #ifdef LITEV_NP_SPEED
-        if (!netplay->hosted && !netplay->waiting && netplay->speed != 0)
+        if (!netplay->waiting && netplay->speed != 0)
         {   // who sped the session up: shown next to the fps, toasted on change
             std::string who;
             for (int p = 0; p < NetplayInput::kMaxPlayers; p++)
-                if ((netplay->speedWho >> p) & 1) who += (who.empty() ? "P" : ",P") + std::to_string(p + 1);
-            return "Netplay · " + (netplay->speed == NetplaySpeed::kUncapped ? std::string("uncapped") : "FF " + speedName(netplay->speed)) + " by " + who;
+                if ((netplay->speedWho >> p) & 1) who += (who.empty() ? "P" : ",P") + std::to_string(p == kHostedServerId ? 1 : p + 1);
+            return (netplay->hosted ? "Hosted Netplay · " : "Netplay · ") + (netplay->speed == NetplaySpeed::kUncapped ? std::string("uncapped") : "FF " + speedName(netplay->speed))
+                   + (who.empty() ? "" : " by " + who);
         }
 #endif
         return netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
@@ -1455,6 +1469,11 @@ namespace MelonDSAndroid
             {
                 if (netplayScripted(netplay->script, netplay->frame)) local = netplayScriptAt(netplay->script, netplay->frame);
                 applied = local;
+#ifdef LITEV_NP_SPEED
+                NetplayFrameInput press;    // the host's key presses (it submits no input)
+                netplay->input->StampSpeed(press);
+                netplay->input->NoteLocalSpeed(netplay->frame, press);
+#endif
             }
             else
 #endif
@@ -1463,19 +1482,21 @@ namespace MelonDSAndroid
             if (netplayScripted(netplay->script, applyAt))   // by applied frame: what is submitted now applies Delay frames later
                 local = netplayScriptAt(netplay->script, applyAt);
 #ifdef LITEV_NP_SPEED
-            if (!netplay->hosted)
             {
-                // debug.litev.npspeed=<multiplier> (testing / the uncapped benchmark: -1 or 0 = uncapped;
-                // unset or 1 = off, the key decides): this player asks for that speed while it is set;
-                // re-read every 120 frames
-                static int propCode = -1;
+                // debug.litev.npspeed=<multiplier> (testing / the uncapped benchmark: -1 or 0 = uncapped,
+                // 1 = normal): a change of it is a press for that speed (re-read every 120 frames)
+                static std::string propLast;
                 if (netplay->frame % 120 == 0)
                 {
                     char b[PROP_VALUE_MAX] = {0};
-                    const float v = __system_property_get("debug.litev.npspeed", b) > 0 && b[0] ? (float)atof(b) : 1.0f;
-                    propCode = v != 1.0f ? NetplaySpeed::Encode(v) : -1;
+                    __system_property_get("debug.litev.npspeed", b);
+                    if (propLast != b)
+                    {
+                        propLast = b;
+                        if (b[0]) netplay->input->RequestSpeed(NetplaySpeed::Encode((float)atof(b)));
+                    }
                 }
-                NetplaySpeed::Set(local, propCode >= 0 ? propCode : netplay->speedRequest.load());
+                netplay->input->StampSpeed(local);
             }
 #endif
             netplay->input->SubmitLocal(netplay->frame, local);
@@ -1504,7 +1525,7 @@ namespace MelonDSAndroid
 #endif
             u32 lines = instance->runFrame();
 #ifdef LITEV_NP_SPEED
-            if (!netplay->hosted)
+            if (!netplay->replay)   // plain Netplay, or the Hosted host (its guests follow its markers)
             {
                 const double runNow = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - runStart).count();
                 netplay->runMs += runNow;
@@ -1539,6 +1560,19 @@ namespace MelonDSAndroid
                 Platform::Log(Platform::LogLevel::Error, "Netplay: DESYNC at frame %d (Hosted replica of console %d): %s\n",
                               frame, netplay->player, netplay->replay->Error().c_str());
             }
+#ifdef LITEV_NP_SPEED
+            int speedFrame;
+            u32 speed;
+            if (netplay->replay && netplay->replay->ServerSpeed(speedFrame, speed))
+            {   // guest: the session speed is the host's, as sent with its frame markers
+                const int code = (int)(speed & 63);
+                if (code != netplay->speed || speed >> 8 != netplay->speedWho)
+                    Platform::Log(Platform::LogLevel::Info, "NETPLAY_SPEED switch %s by 0x%x (host f%d, here f%d)\n", speedName(code).c_str(), speed >> 8, speedFrame, frame);
+                netplay->input->ServerSpeed(speedFrame, code);
+                netplay->speedWho = speed >> 8;
+                netplay->speed = code;
+            }
+#endif
             if (netplay->replay && netplay->frame % 600 == 0)
                 Platform::Log(Platform::LogLevel::Info, "Netplay: Hosted replica f%d, waited %.0f ms for the host so far\n",
                               netplay->frame, netplay->replay->StallMs());

@@ -499,8 +499,15 @@ namespace MelonDSAndroid
                 {
                     if (sscanf(line, "%d", &frame) != 1) continue;
                     last = frame;
-                    const char* h = strrchr(line, ',');
-                    if (h && sscanf(h + 1, "%llx", &hash) == 1) r->hashes[frame] = hash;
+                    // frames.csv keeps the state hash in column 8. Profiling may append
+                    // jit/mprotect/rewrites columns, so the final field is not the hash.
+                    const char* h = line;
+                    for (int column = 0; column < 7 && h; ++column)
+                    {
+                        h = strchr(h, ',');
+                        if (h) ++h;
+                    }
+                    if (h && sscanf(h, "%llx", &hash) == 1) r->hashes[frame] = hash;
                 }
                 fclose(f);
                 if (!r->frames) r->frames = last + 1;   // a recording cut off without its "frames" line

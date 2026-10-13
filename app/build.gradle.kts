@@ -95,6 +95,9 @@ android {
                     "-DLITEV_JIT_DIRECTPATCH=ON",
                     // Shorter, equivalent indirect-jump refill stubs (exact; lib litev-refill).
                     "-DLITEV_JIT_REFILL_FAST=ON", "-DLITEV_JIT_SHARED_CODE=ON",
+                    // the local console's geometry engine on a worker thread (category B; lib litev-gxasync;
+                    // debug.litev.gxasync=0 off)
+                    "-DLITEV_GX_ASYNC_LOCAL=ON",
                     // simpleperf perf-<pid>.map for JIT blocks. Diagnostic; writes nothing
                     // unless debug.litev.perfmap names a directory.
                     "-DLITEV_JIT_PERFMAP=ON",

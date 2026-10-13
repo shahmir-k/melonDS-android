@@ -382,6 +382,9 @@ namespace MelonDSAndroid
     {
         std::lock_guard<std::mutex> l(recordLock);
         if (!recording || !frame || frame->emuFrame < recording->startEmuFrame) return false;
+        // debug.litev.recvideo=0: no replay footage (it costs the present thread ~0.4 ms a frame)
+        static const bool video = [] { char b[PROP_VALUE_MAX] = {}; return !(__system_property_get("debug.litev.recvideo", b) > 0 && atoi(b) == 0); }();
+        if (recording->replay && !video) return false;
         dir = recording->dir;
         prefix = recording->replay ? "replay-video-" : "video-";
         recFrame = frame->emuFrame - recording->startEmuFrame;

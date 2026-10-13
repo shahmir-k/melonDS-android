@@ -348,6 +348,16 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
     started = true;
 }
 
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_litevProp(JNIEnv* env, jobject thiz, jstring name, jint def)
+{
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    std::string key = std::string("debug.litev.") + n;
+    env->ReleaseStringUTFChars(name, n);
+    char prop[PROP_VALUE_MAX] = {0};
+    return __system_property_get(key.c_str(), prop) > 0 ? atoi(prop) : def;
+}
+
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlong deadlineNs, jobject renderFrameCallback)
 {
@@ -436,7 +446,11 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
 
     if (presentationFrame != nullptr)
     {
-        eglWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0);
+        // debug.litev.presentpoll=1: skip the server-side wait when the frame's render has already
+        // finished (a zero-timeout poll); A/B of the present's first-command cost (default off)
+        static const bool pollFirst = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.presentpoll", b) > 0 && atoi(b) != 0; }();
+        if (!pollFirst || eglClientWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0, 0) != EGL_CONDITION_SATISFIED_KHR)
+            eglWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0);
         env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, true, (jint) presentationFrame->frameTexture);
         // record mode footage, on this thread's GL context (the hardware encoder does the rest)
         {

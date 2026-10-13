@@ -268,20 +268,23 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {
         synchronized(configurationLock) {
             if (mustUpdateConfiguration) {
-                applyRendererConfiguration()
+                        applyRendererConfiguration()
                 mustUpdateConfiguration = false
             }
         }
 
+        PresentTimer.mark(0)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
         if (!presentFrameWrapper.isValidFrame) {
             return
         }
 
+        PresentTimer.mark(1)
         synchronized(backgroundLock) {
             renderBackground()
         }
+        PresentTimer.mark(2)
 
         screenShader?.let { shader ->
             GLES30.glDisable(GLES30.GL_DEPTH_TEST)
@@ -302,13 +305,16 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
             GLES30.glVertexAttribPointer(shader.attribUv, 2, GLES30.GL_FLOAT, false, 5 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES)
             GLES30.glVertexAttribPointer(shader.attribAlpha, 1, GLES30.GL_FLOAT, false, 5 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES)
             GLES30.glUniform1i(shader.uniformTex, 0)
+            PresentTimer.mark(3)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, screenIndices)
+            PresentTimer.mark(4)
 
             GLES30.glBindVertexArray(0)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
         }
 
         renderOverlay()
+        PresentTimer.mark(5)
     }
 
     // text: null hides it. x/y: top-left of the text in surface pixels; textSize in pixels

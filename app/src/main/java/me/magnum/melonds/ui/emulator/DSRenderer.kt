@@ -59,6 +59,11 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
     private var width = 0f
     private var height = 0f
 
+    // debug.litev.presentlean bits (default 3): 2 clear colour only, 4 frame-texture filter set once per texture
+    private val lean by lazy { me.magnum.melonds.MelonEmulator.litevProp("presentlean", 3) }
+    // (frame texture id, filter) pairs already set (presentlean)
+    private val filteredTextures = HashSet<Long>()
+
     // FPS counter drawn over the screens in the colour opposite to what is under it (readable on
     // white menus too): text texture, blended as 1 - destination
     private data class Overlay(val text: String, val x: Float, val y: Float, val textSize: Float)
@@ -124,6 +129,7 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         GLES30.glClearColor(0f, 0f, 0f, 1f)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
         GLES30.glDisable(GLES30.GL_CULL_FACE)
+        filteredTextures.clear()
 
         // Setup textures
         val textures = IntArray(1)
@@ -268,20 +274,25 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {
         synchronized(configurationLock) {
             if (mustUpdateConfiguration) {
+                filteredTextures.clear()
                 applyRendererConfiguration()
                 mustUpdateConfiguration = false
             }
         }
 
-        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+        PresentTimer.mark(0)
+        // presentlean: nothing here uses depth (every draw has the depth test off)
+        GLES30.glClear(if ((lean and 2) != 0) GLES30.GL_COLOR_BUFFER_BIT else GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
         if (!presentFrameWrapper.isValidFrame) {
             return
         }
 
+        PresentTimer.mark(1)
         synchronized(backgroundLock) {
             renderBackground()
         }
+        PresentTimer.mark(2)
 
         screenShader?.let { shader ->
             GLES30.glDisable(GLES30.GL_DEPTH_TEST)
@@ -295,20 +306,27 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
 
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, presentFrameWrapper.textureId)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, shader.textureFiltering)
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, shader.textureFiltering)
+            // presentlean: a texture keeps its filter; set it only on a texture/filter change
+            val filterKey = presentFrameWrapper.textureId.toLong() shl 32 or (shader.textureFiltering.toLong() and 0xFFFFFFFFL)
+            if ((lean and 4) == 0 || filteredTextures.add(filterKey)) {
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, shader.textureFiltering)
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, shader.textureFiltering)
+            }
 
             GLES30.glVertexAttribPointer(shader.attribPos, 2, GLES30.GL_FLOAT, false, 5 * Float.SIZE_BYTES, 0)
             GLES30.glVertexAttribPointer(shader.attribUv, 2, GLES30.GL_FLOAT, false, 5 * Float.SIZE_BYTES, 2 * Float.SIZE_BYTES)
             GLES30.glVertexAttribPointer(shader.attribAlpha, 1, GLES30.GL_FLOAT, false, 5 * Float.SIZE_BYTES, 4 * Float.SIZE_BYTES)
             GLES30.glUniform1i(shader.uniformTex, 0)
+            PresentTimer.mark(3)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, screenIndices)
+            PresentTimer.mark(4)
 
             GLES30.glBindVertexArray(0)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
         }
 
         renderOverlay()
+        PresentTimer.mark(5)
     }
 
     // text: null hides it. x/y: top-left of the text in surface pixels; textSize in pixels

@@ -84,6 +84,9 @@ namespace {
     }
     // GL renderers: read+hash both layers of the composited output array texture
     // on the current (emulator) GL context. Restores the prior read FBO.
+    // debug.litev.fbdumpn: frames to dump from debug.litev.fbdump on (default 3); fbdumpl: screens (bit 0 top, 1 bottom)
+    static int litevDumpN() { static const int n = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fbdumpn", b) > 0 ? atoi(b) : 3; }(); return n; }
+    static int litevDumpLayers() { static const int n = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fbdumpl", b) > 0 ? atoi(b) : 3; }(); return n; }
     void litevFbHash(GLuint arrayTex, int w, int perScreenH, int frameId) {
         static GLuint fbo = 0;
         if (!fbo) glGenFramebuffers(1, &fbo);
@@ -109,8 +112,9 @@ namespace {
                  frameId, (unsigned long long)htop, (unsigned long long)hbot);
         // debug.litev.fbdump=N: also write frame N's two screens (raw RGBA, w x perScreenH each)
         static const int dumpAt = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fbdump", b) > 0 ? atoi(b) : -1; }();
-        if (frameId >= dumpAt && frameId < dumpAt + 3 && dumpAt >= 0) {
+        if (frameId >= dumpAt && frameId < dumpAt + litevDumpN() && dumpAt >= 0) {
             for (int layer = 0; layer < 2; layer++) {
+                if (!(litevDumpLayers() & (1 << layer))) continue;
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
                 glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arrayTex, 0, layer);
                 glReadPixels(0, 0, w, perScreenH, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
@@ -131,8 +135,9 @@ namespace {
         LOG_INFO("LITEV_FBHASH", "frame=%d top=0x%016llx bot=0x%016llx",
                  frameId, (unsigned long long)htop, (unsigned long long)hbot);
         static const int dumpAt = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fbdump", b) > 0 ? atoi(b) : -1; }();
-        if (dumpAt >= 0 && frameId >= dumpAt && frameId < dumpAt + 3)
+        if (dumpAt >= 0 && frameId >= dumpAt && frameId < dumpAt + litevDumpN())
             for (int layer = 0; layer < 2; layer++) {
+                if (!(litevDumpLayers() & (1 << layer))) continue;
                 const void* p = layer ? bottom : top;
                 char path[128]; snprintf(path, sizeof(path), "/sdcard/Download/fbdump-%d-%d-256x192.rgba", frameId, layer);
                 if (FILE* f = p ? fopen(path, "wb") : nullptr) { fwrite(p, 1, sz, f); fclose(f); }

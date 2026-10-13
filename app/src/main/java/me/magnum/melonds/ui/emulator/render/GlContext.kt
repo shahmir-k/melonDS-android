@@ -1,5 +1,7 @@
 package me.magnum.melonds.ui.emulator.render
 
+import me.magnum.melonds.MelonEmulator
+
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLDisplay
@@ -31,13 +33,22 @@ class GlContext(sharedEglContext: Long? = null) {
         }
     }
 
+    // debug.litev.presentlean bit 1 (default on): make a surface current and set its swap interval only
+    // when it changes (one surface per present on most devices), not on every present
+    private val lean by lazy { (MelonEmulator.litevProp("presentlean", 3) and 1) != 0 }
+    private var currentSurface: EGLSurface? = null
+
     fun use(surface: EGLSurface) {
+        if (lean && surface == currentSurface) return
         if (!makeCurrent(display.nativeHandle, surface.nativeHandle, context)) {
+            currentSurface = null
             throw GlContextException("Failed to make current: ${EGL14.eglGetError()}")
         }
+        currentSurface = surface
 
         // Allows immediate buffer swapping without waiting for VSync
-        EGL14.eglSwapInterval(display, 0)
+        // (debug.litev.presentlean bit 8: interval 1, diagnostic A/B of the swap cost)
+        EGL14.eglSwapInterval(display, if ((MelonEmulator.litevProp("presentlean", 3) and 8) != 0) 1 else 0)
     }
 
     fun swapBuffers(surface: EGLSurface) {
@@ -45,6 +56,7 @@ class GlContext(sharedEglContext: Long? = null) {
     }
 
     fun release() {
+        currentSurface = null
         EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
     }
 
@@ -67,6 +79,10 @@ class GlContext(sharedEglContext: Long? = null) {
     }
 
     fun destroyWindowSurface(eglSurface: EGLSurface) {
+        if (eglSurface == currentSurface) {
+            EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+            currentSurface = null
+        }
         EGL14.eglDestroySurface(display, eglSurface)
     }
 

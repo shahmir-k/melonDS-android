@@ -56,6 +56,12 @@ object MelonEmulator {
     // debug.litev.<name> as an int (def when unset)
     external fun litevProp(name: String, def: Int): Int
 
+    // LITEV_HYB_DIRECT_PRESENT: the GL renderer's present thread draws into the game window
+    external fun directPresentAvailable(): Boolean
+    external fun setDirectPresent(surface: Long, width: Int, height: Int, program: Int, filter: Int, vertices: FloatArray?,
+                                  bgProgram: Int, bgTexture: Int, bgVertices: FloatArray?,
+                                  overlayProgram: Int, overlayTexture: Int, overlayVertices: FloatArray?)
+
     external fun setupAchievements(achievements: Array<RASimpleAchievement>, leaderboards: Array<RASimpleLeaderboard>, richPresenceScript: String?)
 
     external fun unloadRetroAchievementsData()

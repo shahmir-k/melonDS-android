@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.render.PresentFrameWrapper
 import me.magnum.melonds.ui.emulator.model.RuntimeRendererConfiguration
 import me.magnum.melonds.ui.emulator.render.EmulatorRenderer
@@ -21,6 +22,8 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
     private var surface: Surface? = null
     private var windowSurface: EGLSurface? = null
     private var renderer: EmulatorRenderer? = null
+    // LITEV_HYB_DIRECT_PRESENT: layout version handed to the GL present thread (-1: we draw)
+    private var directVersion = -1
 
     private enum class SurfaceState {
         UNINITIALIZED,
@@ -70,12 +73,31 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
                 }
             } else if (surface == null) {
                 // We had a surface, but it has been destroyed
+                takeBackDirect()
                 windowSurface?.let {
                     glContext.destroyWindowSurface(it)
                     windowSurface = null
                 }
                 return
             }
+
+            // LITEV_HYB_DIRECT_PRESENT: when the frame needs nothing beyond the default screen
+            // shader, the GL renderer's present thread draws it into this window as soon as it
+            // is merged; this thread hands the surface over and stays out of it
+            val layout = if (MelonEmulator.directPresentAvailable() && surfaceState == SurfaceState.READY && presentFrameWrapper.isValidFrame &&
+                (directOwner == null || directOwner === this)) renderer?.directPresentLayout() else null
+            if (layout != null) {
+                if (directVersion != layout.version) {
+                    android.opengl.GLES30.glFinish()   // textures this thread just wrote (overlay text) are complete for the other context
+                    glContext.releaseSurface()
+                    MelonEmulator.setDirectPresent(windowSurface!!.nativeHandle, layout.width, layout.height, layout.program, layout.filter, layout.vertices,
+                        layout.bgProgram, layout.bgTexture, layout.bgVertices, layout.overlayProgram, layout.overlayTexture, layout.overlayVertices)
+                    directVersion = layout.version
+                    directOwner = this
+                }
+                return
+            }
+            takeBackDirect()
 
             PresentTimer.mark(6)
             glContext.use(windowSurface!!)
@@ -106,12 +128,24 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
         return true
     }
 
+    private fun takeBackDirect() {
+        if (directVersion < 0) return
+        MelonEmulator.setDirectPresent(0L, 0, 0, 0, 0, null, 0, 0, null, 0, 0, null)   // returns once the present thread let go
+        directVersion = -1
+        if (directOwner === this) directOwner = null
+    }
+
     fun stop(glContext: GlContext) {
         synchronized(surfaceLock) {
+            takeBackDirect()
             windowSurface?.let {
                 glContext.destroyWindowSurface(it)
                 windowSurface = null
             }
         }
+    }
+
+    private companion object {
+        @Volatile var directOwner: EmulatorSurfaceView? = null   // one window at a time
     }
 }

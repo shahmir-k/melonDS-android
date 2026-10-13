@@ -20,6 +20,7 @@ import me.magnum.melonds.domain.model.layout.BackgroundMode
 import me.magnum.melonds.domain.model.render.PresentFrameWrapper
 import me.magnum.melonds.ui.emulator.model.RuntimeRendererConfiguration
 import me.magnum.melonds.ui.emulator.render.EmulatorRenderer
+import me.magnum.melonds.ui.emulator.render.DirectPresentLayout
 import me.magnum.melonds.utils.BitmapUtils
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -58,6 +59,11 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
 
     private var width = 0f
     private var height = 0f
+
+    private var screenVertexData: FloatArray? = null   // what screensVbo holds (LITEV_HYB_DIRECT_PRESENT)
+    private var backgroundVertexData: FloatArray? = null
+    private var overlayVertexData: FloatArray? = null
+    private var layoutVersion = 0
 
     // FPS counter drawn over the screens in the colour opposite to what is under it (readable on
     // white menus too): text texture, blended as 1 - destination
@@ -224,6 +230,8 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, screensVbo)
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexBufferSize, vertexBuffer, GLES30.GL_STATIC_DRAW)
         screenIndices = vertexBuffer.capacity() / 5 // Each vertex has 5 values
+        screenVertexData = (underScreenVertexData ?: FloatArray(0)) + (overScreenVertexData ?: FloatArray(0))
+        layoutVersion++
     }
 
     private fun buildScreenVertexData(rect: Rect, uvs: FloatArray, alpha: Float): FloatArray {
@@ -263,6 +271,29 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         synchronized(backgroundLock) {
             isBackgroundPositionDirty = true
         }
+    }
+
+    override fun directPresentLayout(): DirectPresentLayout? {
+        synchronized(configurationLock) {
+            if (mustUpdateConfiguration) return null
+        }
+        // anything still to set up or rasterise happens in drawFrame: one frame on this thread
+        val bg: FloatArray?
+        synchronized(backgroundLock) {
+            if (mustLoadBackground || (isBackgroundLoaded && isBackgroundPositionDirty)) return null
+            bg = if (isBackgroundLoaded) backgroundVertexData ?: return null else null
+        }
+        val o = overlay
+        if (o != overlayDrawn) return null
+        val shader = screenShader ?: return null
+        val v = screenVertexData ?: return null
+        if (v.isEmpty()) return null
+        val ovl = if (o != null) overlayVertexData else null
+        return DirectPresentLayout(
+            v, shader.programId, shader.textureFiltering, width.toInt(), height.toInt(), layoutVersion,
+            if (bg != null) backgroundShader.programId else 0, backgroundTexture, bg,
+            if (ovl != null) (overlayShader?.programId ?: 0) else 0, overlayTexture, ovl,
+        )
     }
 
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {
@@ -364,6 +395,8 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, overlayVbo)
             GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexData.size * Float.SIZE_BYTES, buffer, GLES30.GL_DYNAMIC_DRAW)
             overlayDrawn = o
+            overlayVertexData = vertexData
+            layoutVersion++
         }
 
         GLES30.glBindVertexArray(overlayVao)
@@ -466,6 +499,8 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         GLES30.glBindVertexArray(backgroundVao)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, backgroundVbo)
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexBufferSize, vertexBuffer, GLES30.GL_STATIC_DRAW)
+        backgroundVertexData = vertexData
+        layoutVersion++
 
         isBackgroundPositionDirty = false
     }

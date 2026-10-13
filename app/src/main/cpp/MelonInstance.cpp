@@ -24,6 +24,7 @@
 #include "GPU_Hybrid.h"
 #include "MelonDS.h"
 #include "MelonInstance.h"
+#include "renderer/DirectPresent.h"
 #include "NDS.h"
 #include "NDSCart.h"
 #include "net/Net_Slirp.h"
@@ -753,6 +754,7 @@ u32 MelonInstance::runFrame()
                 if (sleeping) { frameQueue.discardRenderedFrame(renderFrame); return; }
                 renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
                 glFlush();
+                DirectPresent::Present(renderFrame->frameTexture);   // LITEV_HYB_DIRECT_PRESENT
                 frameQueue.pushRenderedFrame(renderFrame);
             });
         presentedAsync = true;
@@ -796,6 +798,7 @@ u32 MelonInstance::runFrame()
                     if (sleeping) { frameQueue.discardRenderedFrame(renderFrame); return; }
                     renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
                     glFlush();
+                    DirectPresent::Present(renderFrame->frameTexture);   // LITEV_HYB_DIRECT_PRESENT
                     frameQueue.pushRenderedFrame(renderFrame);
                 });
             presentedAsync = true;

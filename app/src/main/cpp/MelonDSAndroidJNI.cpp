@@ -1,3 +1,4 @@
+#include "renderer/DirectPresent.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <jni.h>
@@ -352,6 +353,39 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
     pthread_setname_np(emuThread, "EmulatorThread");
 
     started = true;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_directPresentAvailable(JNIEnv* env, jobject thiz)
+{
+    return DirectPresent::Available();
+}
+
+// FrameRenderThread: hand the window surface (EGLSurface handle; 0 = take it back) to the GL
+// renderer's present thread, with what to draw (LITEV_HYB_DIRECT_PRESENT)
+static std::vector<float> litevFloats(JNIEnv* env, jfloatArray a)
+{
+    std::vector<float> v;
+    if (!a) return v;
+    v.resize(env->GetArrayLength(a));
+    env->GetFloatArrayRegion(a, 0, (jsize)v.size(), v.data());
+    return v;
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_setDirectPresent(JNIEnv* env, jobject thiz, jlong surface, jint width, jint height,
+    jint program, jint filter, jfloatArray vertices, jint bgProgram, jint bgTexture, jfloatArray bgVertices,
+    jint overlayProgram, jint overlayTexture, jfloatArray overlayVertices)
+{
+    DirectPresent::Layout l;
+    if (surface)
+    {
+        l.Surface = (EGLSurface)surface; l.Width = width; l.Height = height;
+        l.Program = program; l.Filter = filter; l.Verts = litevFloats(env, vertices);
+        l.BgProgram = bgProgram; l.BgTexture = bgTexture; l.BgVerts = litevFloats(env, bgVertices);
+        l.OvlProgram = overlayProgram; l.OvlTexture = overlayTexture; l.OvlVerts = litevFloats(env, overlayVertices);
+    }
+    DirectPresent::Set(std::move(l));
 }
 
 JNIEXPORT jint JNICALL

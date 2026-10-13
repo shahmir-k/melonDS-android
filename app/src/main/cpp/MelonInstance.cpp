@@ -721,6 +721,15 @@ u32 MelonInstance::runFrame()
     if (skipPresent && softRend && softRend->RetiredFrames() != lastRetiredPresented
         && !(nds->CPUStop & CPUStop_Sleep))
         skipPresent = false;
+#ifdef LITEV_FF_SKIP_PRESENT
+    // ...and under frameskip that present is the only one a picture needs: the drawn frame itself
+    // merges the last finished picture, which its retire already presented (2 presents per drawn
+    // frame in fast-forward: GPU merge + present thread x2, PW FF -11..-19% fps)
+    else if (!skipPresent && softRend && ffSkipPresent && nds->GPU.FrameskipTarget > 0
+             && softRend->RetiredFrames() == lastRetiredPresented
+             && !rewindManager.ShouldCaptureState(frame + 1) && !screenshotRenderer->isScreenshotPending())
+        skipPresent = true;
+#endif
     if (!skipPresent && softRend) lastRetiredPresented = softRend->RetiredFrames();
     auto* hybrid = !skipPresent && currentRenderer == Renderer::OpenGl ? dynamic_cast<HybridRenderer*>(&nds->GPU.GetRenderer()) : nullptr;
     bool ramFramebuffers = false;

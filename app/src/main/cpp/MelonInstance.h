@@ -72,6 +72,8 @@ public:
 
     void updateConfiguration(std::shared_ptr<EmulatorConfiguration> newConfiguration);
     void requestNdsSaveWrite(const u8* saveData, u32 saveLength, u32 writeOffset, u32 writeLength);
+    // game save writes go to this file from now on (a replay: never the player's .sav)
+    void redirectNdsSave(const std::string& path) { if (ndsSave) ndsSave->SetPath(path, false); }
     void requestGbaSaveWrite(const u8* saveData, u32 saveLength, u32 writeOffset, u32 writeLength);
     void requestFirmwareSaveWrite(const u8* saveData, u32 saveLength, u32 writeOffset, u32 writeLength);
     bool saveState(Savestate* state);

@@ -236,6 +236,10 @@ class SharedPreferencesSettingsRepository(
         val step = preferences.getInt("netplay_rom_cache_max_size", 3)
         return SizeUnit.MB(256) * 2.toDouble().pow(step).toLong()
     }
+    override fun getLocalWirelessMode(): Int {
+        return preferences.getString("local_wireless_mode", "0")?.toIntOrNull() ?: 0
+    }
+
     override fun getDefaultConsoleType(): ConsoleType {
         val consoleTypePreference = preferences.getString("console_type", "ds")!!
         return enumValueOfIgnoreCase(consoleTypePreference)

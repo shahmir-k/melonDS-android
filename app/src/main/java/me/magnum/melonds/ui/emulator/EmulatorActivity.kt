@@ -67,6 +67,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import me.magnum.melonds.MelonEmulator
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientWireless
 import me.magnum.melonds.ui.emulator.multiplayer.MultiplayerGroup
 import me.magnum.melonds.ui.emulator.multiplayer.groupRows
 import me.magnum.melonds.ui.emulator.multiplayer.live
@@ -890,6 +891,7 @@ class EmulatorActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         choreographerFrameRenderer.startRendering()
+        AmbientWireless.setForeground(true)
         if (viewModel.useDeviceBattery()) registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         else MelonEmulator.setHostBattery(-1, false)
 
@@ -1305,6 +1307,7 @@ class EmulatorActivity : AppCompatActivity() {
         try { unregisterReceiver(batteryReceiver) } catch (_: IllegalArgumentException) {}
         enableScreenTimeOut()
         choreographerFrameRenderer.stopRendering()
+        AmbientWireless.setForeground(false)
         viewModel.pauseEmulator(false)
     }
 

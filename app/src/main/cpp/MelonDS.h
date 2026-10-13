@@ -36,6 +36,10 @@ namespace MelonDSAndroid {
 
     // Netplay: this device also emulates the other players' consoles; only inputs cross the network.
     extern bool netplayActive();
+    // the running game's code ("" = none: firmware boot)
+    extern std::string romGameCode();
+    // Just Play (LITEV_AMBIENT_LAN): the console MAC from the device id, false = off
+    extern bool ambientFirmwareMac(u8* mac);
     // The next game started runs in Netplay as `player` (the LAN lobby id; 0 = host) of `players`;
     // guests pass the host's IP as `host` (the host passes "").
     // library: where another player's game may be; cacheDir: where games received from the others

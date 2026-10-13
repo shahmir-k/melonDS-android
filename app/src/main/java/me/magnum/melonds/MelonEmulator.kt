@@ -137,6 +137,10 @@ object MelonEmulator {
 
     // 0 = no Netplay session, 1 = Netplay, 2 = Hosted Netplay
     external fun netplayKind(): Int
+    // Netplay (plain and Hosted): the fast-forward key toggles ONE session speed for every player.
+    // Both return what the key shows (1 fast, 0 normal), -1 = not in Netplay (the key is local).
+    external fun netplayToggleFastForward(): Int
+    external fun netplayFastForwardShown(): Int
 
     fun saveState(path: Uri): Boolean {
         return saveStateInternal(path.toString())

@@ -61,7 +61,7 @@ float fastForwardSpeedMultiplier;
 bool limitFps = true;
 bool isFastForwardEnabled = false;
 #ifdef LITEV_NP_SPEED
-// the fast-forward speed setting: in plain Netplay the session's speed drives the variables above,
+// the fast-forward speed setting: in Netplay the session's speed drives the variables above,
 // and the fast-forward key asks the session for this
 static float ffSetting = 2.0f;
 #endif
@@ -678,8 +678,8 @@ JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_setFastForwardEnabled(JNIEnv* env, jobject thiz, jboolean enabled)
 {
 #ifdef LITEV_NP_SPEED
-    // plain Netplay: the key asks every device to speed up (the session applies it at one frame)
-    if (MelonDSAndroid::netplayRequestSpeed(enabled, ffSetting)) return;
+    // Netplay: the session's speed drives fast-forward (the key: netplayToggleFastForward)
+    if (MelonDSAndroid::netplaySpeedShown() >= 0) return;
 #endif
     isFastForwardEnabled = enabled;
     if (enabled) {
@@ -721,7 +721,8 @@ Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jo
 #ifdef LITEV_NP_SPEED
     ffSetting = newConfiguration.fastForwardSpeedMultiplier;
     // plain Netplay: the session's speed drives fast-forward; the setting is what the key asks for next
-    const bool npDriven = MelonDSAndroid::netplayKind() == 1;
+    float npSpeed;
+    const bool npDriven = MelonDSAndroid::netplaySpeed(npSpeed);
     if (!npDriven)
 #endif
     fastForwardSpeedMultiplier = newConfiguration.fastForwardSpeedMultiplier;
@@ -1039,6 +1040,29 @@ Java_me_magnum_melonds_MelonEmulator_netplayKind(JNIEnv* env, jobject thiz)
     return MelonDSAndroid::netplayKind();
 }
 
+// Netplay: a press of the fast-forward key toggles the session's speed for every player; returns
+// what the key shows (1 fast, 0 normal), -1 = not in Netplay (the key is local)
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayToggleFastForward(JNIEnv* env, jobject thiz)
+{
+#ifdef LITEV_NP_SPEED
+    return MelonDSAndroid::netplayToggleSpeed(ffSetting);
+#else
+    return -1;
+#endif
+}
+
+// Netplay: what the fast-forward key shows (the session's speed, or this player's press in flight)
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_netplayFastForwardShown(JNIEnv* env, jobject thiz)
+{
+#ifdef LITEV_NP_SPEED
+    return MelonDSAndroid::netplaySpeedShown();
+#else
+    return -1;
+#endif
+}
+
 JNIEXPORT jstring JNICALL
 Java_me_magnum_melonds_MelonEmulator_netplayStatus(JNIEnv* env, jobject thiz)
 {
@@ -1312,7 +1336,7 @@ void* emulate(void*)
         double actualSleepMs = 0.0;
 
 #ifdef LITEV_NP_SPEED
-        // Plain Netplay: the session's speed (the same frame on every device) is the fast-forward
+        // Netplay: the session's speed (plain: the same frame on every device) is the fast-forward
         // state: pacing, frameskip, skip-repeat and the sound follow it as for local fast-forward.
         {
             static bool npDriven = false;

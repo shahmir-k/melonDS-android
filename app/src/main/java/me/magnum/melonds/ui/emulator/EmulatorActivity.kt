@@ -73,6 +73,10 @@ import me.magnum.melonds.ui.emulator.multiplayer.groupRows
 import me.magnum.melonds.ui.emulator.multiplayer.live
 import me.magnum.melonds.R
 import me.magnum.melonds.common.PermissionHandler
+import me.magnum.melonds.common.Permission
+import me.magnum.melonds.common.RomStorageAccess
+import me.magnum.melonds.common.UriPermissionManager
+import me.magnum.melonds.common.contracts.DirectoryPickerContract
 import me.magnum.melonds.databinding.ActivityEmulatorBinding
 import me.magnum.melonds.domain.model.ConsoleType
 import me.magnum.melonds.domain.model.ControllerConfiguration
@@ -188,12 +192,16 @@ class EmulatorActivity : AppCompatActivity() {
     lateinit var permissionHandler: PermissionHandler
 
     @Inject
+    lateinit var uriPermissionManager: UriPermissionManager
+
+    @Inject
     lateinit var lifecycleOwnerProvider: LifecycleOwnerProvider
 
     @Inject
     lateinit var appForegroundStateObserver: AppForegroundStateObserver
 
     private var presentation: ExternalPresentation? = null
+    private var romStoragePermissionDialog: AlertDialog? = null
     private var defaultFpsTextSize = 0f
 
     private lateinit var handler: Handler
@@ -318,6 +326,37 @@ class EmulatorActivity : AppCompatActivity() {
             it.keys.forEach { permission ->
                 permissionHandler.notifyPermissionStatusUpdated(permission)
             }
+        }
+    }
+    private val romDirectoryPicker = registerForActivityResult(DirectoryPickerContract(Permission.READ_WRITE)) { selectedTree ->
+        val required = viewModel.emulatorState.value as? EmulatorState.RomStoragePermissionRequired
+            ?: return@registerForActivityResult
+        if (selectedTree == null) {
+            // Keep the recovery state so the user can retry without losing the attempted ROM.
+            showRomStoragePermissionDialog(required)
+            return@registerForActivityResult
+        }
+        if (!RomStorageAccess.treeCoversRom(selectedTree, required.romUri)) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.error_rom_access)
+                .setMessage(R.string.error_rom_wrong_directory)
+                .setPositiveButton(R.string.try_again) { _, _ ->
+                    requestRomDirectory(required)
+                }
+                .setNegativeButton(R.string.cancel) { _, _ -> finish() }
+                .show()
+            return@registerForActivityResult
+        }
+        try {
+            uriPermissionManager.persistDirectoryPermissions(selectedTree, Permission.READ_WRITE)
+        } catch (_: SecurityException) {
+            showRomStoragePermissionDialog(required)
+            return@registerForActivityResult
+        }
+        if (RomStorageAccess.needsTreeGrant(this, required.romUri)) {
+            showRomStoragePermissionDialog(required)
+        } else {
+            viewModel.retryRomAfterStorageGrant(required)
         }
     }
     private val backPressedCallback = object : OnBackPressedCallback(false) {
@@ -707,6 +746,12 @@ class EmulatorActivity : AppCompatActivity() {
                             binding.textFps.isGone = true
                             binding.textLoading.isGone = true
                             showRomNotFoundDialog(it.romPath)
+                        }
+                        is EmulatorState.RomStoragePermissionRequired -> {
+                            binding.viewLayoutControls.isInvisible = true
+                            binding.textFps.isGone = true
+                            binding.textLoading.isGone = true
+                            showRomStoragePermissionDialog(it)
                         }
                     }
                 }
@@ -1260,6 +1305,25 @@ class EmulatorActivity : AppCompatActivity() {
                 finish()
             }
             .show()
+    }
+
+    private fun showRomStoragePermissionDialog(required: EmulatorState.RomStoragePermissionRequired) {
+        if (romStoragePermissionDialog?.isShowing == true) return
+        romStoragePermissionDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.error_rom_access)
+            .setMessage(R.string.error_rom_access_info)
+            .setPositiveButton(R.string.reselect_rom_directory) { _, _ ->
+                requestRomDirectory(required)
+            }
+            .setNegativeButton(R.string.cancel) { _, _ -> finish() }
+            .setCancelable(false)
+            .show().apply {
+                setOnDismissListener { romStoragePermissionDialog = null }
+            }
+    }
+
+    private fun requestRomDirectory(required: EmulatorState.RomStoragePermissionRequired) {
+        romDirectoryPicker.launch(RomStorageAccess.suggestedDirectory(required.romUri))
     }
 
     private fun showFirmwareLoadErrorDialog(error: EmulatorState.FirmwareLoadError) {

@@ -2,11 +2,13 @@ package me.magnum.melonds.ui.emulator
 
 import me.magnum.melonds.ui.emulator.model.NetplayTransfer
 import kotlinx.coroutines.withTimeoutOrNull
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,6 +46,7 @@ import me.magnum.melonds.ui.emulator.multiplayer.MultiplayerGroup
 import me.magnum.melonds.ui.emulator.multiplayer.groupRows
 import me.magnum.melonds.ui.emulator.multiplayer.groupSeat
 import me.magnum.melonds.common.romprocessors.RomFileProcessorFactory
+import me.magnum.melonds.common.RomStorageAccess
 import me.magnum.melonds.common.runtime.ScreenshotFrameBufferProvider
 import me.magnum.melonds.domain.model.Cheat
 import me.magnum.melonds.domain.model.ConsoleType
@@ -105,6 +108,7 @@ import kotlin.time.Duration.Companion.seconds
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class EmulatorViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository,
     private val romsRepository: RomsRepository,
     private val cheatsRepository: CheatsRepository,
@@ -218,7 +222,17 @@ class EmulatorViewModel @Inject constructor(
         viewModelScope.launch {
             resetEmulatorState(EmulatorState.LoadingRom)
             sessionCoroutineScope.launch {
-                _emulatorState.value = EmulatorState.ValidatingRom(rom)
+                val accessibleUri = RomStorageAccess.accessibleRomUri(context, rom.uri)
+                val readStatus = if (accessibleUri != null) withContext(Dispatchers.IO) {
+                    RomStorageAccess.probe(context, accessibleUri)
+                } else null
+                _emulatorState.value = when (readStatus) {
+                    null, RomStorageAccess.ReadStatus.ACCESS_DENIED -> EmulatorState.RomStoragePermissionRequired(rom.uri, rom)
+                    RomStorageAccess.ReadStatus.NOT_FOUND -> EmulatorState.RomNotFoundError(rom.uri.toString())
+                    RomStorageAccess.ReadStatus.READABLE -> EmulatorState.ValidatingRom(
+                        if (accessibleUri != rom.uri) rom.copy(uri = accessibleUri!!) else rom
+                    )
+                }
             }
         }
     }
@@ -227,14 +241,36 @@ class EmulatorViewModel @Inject constructor(
         viewModelScope.launch {
             resetEmulatorState(EmulatorState.LoadingRom)
             sessionCoroutineScope.launch {
-                val rom = romsRepository.getRomAtUri(romUri)
+                val accessibleUri = RomStorageAccess.accessibleRomUri(context, romUri)
+                if (accessibleUri == null) {
+                    _emulatorState.value = EmulatorState.RomStoragePermissionRequired(romUri, null)
+                    return@launch
+                }
+                when (withContext(Dispatchers.IO) { RomStorageAccess.probe(context, accessibleUri) }) {
+                    RomStorageAccess.ReadStatus.ACCESS_DENIED -> {
+                        _emulatorState.value = EmulatorState.RomStoragePermissionRequired(romUri, null)
+                        return@launch
+                    }
+                    RomStorageAccess.ReadStatus.NOT_FOUND -> {
+                        _emulatorState.value = EmulatorState.RomNotFoundError(romUri.toString())
+                        return@launch
+                    }
+                    RomStorageAccess.ReadStatus.READABLE -> Unit
+                }
+                val rom = romsRepository.getRomAtUri(accessibleUri)
                 if (rom != null) {
-                    _emulatorState.value = EmulatorState.ValidatingRom(rom)
+                    _emulatorState.value = EmulatorState.ValidatingRom(
+                        if (rom.uri != accessibleUri) rom.copy(uri = accessibleUri) else rom
+                    )
                 } else {
                     _emulatorState.value = EmulatorState.RomNotFoundError(romUri.toString())
                 }
             }
         }
+    }
+
+    fun retryRomAfterStorageGrant(required: EmulatorState.RomStoragePermissionRequired) {
+        required.rom?.let(::loadRom) ?: loadRom(required.romUri)
     }
 
     private fun loadRom(romPath: String) {

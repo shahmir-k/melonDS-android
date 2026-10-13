@@ -1,15 +1,28 @@
 package me.magnum.melonds.ui.emulator.multiplayer
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AmbientHandoffScreenTest {
     @Test
     fun onlyTwoPlayerSlowdownOffersAutomaticHandoff() {
-        assertFalse(AmbientHandoffScreen.SlowLan(42, 1).canOffer)
-        assertTrue(AmbientHandoffScreen.SlowLan(42, 2).canOffer)
-        assertFalse(AmbientHandoffScreen.SlowLan(42, 3).canOffer)
+        val diagnostic = AmbientSlowdownDiagnostic.parse("42\t11.5\t23\t3.0\t48\tIRBO")!!
+        assertFalse(AmbientHandoffScreen.SlowLan(diagnostic, 1).canOffer)
+        assertTrue(AmbientHandoffScreen.SlowLan(diagnostic, 2).canOffer)
+        assertFalse(AmbientHandoffScreen.SlowLan(diagnostic, 3).canOffer)
+    }
+
+    @Test
+    fun slowdownPayloadKeepsNativeLinkMeasurements() {
+        assertEquals(
+            AmbientSlowdownDiagnostic(42, 11.5, 23, 3.0, 48, "IRBO"),
+            AmbientSlowdownDiagnostic.parse("42\t11.5\t23\t3.0\t48\tIRBO"),
+        )
+        assertNull(AmbientSlowdownDiagnostic.parse("42\tNaN\t23\t3.0\t48\tIRBO"))
+        assertNull(AmbientSlowdownDiagnostic.parse("42\t11.5\t23"))
     }
 
     @Test

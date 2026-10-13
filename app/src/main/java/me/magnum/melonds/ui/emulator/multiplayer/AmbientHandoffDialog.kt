@@ -21,9 +21,34 @@ enum class AmbientHandoffPhase {
     OFFERED, WAITING_PEERS, FENCING, TRANSFERRING, VERIFYING, COMMITTING, ROLLING_BACK
 }
 
+/** Exact six-column payload emitted by the native 5-second, link-attributed slowdown detector. */
+data class AmbientSlowdownDiagnostic(
+    val fps: Int,
+    val waitMs: Double,
+    val rttMs: Int,
+    val exchangesPerFrame: Double,
+    val ceilingFps: Int,
+    val gameCode: String,
+) {
+    companion object {
+        fun parse(raw: String): AmbientSlowdownDiagnostic? {
+            val fields = raw.split('\t')
+            if (fields.size != 6) return null
+            val fps = fields[0].toIntOrNull() ?: return null
+            val wait = fields[1].toDoubleOrNull() ?: return null
+            val rtt = fields[2].toIntOrNull() ?: return null
+            val exchanges = fields[3].toDoubleOrNull() ?: return null
+            val ceiling = fields[4].toIntOrNull() ?: return null
+            if (fps < 0 || wait < 0 || !wait.isFinite() || rtt < 0 ||
+                exchanges < 0 || !exchanges.isFinite() || ceiling < 0) return null
+            return AmbientSlowdownDiagnostic(fps, wait, rtt, exchanges, ceiling, fields[5])
+        }
+    }
+}
+
 sealed interface AmbientHandoffScreen {
     /** The game is still using LAN; choosing a mode starts an offer, not an immediate backend switch. */
-    data class SlowLan(val fps: Int, val activePlayers: Int) : AmbientHandoffScreen {
+    data class SlowLan(val diagnostic: AmbientSlowdownDiagnostic, val activePlayers: Int) : AmbientHandoffScreen {
         /** The first native handoff slice is strictly one linked peer plus this player. */
         val canOffer: Boolean get() = activePlayers == 2
     }
@@ -71,8 +96,19 @@ fun AmbientHandoffDialog(
             content = { padding ->
                 DialogText(
                     padding,
-                    if (screen.canOffer) stringResource(R.string.ambient_handoff_slow_body, screen.fps)
-                    else stringResource(R.string.ambient_handoff_two_player_limit, screen.fps, screen.activePlayers),
+                    if (screen.canOffer) stringResource(R.string.ambient_handoff_slow_body, screen.diagnostic.fps)
+                    else stringResource(R.string.ambient_handoff_two_player_limit, screen.diagnostic.fps, screen.activePlayers),
+                )
+                Text(
+                    stringResource(
+                        R.string.ambient_handoff_link_metrics,
+                        screen.diagnostic.rttMs,
+                        screen.diagnostic.waitMs,
+                        screen.diagnostic.exchangesPerFrame,
+                        screen.diagnostic.ceilingFps,
+                    ),
+                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 8.dp),
+                    style = MaterialTheme.typography.caption,
                 )
             },
             buttons = {

@@ -40,6 +40,11 @@ class GlContext(sharedEglContext: Long? = null) {
         EGL14.eglSwapInterval(display, 0)
     }
 
+    // keep the context current without a surface (a window surface handed to another thread)
+    fun releaseSurface() {
+        makeCurrent(display.nativeHandle, 0L, context)
+    }
+
     fun swapBuffers(surface: EGLSurface) {
         EGL14.eglSwapBuffers(display, surface)
     }

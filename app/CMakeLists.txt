@@ -19,6 +19,12 @@ set(RCHEEVOS ${ANDROID-CPP}/rcheevos)
 # pages on the in-order A55. Every function gets its own section so the linker can move
 # it; must be set before the core is added. hot-symbols.order is generated from
 # capture.sh cycle + l1i_cache_refill profiles of Pokemon White. Layout only (A).
+# LITEV_HYB_DIRECT_PRESENT: the GL renderers' present thread draws the frame into the game window
+# itself (debug.litev.directpresent=0 off); see renderer/DirectPresent.h
+option(LITEV_HYB_DIRECT_PRESENT "Present GL frames from the merge thread" OFF)
+if (LITEV_HYB_DIRECT_PRESENT)
+    add_compile_definitions(LITEV_HYB_DIRECT_PRESENT=1)
+endif()
 option(LITEV_HOT_ORDER "Order hot C++ functions together at link time" OFF)
 if (LITEV_HOT_ORDER)
     add_compile_options(-ffunction-sections)
@@ -139,6 +145,7 @@ add_library(
         ${ANDROID-CPP}/renderer/FrameQueue.cpp
         ${ANDROID-CPP}/renderer/ScreenshotRenderer.cpp
         ${ANDROID-CPP}/renderer/RecordVideo.cpp
+        ${ANDROID-CPP}/renderer/DirectPresent.cpp
         ${ANDROID-CPP}/retroachievements/RetroAchievementsManager.cpp
 )
 

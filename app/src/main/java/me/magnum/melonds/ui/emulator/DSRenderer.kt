@@ -20,6 +20,7 @@ import me.magnum.melonds.domain.model.layout.BackgroundMode
 import me.magnum.melonds.domain.model.render.PresentFrameWrapper
 import me.magnum.melonds.ui.emulator.model.RuntimeRendererConfiguration
 import me.magnum.melonds.ui.emulator.render.EmulatorRenderer
+import me.magnum.melonds.ui.emulator.render.DirectPresentLayout
 import me.magnum.melonds.utils.BitmapUtils
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -58,6 +59,9 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
 
     private var width = 0f
     private var height = 0f
+
+    private var screenVertexData: FloatArray? = null   // what screensVbo holds (LITEV_HYB_DIRECT_PRESENT)
+    private var layoutVersion = 0
 
     // FPS counter drawn over the screens in the colour opposite to what is under it (readable on
     // white menus too): text texture, blended as 1 - destination
@@ -224,6 +228,8 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, screensVbo)
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexBufferSize, vertexBuffer, GLES30.GL_STATIC_DRAW)
         screenIndices = vertexBuffer.capacity() / 5 // Each vertex has 5 values
+        screenVertexData = (underScreenVertexData ?: FloatArray(0)) + (overScreenVertexData ?: FloatArray(0))
+        layoutVersion++
     }
 
     private fun buildScreenVertexData(rect: Rect, uvs: FloatArray, alpha: Float): FloatArray {
@@ -263,6 +269,20 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         synchronized(backgroundLock) {
             isBackgroundPositionDirty = true
         }
+    }
+
+    override fun directPresentLayout(): DirectPresentLayout? {
+        synchronized(configurationLock) {
+            if (mustUpdateConfiguration) return null
+            val filtering = rendererConfiguration?.videoFiltering ?: VideoFiltering.NONE
+            if (filtering != VideoFiltering.NONE && filtering != VideoFiltering.LINEAR) return null
+        }
+        synchronized(backgroundLock) {
+            if (background != null || isBackgroundLoaded || mustLoadBackground || overlay != null) return null
+        }
+        val v = screenVertexData ?: return null
+        if (v.isEmpty() || screenShader == null) return null
+        return DirectPresentLayout(v, screenShader?.textureFiltering == GLES30.GL_LINEAR, width.toInt(), height.toInt(), layoutVersion)
     }
 
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {

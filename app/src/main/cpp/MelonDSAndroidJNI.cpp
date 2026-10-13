@@ -1,3 +1,4 @@
+#include "renderer/DirectPresent.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <jni.h>
@@ -346,6 +347,24 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
     pthread_setname_np(emuThread, "EmulatorThread");
 
     started = true;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_directPresentAvailable(JNIEnv* env, jobject thiz)
+{
+    return DirectPresent::Available();
+}
+
+// FrameRenderThread: hand the window surface (EGLSurface handle; 0 = take it back) to the GL
+// renderer's present thread, with the screens' quads (5 floats per vertex) (LITEV_HYB_DIRECT_PRESENT)
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_setDirectPresent(JNIEnv* env, jobject thiz, jlong surface, jfloatArray vertices, jboolean linear, jint width, jint height)
+{
+    if (!surface || !vertices) { DirectPresent::Set(EGL_NO_SURFACE, nullptr, 0, false, 0, 0); return; }
+    const jsize n = env->GetArrayLength(vertices);
+    jfloat* v = env->GetFloatArrayElements(vertices, nullptr);
+    DirectPresent::Set((EGLSurface)surface, v, n / 5, linear, width, height);
+    env->ReleaseFloatArrayElements(vertices, v, JNI_ABORT);
 }
 
 JNIEXPORT jint JNICALL

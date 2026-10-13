@@ -531,6 +531,9 @@ namespace MelonDSAndroid
             }
         }
         // the clock first, so start.mln holds the clock replay pins (loadState re-pins it)
+        // a replay's state load writes the recording's save memory through the save manager (and
+        // the game may save during it): keep it off the player's .sav on the SD card
+        if (rec.replay) instance->redirectNdsSave(internalFilesDir + "/replay.sav");
         nds->RTC.SetDateTime(rec.rtc[0], rec.rtc[1], rec.rtc[2], rec.rtc[3], rec.rtc[4], rec.rtc[5]);
         if ((!rec.replay && !saveState(state.c_str())) || !loadState(state.c_str()))
         {

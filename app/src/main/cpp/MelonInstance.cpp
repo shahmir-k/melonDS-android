@@ -1241,18 +1241,55 @@ void MelonInstance::updateRenderer()
              (int)currentRenderer, currentScale, (int)settings.Threaded, (int)settings.Accurate3D);
 }
 
+// host battery for the guest: percent | 0x100 when charging; -1 = Settings "Always full"
+static std::atomic<int> hostBattery {-1};
+void setHostBattery(int percent, bool charging) { hostBattery.store(percent < 0 ? -1 : std::min(percent, 100) | (charging ? 0x100 : 0)); }
+
+// The battery is guest-visible, so the host's is shown only in single player; Netplay (plain +
+// Hosted), LAN, record mode (recording AND replay) and the FBHASH gate pin it full so every
+// console/run sees the same value. 100 = full, not charging.
+int MelonInstance::batteryTarget()
+{
+    int b = hostBattery.load(std::memory_order_relaxed);
+    if (b < 0 || MelonDSAndroid::netplayActive() || MPInterface::GetType() != MPInterface_Dummy
+        || MelonDSAndroid::recordMode() != 0 || litevFbHashOn())
+        return 100;
+    return b;
+}
+
+// emulator thread, between frames: re-apply when the host battery or the pinning changed
+void MelonInstance::updateBattery()
+{
+    if (batteryTarget() != appliedBattery) setBatteryLevels();
+}
+
 void MelonInstance::setBatteryLevels()
 {
+    appliedBattery = batteryTarget();
+    const int pct = appliedBattery & 0xFF;
+    const bool charging = appliedBattery & 0x100;
     if (consoleType == 1)
     {
+        // DSi BPTWL steps; never Critical (0 raises the battery-empty IRQ: the DSi powers off).
+        // AlmostEmpty (1) = the red power LED, the same 15% as the DS low bit below.
+        const u8 level = pct > 75 ? DSi_BPTWL::batteryLevel_Full : pct > 50 ? DSi_BPTWL::batteryLevel_ThreeQuarters
+                       : pct > 25 ? DSi_BPTWL::batteryLevel_Half : pct >= 15 ? DSi_BPTWL::batteryLevel_Low
+                       : DSi_BPTWL::batteryLevel_AlmostEmpty;
         auto dsi = static_cast<DSi*>(nds);
-        dsi->I2C.GetBPTWL()->SetBatteryLevel(DSi_BPTWL::batteryLevel_Full);
-        dsi->I2C.GetBPTWL()->SetBatteryCharging(false);
+        dsi->I2C.GetBPTWL()->SetBatteryLevel(level);
+        dsi->I2C.GetBPTWL()->SetBatteryCharging(charging);
     }
     else
     {
-        nds->SPI.GetPowerMan()->SetBatteryLevelOkay(true);
+        // DS power manager reg 1 bit 0 = battery low (the DS Lite power LED turns red); a DS Lite
+        // goes red at roughly the last 10-20%, so < 15% and not charging
+        nds->SPI.GetPowerMan()->SetBatteryLevelOkay(pct >= 15 || charging);
     }
+    if (int host = hostBattery.load(std::memory_order_relaxed); host >= 0)
+        LOG_INFO("BATTERY", "host %d%%%s -> guest %d%%%s%s: %s", host & 0xFF, host & 0x100 ? " charging" : "", pct,
+                 charging ? " charging" : "", appliedBattery != host ? " (pinned full)" : "",
+                 consoleType == 1 ? (static_cast<DSi*>(nds)->I2C.GetBPTWL()->GetBatteryLevel() == DSi_BPTWL::batteryLevel_Full ? "BPTWL full" : "BPTWL below full")
+                 : nds->SPI.GetPowerMan()->GetBatteryLevelOkay() ? "PowerMan okay" : "PowerMan LOW");
 }
 
 void MelonInstance::setDateTime()

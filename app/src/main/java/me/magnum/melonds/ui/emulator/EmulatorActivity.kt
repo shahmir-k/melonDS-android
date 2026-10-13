@@ -6,8 +6,11 @@ import me.magnum.melonds.ui.emulator.model.NetplayTransfer
 import me.magnum.melonds.impl.NetplayRomCache
 import me.magnum.melonds.utils.SizeUtils
 import android.widget.ProgressBar
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.content.res.Configuration
 import android.hardware.display.DisplayManager
 import android.hardware.input.InputManager
@@ -840,9 +843,25 @@ class EmulatorActivity : AppCompatActivity() {
         }
     }
 
+    // Settings > System > Emulated battery = device: the guest mirrors this battery (single player
+    // only; the native side pins full otherwise). ACTION_BATTERY_CHANGED is sticky (the current value
+    // on register) and fires on each level/plug change, so no polling.
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+            if (level < 0 || scale <= 0) return
+            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+            MelonEmulator.setHostBattery(level * 100 / scale, charging)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         choreographerFrameRenderer.startRendering()
+        if (viewModel.useDeviceBattery()) registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        else MelonEmulator.setHostBattery(-1, false)
 
         if (!activeOverlays.hasActiveOverlays()) {
             disableScreenTimeOut()
@@ -1253,6 +1272,7 @@ class EmulatorActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        try { unregisterReceiver(batteryReceiver) } catch (_: IllegalArgumentException) {}
         enableScreenTimeOut()
         choreographerFrameRenderer.stopRendering()
         viewModel.pauseEmulator(false)

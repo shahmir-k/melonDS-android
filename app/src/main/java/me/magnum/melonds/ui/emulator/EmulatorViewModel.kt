@@ -875,6 +875,10 @@ class EmulatorViewModel @Inject constructor(
         return saveStatesRepository.getRomSaveStates(rom)
     }
 
+    fun useDeviceBattery(): Boolean {
+        return settingsRepository.useDeviceBattery()
+    }
+
     fun isSustainedPerformanceModeEnabled(): Boolean {
         return settingsRepository.isSustainedPerformanceModeEnabled()
     }

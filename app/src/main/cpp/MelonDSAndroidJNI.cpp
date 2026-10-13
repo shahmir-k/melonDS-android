@@ -1828,7 +1828,7 @@ void* emulate(void*)
             lastHidden = hidden; lastDrops = drops;
             fps = ((shown > 0 ? shown : 0) * 1000.0) / (lastTick - lastMeasureFpsTick);
 #ifdef LITEV_AMBIENT_LAN
-            {   // Just Play step 2: the slowdown the player sees (frameskip hides link waits from the emulated rate)
+            {   // Just Play step 2: shown rate is diagnostic; the link warning uses emulated speed
                 std::lock_guard<std::mutex> g(ambientMu);
                 if (ambientPtr) ambientPtr->SetShownFps(isFastForwardEnabled ? 0 : fps);
             }

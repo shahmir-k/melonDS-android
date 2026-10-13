@@ -394,6 +394,9 @@ namespace MelonDSAndroid
     {
         std::lock_guard<std::mutex> l(recordLock);
         if (!recording || !frame || frame->emuFrame < recording->startEmuFrame) return false;
+        // debug.litev.recvideo=0: no replay footage (it costs the present thread ~0.4 ms a frame)
+        static const bool video = [] { char b[PROP_VALUE_MAX] = {}; return !(__system_property_get("debug.litev.recvideo", b) > 0 && atoi(b) == 0); }();
+        if (recording->replay && !video) return false;
         dir = recording->dir;
         prefix = recording->replay ? "replay-video-" : "video-";
         recFrame = frame->emuFrame - recording->startEmuFrame;
@@ -496,8 +499,15 @@ namespace MelonDSAndroid
                 {
                     if (sscanf(line, "%d", &frame) != 1) continue;
                     last = frame;
-                    const char* h = strrchr(line, ',');
-                    if (h && sscanf(h + 1, "%llx", &hash) == 1) r->hashes[frame] = hash;
+                    // frames.csv keeps the state hash in column 8. Profiling may append
+                    // jit/mprotect/rewrites columns, so the final field is not the hash.
+                    const char* h = line;
+                    for (int column = 0; column < 7 && h; ++column)
+                    {
+                        h = strchr(h, ',');
+                        if (h) ++h;
+                    }
+                    if (h && sscanf(h, "%llx", &hash) == 1) r->hashes[frame] = hash;
                 }
                 fclose(f);
                 if (!r->frames) r->frames = last + 1;   // a recording cut off without its "frames" line

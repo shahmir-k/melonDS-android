@@ -356,6 +356,16 @@ Java_me_magnum_melonds_MelonEmulator_startEmulation(JNIEnv* env, jobject thiz)
     started = true;
 }
 
+JNIEXPORT jint JNICALL
+Java_me_magnum_melonds_MelonEmulator_litevProp(JNIEnv* env, jobject thiz, jstring name, jint def)
+{
+    const char* n = env->GetStringUTFChars(name, nullptr);
+    std::string key = std::string("debug.litev.") + n;
+    env->ReleaseStringUTFChars(name, n);
+    char prop[PROP_VALUE_MAX] = {0};
+    return __system_property_get(key.c_str(), prop) > 0 ? atoi(prop) : def;
+}
+
 JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlong deadlineNs, jobject renderFrameCallback)
 {

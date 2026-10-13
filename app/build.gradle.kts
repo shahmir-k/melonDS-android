@@ -94,7 +94,8 @@ android {
                     // Monomorphic exit sites become direct guarded branches. Needs ICACHE.
                     "-DLITEV_JIT_DIRECTPATCH=ON",
                     // Shorter, equivalent indirect-jump refill stubs (exact; lib litev-refill).
-                    "-DLITEV_JIT_REFILL_FAST=ON", "-DLITEV_JIT_SHARED_CODE=ON",
+                    "-DLITEV_JIT_REFILL_FAST=ON", "-DLITEV_JIT_SHARED_CODE=ON", "-DLITEV_JIT_SHARED_IC32=ON", "-DLITEV_JIT_SHARED_IC16=ON",
+                    "-DLITEV_SPU_RUNN_LOCAL=ON", "-DLITEV_SPU_MIX_HOIST=ON", "-DLITEV_GX_DMA_ZEROCOPY=ON",
                     // simpleperf perf-<pid>.map for JIT blocks. Diagnostic; writes nothing
                     // unless debug.litev.perfmap names a directory.
                     "-DLITEV_JIT_PERFMAP=ON",

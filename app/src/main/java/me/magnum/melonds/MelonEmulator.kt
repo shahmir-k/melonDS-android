@@ -53,6 +53,9 @@ object MelonEmulator {
 
     external fun setupCheats(cheats: Array<Cheat>)
 
+    // debug.litev.<name> as an int (def when unset)
+    external fun litevProp(name: String, def: Int): Int
+
     external fun setupAchievements(achievements: Array<RASimpleAchievement>, leaderboards: Array<RASimpleLeaderboard>, richPresenceScript: String?)
 
     external fun unloadRetroAchievementsData()

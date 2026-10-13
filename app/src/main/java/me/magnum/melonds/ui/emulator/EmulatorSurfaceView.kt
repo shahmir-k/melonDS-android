@@ -77,7 +77,9 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
                 return
             }
 
+            PresentTimer.mark(6)
             glContext.use(windowSurface!!)
+            PresentTimer.mark(7)
             GLES30.glViewport(0, 0, width, height)
 
             if (surfaceState == SurfaceState.UNINITIALIZED && renderer != null) {
@@ -91,7 +93,10 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
             }
 
             renderer?.drawFrame(presentFrameWrapper)
+            PresentTimer.mark(8)
             glContext.swapBuffers(windowSurface!!)
+            PresentTimer.mark(9)
+            PresentTimer.frame()
         }
     }
 

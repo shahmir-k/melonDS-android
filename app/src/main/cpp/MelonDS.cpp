@@ -25,6 +25,9 @@
 #include "MPInterface.h"
 #include "net/LockstepMP.h"
 #include "net/NetplayInput.h"
+#ifdef LITEV_JIT_SHARED_CODE
+#include "ARMJIT_Global.h"
+#endif
 #ifdef LITEV_HOSTED_NETPLAY
 #include "net/HostedMP.h"
 #endif
@@ -1150,6 +1153,12 @@ namespace MelonDSAndroid
         auto args = BuildArgsFromConfiguration(*currentConfiguration, player);
         if (!args.has_value())
             return false;
+#ifdef LITEV_JIT_SHARED_CODE
+        // The remote consoles share one JIT code arena (exact; one copy of the game's code in the
+        // shared L3 instead of one per console). debug.litev.jitshared=0: each its own.
+        static const bool jitShared = [] { char b[PROP_VALUE_MAX] = {0}; return !(__system_property_get("debug.litev.jitshared", b) > 0 && atoi(b) == 0); }();
+        melonDS::ARMJIT_Global::SetSharedCode(jitShared);
+#endif
         r->console = std::make_shared<MelonInstance>(
             player,
             currentConfiguration,
@@ -1158,6 +1167,9 @@ namespace MelonDSAndroid
             std::make_unique<ScreenshotRenderer>(r->screenshot.data()),
             0
         );
+#ifdef LITEV_JIT_SHARED_CODE
+        melonDS::ARMJIT_Global::SetSharedCode(false);
+#endif
         NDS* nds = r->console->getNds();
         nds->GPU.Headless = true;   // its screens are not shown
         nds->SPU.Silent = true;     // nor its sound heard

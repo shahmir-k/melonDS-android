@@ -937,6 +937,12 @@ static void ambientInstall()
     lanApplyRecvTimeout();
 }
 
+static bool ambientHasLinks()
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    return ambientPtr && ambientPtr->HasLinks();
+}
+
 namespace MelonDSAndroid
 {
 // the console MAC for Just Play (unique per install; two consoles with one MAC cannot see each other)
@@ -952,6 +958,7 @@ bool ambientFirmwareMac(u8* mac)
 #else
 static void ambientUninstall() {}
 static void ambientInstall() {}
+static bool ambientHasLinks() { return false; }
 #endif
 
 // ---- Group: a Netplay lobby kept connected while its session runs -----------------------------
@@ -1631,9 +1638,13 @@ void* emulate(void*)
         //   so it doesn't oscillate back into slow-mo at the threshold.
         // Only runs when fast-forward is off. All frameskip changes happen here, on the
         // emu thread, so they never race runFrame.
-        // Never during LAN multiplayer: there the frame time is spent waiting on the network,
+        // Never during linked multiplayer: there the frame time is spent waiting on the network,
         // which skipping rendering cannot shorten, and the skips show up as multi-second freezes.
-        if (autoFrameskipEnabled && !isFastForwardEnabled && lanMode == LanNone) {
+        // Just Play leaves lanMode == LanNone; check its active MP links too. Discovery alone keeps
+        // the solo player's adaptive frameskip available.
+        static const bool ambientAutoFs = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.ambientautofs", b) > 0 && atoi(b) != 0; }();
+        const bool ambientLinked = ambientHasLinks();
+        if (autoFrameskipEnabled && !isFastForwardEnabled && lanMode == LanNone && (!ambientLinked || ambientAutoFs)) {
             // One frame's sample is clamped to 2x the budget and the EMA is slow (alpha 0.1):
             // a one-off hitch (savestate load, area load, JIT compile burst) can't raise the
             // level by itself. Skipping drawing doesn't shorten those frames anyway; the old
@@ -1783,11 +1794,23 @@ void* emulate(void*)
             static const bool fpsEmu = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.fpsemu", b) > 0 && atoi(b) != 0; }();
             static int lastHidden = 0, lastDrops = 0;
             const int hidden = g_framesHidden.load(std::memory_order_relaxed), drops = g_presentDrops.load(std::memory_order_relaxed);
+            const int hiddenDelta = hidden - lastHidden, dropDelta = drops - lastDrops;
             int shown = observedFrames;
             if (!fpsEmu && !isFastForwardEnabled && limitFps && !noLimit)
-                shown -= (hidden - lastHidden) + (drops - lastDrops);
+                shown -= hiddenDelta + dropDelta;
             lastHidden = hidden; lastDrops = drops;
             fps = ((shown > 0 ? shown : 0) * 1000.0) / (lastTick - lastMeasureFpsTick);
+#ifdef LITEV_AMBIENT_LAN
+            static const bool logAmbientView = [] { char b[PROP_VALUE_MAX] = {}; return __system_property_get("debug.litev.ambientview", b) > 0 && atoi(b) != 0; }();
+            if (logAmbientView && ambientHasLinks())
+#ifdef LITEV_AUTO_FRAMESKIP
+                LOG_INFO("LITEV_AMBIENT_VIEW", "emu %.1f shown %.1f hidden %d drops %d auto skip %d", observedFrames * 1000.0 / (lastTick - lastMeasureFpsTick),
+                         fps, hiddenDelta, dropDelta, autoFsSkip);
+#else
+                LOG_INFO("LITEV_AMBIENT_VIEW", "emu %.1f shown %.1f hidden %d drops %d", observedFrames * 1000.0 / (lastTick - lastMeasureFpsTick),
+                         fps, hiddenDelta, dropDelta);
+#endif
+#endif
             lastMeasureFpsTick = lastTick;
             observedFrames = 0;
         }

@@ -90,6 +90,7 @@ namespace MelonDSAndroid
     std::shared_ptr<Net> net;
 
     std::shared_ptr<MelonInstance> instance;
+    static std::string activeRomPath;
 
     // Netplay (N players, 2..16): this device runs every player's console. The local console
     // (id = local player) runs on the emulator thread as usual and is shown; every other player's
@@ -172,6 +173,7 @@ namespace MelonDSAndroid
         if (!nds || !nds->NDSCartSlot.GetCart()) return "";
         return std::string(nds->NDSCartSlot.GetCart()->GetHeader().GameCode, 4);
     }
+    std::string currentRomPath() { return activeRomPath; }
 #ifndef LITEV_AMBIENT_LAN
     bool ambientFirmwareMac(u8*) { return false; }
 #endif
@@ -1300,6 +1302,7 @@ namespace MelonDSAndroid
 
     int loadRom(std::string romPath, std::string sramPath, RomGbaSlotConfig* gbaSlotConfig)
     {
+        activeRomPath.clear();
         if (netplay)
         {
             std::vector<std::pair<int, std::string>> peers {{1 - netplay->player, netplay->peer}};
@@ -1397,8 +1400,10 @@ namespace MelonDSAndroid
             }
 #endif
         }
+        const std::string loadedPath = romPath;
         if (!instance->loadRom(std::move(romPath), std::move(sramPath)))
             return 2;
+        activeRomPath = loadedPath;
 #ifdef LITEV_REMOTE_GX_SINK
         if (netplay && netplayGxTiming(instance->getNds()))
             Platform::Log(Platform::LogLevel::Info, "Netplay: fixed geometry timing on every console (remote copies sink from frame 600)\n");
@@ -1426,6 +1431,7 @@ namespace MelonDSAndroid
 
     int bootFirmware()
     {
+        activeRomPath.clear();
         // TODO: Maybe validate BIOS and firmware?
         if (instance->bootFirmware())
             return ROMManager::SUCCESS;
@@ -1785,6 +1791,7 @@ namespace MelonDSAndroid
         cleanupAudio();
 
         instance = nullptr;
+        activeRomPath.clear();
         eventMessenger = nullptr;
     }
 

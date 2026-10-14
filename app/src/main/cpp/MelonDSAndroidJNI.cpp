@@ -927,6 +927,9 @@ static std::string ambientHandoffStatus = "none";
 static u64 ambientLastOfferEpoch = 0;
 static u64 ambientOwnOfferEpoch = 0;
 static std::array<u8, 16> ambientOwnOfferToken{};
+static u64 ambientRomEpoch = 0;
+static melonDS::NetplayRom ambientOwnRom{};
+static bool ambientRomPublished = false;
 
 static void ambientUninstall()
 {
@@ -937,6 +940,9 @@ static void ambientUninstall()
     ambientHandoffStatus = "none";
     ambientOwnOfferEpoch = 0;
     ambientOwnOfferToken = {};
+    ambientRomEpoch = 0;
+    ambientOwnRom = {};
+    ambientRomPublished = false;
     if (melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
 }
@@ -962,6 +968,9 @@ static void ambientInstall()
     ambientHandoffStatus = "none";
     ambientOwnOfferEpoch = 0;
     ambientOwnOfferToken = {};
+    ambientRomEpoch = 0;
+    ambientOwnRom = {};
+    ambientRomPublished = false;
     melonDS::MPInterface::Set(std::move(a), melonDS::MPInterface_Ambient);
     lanApplyRecvTimeout();
 }
@@ -971,7 +980,7 @@ static void ambientInstall()
 // and publishes a copy of the offer state for non-emulator threads to read.
 static void ambientHandoffService()
 {
-    std::lock_guard<std::mutex> g(ambientMu);
+    std::unique_lock<std::mutex> g(ambientMu);
     if (!ambientPtr) return;
     while (!ambientHandoffRequests.empty())
     {
@@ -1003,12 +1012,44 @@ static void ambientHandoffService()
             ambientPtr->CancelHandoffOffer();
             ambientOwnOfferEpoch = 0;
             ambientOwnOfferToken = {};
+            ambientRomEpoch = 0;
+            ambientOwnRom = {};
+            ambientRomPublished = false;
             ambientHandoffStatus = "none";
         }
     }
     melonDS::AmbientLAN::HandoffOfferStatus status{};
     if (ambientPtr->GetHandoffOfferStatus(status))
     {
+        if (status.Accepted && ambientRomEpoch != status.Epoch)
+        {
+            // Hashing a ROM on external SD can take time. Keep the live source
+            // running and let UI readers observe the offer while the mutex is free.
+            const std::string path = MelonDSAndroid::currentRomPath();
+            ambientRomEpoch = status.Epoch;
+            ambientOwnRom = {};
+            ambientRomPublished = false;
+            g.unlock();
+            const melonDS::NetplayRom described = melonDS::NetplayDescribeRom(path);
+            g.lock();
+            melonDS::AmbientLAN::HandoffOfferStatus current{};
+            if (!ambientPtr || ambientRomEpoch != status.Epoch ||
+                !ambientPtr->GetHandoffOfferStatus(current) || !current.Accepted ||
+                current.Epoch != status.Epoch)
+                return;
+            if (!described.Size || described.Size > (512u << 20))
+            {
+                ambientPtr->CancelHandoffOffer();
+                ambientOwnOfferEpoch = 0;
+                ambientOwnOfferToken = {};
+                ambientRomEpoch = 0;
+                ambientHandoffStatus = "failed\t0\t0\t0";
+                return;
+            }
+            ambientOwnRom = described;
+        }
+        if (status.Accepted && ambientOwnRom.Size && !ambientRomPublished)
+            ambientRomPublished = ambientPtr->PublishHandoffRom(ambientOwnRom);
         const char* phase = status.Accepted ? "accepted" : status.Outgoing ? "outgoing" : "incoming";
         char row[96];
         snprintf(row, sizeof(row), "%s\t%llu\t%d\t%llu", phase,
@@ -1020,6 +1061,16 @@ static void ambientHandoffService()
     {
         ambientOwnOfferEpoch = 0;
         ambientOwnOfferToken = {};
+        ambientRomEpoch = 0;
+        ambientOwnRom = {};
+        ambientRomPublished = false;
+        ambientHandoffStatus = "closed\t0\t0\t0";
+    }
+    else if (ambientRomEpoch)
+    {
+        ambientRomEpoch = 0;
+        ambientOwnRom = {};
+        ambientRomPublished = false;
         ambientHandoffStatus = "closed\t0\t0\t0";
     }
 }

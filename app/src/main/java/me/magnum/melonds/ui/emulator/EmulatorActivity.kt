@@ -68,6 +68,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.ui.emulator.multiplayer.AmbientWireless
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientHandoffDialog
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientHandoffMode
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientHandoffMonitor
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientHandoffPhase
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientHandoffScreen
+import me.magnum.melonds.ui.emulator.multiplayer.AmbientHandoffSnapshot
 import me.magnum.melonds.ui.emulator.multiplayer.MultiplayerGroup
 import me.magnum.melonds.ui.emulator.multiplayer.groupRows
 import me.magnum.melonds.ui.emulator.multiplayer.live
@@ -372,6 +378,9 @@ class EmulatorActivity : AppCompatActivity() {
     private val showAchievementList = mutableStateOf(false)
     private val showPendingSubmissionsDialog = mutableStateOf(false)
     private val showMultiplayerDialog = mutableStateOf(false)
+    private val ambientHandoffScreen = mutableStateOf<AmbientHandoffScreen?>(null)
+    private val ambientHandoffMonitor = AmbientHandoffMonitor()
+    private var ambientHandoffNativeStatus = "none"
 
     private val activeOverlays = EmulatorOverlayTracker(
         onOverlaysCleared = {
@@ -507,6 +516,50 @@ class EmulatorActivity : AppCompatActivity() {
                     )
                 }
 
+                ambientHandoffScreen.value?.let { screen ->
+                    AmbientHandoffDialog(
+                        screen = screen,
+                        onKeepLan = {
+                            MelonEmulator.ambientDismissSlowdownPrompt()
+                            ambientHandoffMonitor.dismissSlowForLink()
+                            ambientHandoffScreen.value = null
+                        },
+                        onOffer = { mode ->
+                            val nativeMode = if (mode == AmbientHandoffMode.NETPLAY) 1 else 2
+                            ambientHandoffMonitor.beginOffer()
+                            ambientHandoffScreen.value = if (MelonEmulator.ambientOfferHandoff(nativeMode))
+                                AmbientHandoffScreen.Progress(0, mode, AmbientHandoffPhase.OFFERED, 1, 2)
+                            else AmbientHandoffScreen.Failed("The native backend could not offer this switch.")
+                        },
+                        onRespond = { epoch, accept ->
+                            if (MelonEmulator.ambientRespondHandoff(epoch, accept)) {
+                                ambientHandoffMonitor.answered(epoch, accept)
+                                if (!accept) ambientHandoffMonitor.dismissSlowForLink()
+                                ambientHandoffScreen.value = if (accept && screen is AmbientHandoffScreen.IncomingOffer)
+                                    AmbientHandoffScreen.Progress(epoch, screen.mode,
+                                        AmbientHandoffPhase.WAITING_PEERS, 2, 2)
+                                else null
+                            } else {
+                                ambientHandoffScreen.value = AmbientHandoffScreen.Failed("The native backend could not answer this offer.")
+                            }
+                        },
+                        onCancel = { _ ->
+                            if (MelonEmulator.ambientCancelHandoff()) {
+                                ambientHandoffMonitor.dismissSlowForLink()
+                                ambientHandoffScreen.value = when (screen) {
+                                    is AmbientHandoffScreen.Progress -> screen.copy(phase = AmbientHandoffPhase.ROLLING_BACK)
+                                    else -> null
+                                }
+                            } else ambientHandoffScreen.value = AmbientHandoffScreen.Unresolved("The native backend could not cancel this switch.")
+                        },
+                        onDismissFailure = {
+                            ambientHandoffMonitor.dismissTerminal(ambientHandoffNativeStatus)
+                            ambientHandoffMonitor.dismissSlowForLink()
+                            ambientHandoffScreen.value = null
+                        },
+                    )
+                }
+
                 if (showPendingSubmissionsDialog.value) {
                     PendingSubmissionsDialog(
                         pendingSubmissionsSummaryFlow = viewModel.pendingSubmissionsSummary,
@@ -549,6 +602,28 @@ class EmulatorActivity : AppCompatActivity() {
                         else getString(R.string.multiplayer_speed, speed), Toast.LENGTH_SHORT).show()
                 }
                 delay(50)    // a command reaches every device within ~50 ms: a stop is not left waiting
+            }
+        }
+
+        // This only presents native state and queues user intent. It never pauses the emulator:
+        // the native coordinator alone fences frames and owns the automatic savestate cut.
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    if (viewModel.emulatorState.value is EmulatorState.RunningRom) {
+                        val snapshot = withContext(Dispatchers.IO) {
+                            AmbientHandoffSnapshot(
+                                status = MelonEmulator.ambientHandoffStatus(),
+                                stats = MelonEmulator.ambientStats(),
+                                nearby = MelonEmulator.ambientNearby().toList(),
+                                netplayActive = MelonEmulator.netplayKind() != 0,
+                            )
+                        }
+                        ambientHandoffNativeStatus = snapshot.status
+                        ambientHandoffScreen.value = ambientHandoffMonitor.screen(snapshot, ambientHandoffScreen.value)
+                    } else ambientHandoffScreen.value = null
+                    delay(250)
+                }
             }
         }
 

@@ -987,14 +987,14 @@ static void ambientCutRollback(const std::string& error)
         melonDS::AmbientLAN::HandoffFenceStats{};
     Platform::Log(Platform::LogLevel::Warn,
                   "Just Play cut failure phase=%s peerFence=%d idle=%d queued=%zu "
-                  "fence=%llu retired=%u/%u ready=%d/%d: %s\n",
+                  "fence=%llu retired=%u/%u ready=%d/%d aborted=%d: %s\n",
                   ambientCutPhaseName(ambientLiveCut->PhaseNow),
                   ambientPtr && ambientPtr->HasPeerHandoffFence(),
                   MelonDSAndroid::netplayLiveSourceIdle(),
                   ambientPtr ? ambientPtr->HandoffQueuedFrames() : 0,
                   (unsigned long long)fence.Epoch,
                   fence.RetiredThrough, fence.PeerLastSent,
-                  fence.LocalReady, fence.PeerReady, error.c_str());
+                  fence.LocalReady, fence.PeerReady, fence.Aborted, error.c_str());
     ambientLiveCut->Error = error;
     if (ambientLiveCut->TransferOwner) ambientLiveCut->TransferOwner->cancel();
     ambientLiveCut->TransferOwner.reset();
@@ -1065,14 +1065,14 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 melonDS::AmbientLAN::HandoffFenceStats{};
             Platform::Log(Platform::LogLevel::Info,
                           "Just Play cut phase=%s peerFence=%d idle=%d queued=%zu "
-                          "fence=%llu retired=%u/%u ready=%d/%d\n",
+                          "fence=%llu retired=%u/%u ready=%d/%d aborted=%d\n",
                           ambientCutPhaseName(cut.PhaseNow),
                           ambientPtr && ambientPtr->HasPeerHandoffFence(),
                           MelonDSAndroid::netplayLiveSourceIdle(),
                           ambientPtr ? ambientPtr->HandoffQueuedFrames() : 0,
                           (unsigned long long)fence.Epoch,
                           fence.RetiredThrough, fence.PeerLastSent,
-                          fence.LocalReady, fence.PeerReady);
+                          fence.LocalReady, fence.PeerReady, fence.Aborted);
         }
     }
     auto status = [&](const char* phase) {
@@ -1097,6 +1097,12 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
     }
     if (now > cut.Deadline && cut.PhaseNow != Phase::Rollback)
         ambientCutRollback("live handoff phase timed out");
+    // A received peer fence can be aborted while we are still waiting to
+    // acknowledge it. Report that failure now; HasPeerHandoffFence() hides
+    // aborted fences, so waiting on it alone would time out needlessly.
+    if (cut.PhaseNow == Phase::WaitForPeerFence && ambientPtr &&
+        ambientPtr->GetHandoffFenceStats().Epoch && ambientPtr->HandoffFenceAborted())
+        ambientCutRollback("peer aborted Ambient cut fence");
     if (cut.PhaseNow != Phase::WaitForIdle && cut.PhaseNow != Phase::WaitForPeerFence &&
         cut.PhaseNow != Phase::Rollback && (!ambientPtr || ambientPtr->HandoffFenceAborted()))
         ambientCutRollback("Ambient cut fence was aborted");

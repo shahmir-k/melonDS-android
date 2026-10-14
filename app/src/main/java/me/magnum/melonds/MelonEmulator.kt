@@ -118,6 +118,10 @@ object MelonEmulator {
     external fun ambientNearby(): Array<String>     // "id \t name \t game \t ip:port \t ggid \t build \t linked"
     external fun ambientStats(): String             // "key=value ..." counters (cumulative), "" = not running
     external fun ambientDismissSlowdownPrompt()      // keep LAN; the detector will not offer again this link session
+    external fun ambientOfferHandoff(mode: Int): Boolean // 1 plain Netplay, 2 Hosted; true = request queued
+    external fun ambientRespondHandoff(epoch: Long, accept: Boolean): Boolean
+    external fun ambientCancelHandoff(): Boolean
+    external fun ambientHandoffStatus(): String // "phase\tepoch\tmode\tpeer_id"; phase: none/incoming/outgoing/accepted/closed/failed
 
     // Group: the Netplay lobby kept connected while its session runs, so the host's commands
     // (mode switch, Hosted server change, end) reach everyone. Commands: (server << 16) |

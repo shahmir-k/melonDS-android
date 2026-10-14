@@ -1,7 +1,11 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <jni.h>
+#include <algorithm>
 #include <chrono>
+#include <array>
+#include <deque>
+#include <random>
 #include <string>
 #include <sstream>
 #include <mutex>
@@ -50,6 +54,7 @@ enum GbaSlotType {
 void* emulate(void*);
 static void lanEndAll();
 static void ambientInstall();
+static void ambientHandoffService();
 MelonDSAndroid::RomGbaSlotConfig* buildGbaSlotConfig(GbaSlotType slotType, const char* romPath, const char* savePath);
 
 pthread_t emuThread;
@@ -909,12 +914,29 @@ static melonDS::AmbientLAN::Config ambientCfg;
 static int ambientMode = -1;                            // -1 off ("Lobby only" / not configured), else AmbientLAN::Visibility
 static bool ambientFg = true;
 static std::vector<std::pair<u32, u16>> ambientPeers;   // NSD finds, kept across installs
+enum class AmbientHandoffRequestKind { Offer, Respond, Cancel };
+struct AmbientHandoffRequest
+{
+    AmbientHandoffRequestKind Kind;
+    u64 Epoch = 0;
+    int Mode = 0;
+    bool Accept = false;
+};
+static std::deque<AmbientHandoffRequest> ambientHandoffRequests;
+static std::string ambientHandoffStatus = "none";
+static u64 ambientLastOfferEpoch = 0;
+static u64 ambientOwnOfferEpoch = 0;
+static std::array<u8, 16> ambientOwnOfferToken{};
 
 static void ambientUninstall()
 {
     std::lock_guard<std::mutex> g(ambientMu);
     if (!ambientPtr) return;
     ambientPtr = nullptr;
+    ambientHandoffRequests.clear();
+    ambientHandoffStatus = "none";
+    ambientOwnOfferEpoch = 0;
+    ambientOwnOfferToken = {};
     if (melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
 }
@@ -930,13 +952,76 @@ static void ambientInstall()
     memcpy(c.GameCode, code.data(), 4);
     c.Vis = ambientMode;
     c.AllowHandoff = SERENEDS_HANDOFF_BUILD_CLEAN != 0;
+    c.RequireHandoffOffer = true;
     auto a = std::make_unique<melonDS::AmbientLAN>(c);
     if (!a->Ok()) return;
     a->SetForeground(ambientFg);
     for (auto& [ip, port] : ambientPeers) a->AddPeerAddress(ip, port);
     ambientPtr = a.get();
+    ambientHandoffRequests.clear();
+    ambientHandoffStatus = "none";
+    ambientOwnOfferEpoch = 0;
+    ambientOwnOfferToken = {};
     melonDS::MPInterface::Set(std::move(a), melonDS::MPInterface_Ambient);
     lanApplyRecvTimeout();
+}
+
+// All Ambient offer/control methods are emulator-thread-only. UI callbacks
+// only enqueue a request; this service runs immediately before the next frame
+// and publishes a copy of the offer state for non-emulator threads to read.
+static void ambientHandoffService()
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (!ambientPtr) return;
+    while (!ambientHandoffRequests.empty())
+    {
+        const auto request = ambientHandoffRequests.front();
+        ambientHandoffRequests.pop_front();
+        if (request.Kind == AmbientHandoffRequestKind::Offer)
+        {
+            std::array<u8, 16> token{};
+            std::random_device random;
+            for (u8& byte : token) byte = static_cast<u8>(random());
+            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+            const u64 next = static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+            const u64 epoch = std::max(next, ambientLastOfferEpoch + 1);
+            if (ambientPtr->ProposeHandoff(epoch, token,
+                    static_cast<melonDS::AmbientLAN::HandoffMode>(request.Mode)))
+            {
+                ambientLastOfferEpoch = ambientOwnOfferEpoch = epoch;
+                ambientOwnOfferToken = token;
+            }
+            else ambientHandoffStatus = "failed\t0\t0\t0";
+        }
+        else if (request.Kind == AmbientHandoffRequestKind::Respond)
+        {
+            if (!ambientPtr->RespondToHandoffOffer(request.Epoch, request.Accept))
+                ambientHandoffStatus = "failed\t0\t0\t0";
+        }
+        else
+        {
+            ambientPtr->CancelHandoffOffer();
+            ambientOwnOfferEpoch = 0;
+            ambientOwnOfferToken = {};
+            ambientHandoffStatus = "none";
+        }
+    }
+    melonDS::AmbientLAN::HandoffOfferStatus status{};
+    if (ambientPtr->GetHandoffOfferStatus(status))
+    {
+        const char* phase = status.Accepted ? "accepted" : status.Outgoing ? "outgoing" : "incoming";
+        char row[96];
+        snprintf(row, sizeof(row), "%s\t%llu\t%d\t%llu", phase,
+                 (unsigned long long)status.Epoch, (int)status.Mode,
+                 (unsigned long long)status.PeerID);
+        ambientHandoffStatus = row;
+    }
+    else if (ambientOwnOfferEpoch)
+    {
+        ambientOwnOfferEpoch = 0;
+        ambientOwnOfferToken = {};
+        ambientHandoffStatus = "closed\t0\t0\t0";
+    }
 }
 
 static bool ambientHasLinks()
@@ -960,6 +1045,7 @@ bool ambientFirmwareMac(u8* mac)
 #else
 static void ambientUninstall() {}
 static void ambientInstall() {}
+static void ambientHandoffService() {}
 static bool ambientHasLinks() { return false; }
 #endif
 
@@ -1392,6 +1478,63 @@ Java_me_magnum_melonds_MelonEmulator_ambientDismissSlowdownPrompt(JNIEnv* env, j
 #endif
 }
 
+// These calls queue user intent only. Ambient's ENet state is touched on the
+// emulator thread by ambientHandoffService(), never from Compose/JNI callers.
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientOfferHandoff(JNIEnv*, jobject, jint mode)
+{
+#ifdef LITEV_AMBIENT_LAN
+    if (mode != melonDS::AmbientLAN::HandoffPlainNetplay &&
+        mode != melonDS::AmbientLAN::HandoffHostedNetplay) return JNI_FALSE;
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (!ambientPtr || ambientHandoffRequests.size() >= 8) return JNI_FALSE;
+    ambientHandoffRequests.push_back({AmbientHandoffRequestKind::Offer, 0, mode, false});
+    return JNI_TRUE;
+#else
+    return JNI_FALSE;
+#endif
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientRespondHandoff(JNIEnv*, jobject, jlong epoch, jboolean accept)
+{
+#ifdef LITEV_AMBIENT_LAN
+    if (epoch <= 0) return JNI_FALSE;
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (!ambientPtr || ambientHandoffRequests.size() >= 8) return JNI_FALSE;
+    ambientHandoffRequests.push_back({AmbientHandoffRequestKind::Respond,
+                                      static_cast<u64>(epoch), 0, accept == JNI_TRUE});
+    return JNI_TRUE;
+#else
+    return JNI_FALSE;
+#endif
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientCancelHandoff(JNIEnv*, jobject)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (!ambientPtr || ambientHandoffRequests.size() >= 8) return JNI_FALSE;
+    ambientHandoffRequests.push_back({AmbientHandoffRequestKind::Cancel});
+    return JNI_TRUE;
+#else
+    return JNI_FALSE;
+#endif
+}
+
+// "phase\tepoch\tmode\tpeer_id". A queued offer is not yet peer acceptance.
+JNIEXPORT jstring JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientHandoffStatus(JNIEnv* env, jobject)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    return env->NewStringUTF(ambientHandoffStatus.c_str());
+#else
+    return env->NewStringUTF("none");
+#endif
+}
+
 JNIEXPORT jobjectArray JNICALL
 Java_me_magnum_melonds_MelonEmulator_groupPlayers(JNIEnv* env, jobject thiz)
 {
@@ -1510,6 +1653,7 @@ void* emulate(void*)
 
         auto frameStart = std::chrono::steady_clock::now();
 
+        ambientHandoffService();
         u32 nLines = MelonDSAndroid::loop();
 
         auto frameDuration = std::chrono::steady_clock::now() - frameStart;

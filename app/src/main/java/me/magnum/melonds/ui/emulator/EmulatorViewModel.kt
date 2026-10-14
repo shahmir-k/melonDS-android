@@ -429,6 +429,20 @@ class EmulatorViewModel @Inject constructor(
         }
     }
 
+    private suspend fun readableRomLibrary(): Array<String> {
+        val roms = romsRepository.getRoms().first()
+        return withContext(Dispatchers.IO) {
+            roms.asSequence()
+                .filter { it.fileName.endsWith(".nds", ignoreCase = true) }
+                .mapNotNull { RomStorageAccess.accessibleRomUri(context, it.uri) }
+                .filter { RomStorageAccess.probe(context, it) == RomStorageAccess.ReadStatus.READABLE }
+                .map { it.toString() }
+                .distinct()
+                .toList()
+                .toTypedArray()
+        }
+    }
+
     /**
      * Restarts the running game in Netplay: every player's console runs on every device and only
      * inputs cross the network. [player] = the LAN lobby id (0 = host) of [players];
@@ -438,12 +452,11 @@ class EmulatorViewModel @Inject constructor(
         val rom = (_emulatorState.value as? EmulatorState.RunningRom)?.rom ?: return
         viewModelScope.launch {
             // another player may run a different game: its console boots that game, found in the
-            // ROM library by game code, size and hash (native NetplayFindRom)
-            val library = romsRepository.getRoms().first()
-                .filter { it.fileName.endsWith(".nds", ignoreCase = true) }
-                .map { it.uri.toString() }
+            // ROM library by game code, size and hash (native NetplayFindRom). External-SD
+            // entries need their original persisted tree grant and a successful provider probe.
+            val library = readableRomLibrary()
             // a game found nowhere here is received from its player (with consent) into romCacheDir
-            MelonEmulator.netplayPrepare(player, players, hostAddress, hosted, library.toTypedArray(),
+            MelonEmulator.netplayPrepare(player, players, hostAddress, hosted, library,
                 romCacheDir, settingsRepository.getNetplayRomCacheMaxSize().toBytes())
             stopEmulator()
             loadRom(rom)

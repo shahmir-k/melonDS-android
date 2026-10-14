@@ -1427,6 +1427,7 @@ static bool ambientHandoffService()
             if (ambientPtr->HandoffPeerIPv4(peerIP))
             {
                 ambientLiveLink = std::make_unique<melonDS::NetplayLiveLink>(status.Outgoing ? 0 : 1, 7100, peerIP);
+                ambientLiveLink->HoldBaselineAck(true);   // (until the peer's ROM is read: see rom_ready)
                 std::vector<u8> base;
                 if (MelonDSAndroid::netplayCaptureBaseline(base)) ambientLiveLink->SendBaseline(std::move(base));
             }
@@ -1500,9 +1501,27 @@ static bool ambientHandoffService()
             std::shared_future<MelonDSAndroid::LiveRom> ahead =
                 ambientPrefetchSize == peerRom.Size ? ambientPeerRomData : std::shared_future<MelonDSAndroid::LiveRom>{};
             std::packaged_task<MelonDSAndroid::LiveRom()> task([ahead, peerRom, library] {
-                if (ahead.valid() && ahead.get().Bytes && ahead.get().Rom == peerRom) return ahead.get();
-                const std::string found = melonDS::NetplayFindRom(peerRom, library, true);
-                return found.empty() ? MelonDSAndroid::LiveRom{} : MelonDSAndroid::readLiveRom(found);
+                std::string skip;
+                if (ahead.valid())
+                {
+                    if (ahead.get().Bytes && ahead.get().Rom == peerRom) return ahead.get();
+                    skip = ahead.get().Path;
+                }
+                // one read per candidate (same size and game code): the read identifies it
+                for (const std::string& path : library)
+                {
+                    if (path == skip) continue;
+                    Platform::FileHandle* f = Platform::OpenFile(path, Platform::FileMode::Read);
+                    if (!f) continue;
+                    u8 head[16] = {};
+                    const bool same = Platform::FileRead(head, 16, 1, f) == 1 &&
+                        Platform::FileLength(f) == peerRom.Size && !memcmp(head + 12, peerRom.GameCode, 4);
+                    Platform::CloseFile(f);
+                    if (!same) continue;
+                    MelonDSAndroid::LiveRom rom = MelonDSAndroid::readLiveRom(path);
+                    if (rom.Bytes && rom.Rom == peerRom) return rom;
+                }
+                return MelonDSAndroid::LiveRom{};
             });
             ambientPeerRomData = task.get_future().share();
             std::thread(std::move(task)).detach();
@@ -1514,6 +1533,7 @@ static bool ambientHandoffService()
         {
             const MelonDSAndroid::LiveRom& rom = ambientPeerRomData.get();
             if (rom.Bytes && rom.Rom == peerRom) ambientPeerRomPath = rom.Path;
+            if (!ambientPeerRomPath.empty() && ambientLiveLink) ambientLiveLink->HoldBaselineAck(false);
         }
         const char* phase = !status.Accepted ? (status.Outgoing ? "outgoing" : "incoming") :
             !peerDescribed || !peerRomSettled ? "accepted" :

@@ -75,6 +75,7 @@ namespace MelonDSAndroid {
     // then player and must match the remote device before commit.
     extern void netplayPrepareOwnProofCopy(const melonDS::NetplayLiveCheckpoint& local);
     extern void netplayPrepareOwnProofShell(int player);
+    extern void netplayPreparePeerShell(int player, const LiveRom& rom);
     extern bool netplayProveScratchPair(const melonDS::NetplayLiveCheckpoint& local,
                                        const melonDS::NetplayLiveCheckpoint& peer,
                                        std::unique_ptr<PreparedLiveReplica>& peerReplica,

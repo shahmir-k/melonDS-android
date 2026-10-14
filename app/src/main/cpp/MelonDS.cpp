@@ -371,6 +371,8 @@ namespace MelonDSAndroid
         if (!instance) { error = "no visible source console"; return false; }
         return captureLiveCheckpoint(*instance, ambient, rom, player, checkpoint, error);
     }
+    // replicas made ahead (makeShellAhead below)
+    static std::future<std::unique_ptr<PreparedLiveReplica>> ownProofShell, peerShell;
     bool netplayBeginLiveTransfer(LiveCheckpointTransfer& transfer,
                                   NetplayLiveCheckpoint local,
                                   const NetplayRom& peerRom,
@@ -379,7 +381,7 @@ namespace MelonDSAndroid
                                   std::string& error)
     {
         return transfer.start(std::move(local), peerRom, std::move(peerRomData),
-                              currentConfiguration, internalFilesDir, link, error);
+                              currentConfiguration, internalFilesDir, link, error, std::move(peerShell));
     }
     bool netplayCaptureBaseline(std::vector<u8>& state)
     {
@@ -393,24 +395,36 @@ namespace MelonDSAndroid
     // the proof's copy of this console, made while the checkpoints cross (the emu thread waits then)
     static std::unique_ptr<PreparedLiveReplica> ownProofCopy;
     // the proof's own copy made ahead (at the offer, on a worker): the cut only loads its state
-    static std::future<std::unique_ptr<PreparedLiveReplica>> ownProofShell;
-    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); ownProofShell = {}; }
+    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); ownProofShell = {}; peerShell = {}; }
+
+    // A replica made ahead on a worker (scratch storage, ROM loaded, started); the cut gives it the
+    // checkpoint's firmware and state. Own: the proof's copy of this console; peer: its replica, once
+    // its ROM is read (this console's firmware stands in until the cut).
+    static std::future<std::unique_ptr<PreparedLiveReplica>> makeShellAhead(int player, LiveRom rom)
+    {
+        const Firmware& fw = instance->getNds()->GetFirmware();
+        std::vector<u8> firmware(fw.Buffer(), fw.Buffer() + fw.Length());
+        std::packaged_task<std::unique_ptr<PreparedLiveReplica>()> task(
+            [player, rom = std::move(rom), firmware = std::move(firmware),
+             configuration = currentConfiguration, dir = internalFilesDir] {
+                std::string error;
+                auto shell = prepareLiveReplicaShell(player, rom, firmware, configuration, dir, error);
+                if (!shell) Platform::Log(Platform::LogLevel::Warn, "Just Play: replica not made ahead: %s\n", error.c_str());
+                return shell;
+            });
+        auto future = task.get_future();
+        std::thread(std::move(task)).detach();
+        return future;
+    }
+    void netplayPreparePeerShell(int player, const LiveRom& rom)
+    {
+        if (instance && player >= 0 && player <= 1 && rom.Bytes) peerShell = makeShellAhead(player, rom);
+    }
 
     void netplayPrepareOwnProofShell(int player)
     {
         if (!instance || player < 0 || player > 1) return;
-        const Firmware& fw = instance->getNds()->GetFirmware();
-        std::vector<u8> firmware(fw.Buffer(), fw.Buffer() + fw.Length());
-        std::packaged_task<std::unique_ptr<PreparedLiveReplica>()> task(
-            [player, rom = liveRomOf(*instance, activeRomPath), firmware = std::move(firmware),
-             configuration = currentConfiguration, dir = internalFilesDir] {
-                std::string error;
-                auto shell = prepareLiveReplicaShell(player, rom, firmware, configuration, dir, error);
-                if (!shell) Platform::Log(Platform::LogLevel::Warn, "Just Play: own proof copy not made ahead: %s\n", error.c_str());
-                return shell;
-            });
-        ownProofShell = task.get_future();
-        std::thread(std::move(task)).detach();
+        ownProofShell = makeShellAhead(player, liveRomOf(*instance, activeRomPath));
     }
     void netplayPrepareOwnProofCopy(const NetplayLiveCheckpoint& local)
     {

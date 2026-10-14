@@ -264,7 +264,8 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
                                    std::shared_ptr<EmulatorConfiguration> configuration,
                                    const std::string& internalFilesDir,
                                    NetplayLiveLink& link,
-                                   std::string& error)
+                                   std::string& error,
+                                   std::future<std::unique_ptr<PreparedLiveReplica>> peerShell)
 {
     error.clear();
     if (Started || local.Player > 1 || !local.Epoch || !local.Build ||
@@ -276,6 +277,7 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
     Local = std::move(local);
     ExpectedPeerRom = expectedPeerRom;
     PeerRom = std::move(peerRom);
+    PeerShell = std::move(peerShell);
     Configuration = std::move(configuration);
     InternalFilesDir = internalFilesDir;
     Link = &link;
@@ -304,8 +306,13 @@ bool LiveCheckpointTransfer::serviceOnEmulatorThread()
 {
     if (!Started || Done.load(std::memory_order_acquire)) return false;
     return Bridge.Service([this](const NetplayLiveCheckpoint& candidate, std::string& error) {
-        Replica = prepareLiveReplica(candidate, PeerRom.get(), Configuration,
-                                     InternalFilesDir, error);
+        std::unique_ptr<PreparedLiveReplica> shell = PeerShell.valid() ? PeerShell.get() : nullptr;
+        if (shell && shell->Console->getInstanceId() == candidate.Player &&
+            shell->Console->loadedRomDescription() == candidate.Rom && completeLiveReplica(*shell, candidate, error))
+            Replica = std::move(shell);
+        else
+            Replica = prepareLiveReplica(candidate, PeerRom.get(), Configuration,
+                                         InternalFilesDir, error);
         return Replica != nullptr;
     });
 }

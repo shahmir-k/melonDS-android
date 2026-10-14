@@ -119,7 +119,8 @@ public:
                std::shared_ptr<EmulatorConfiguration> configuration,
                const std::string& internalFilesDir,
                melonDS::NetplayLiveLink& link,
-               std::string& error);
+               std::string& error,
+               std::future<std::unique_ptr<PreparedLiveReplica>> peerShell = {});
     bool serviceOnEmulatorThread();
     bool finished() const { return Done.load(std::memory_order_acquire); }
     bool take(melonDS::NetplayLiveCheckpoint& peer,
@@ -137,6 +138,7 @@ private:
     std::unique_ptr<PreparedLiveReplica> Replica;
     std::shared_ptr<EmulatorConfiguration> Configuration;
     std::shared_future<LiveRom> PeerRom;
+    std::future<std::unique_ptr<PreparedLiveReplica>> PeerShell;   // (made ahead; the cut completes it)
     std::string InternalFilesDir, Error;
     melonDS::NetplayLiveLink* Link = nullptr;
     bool Started = false;

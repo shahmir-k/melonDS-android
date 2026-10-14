@@ -1535,6 +1535,8 @@ static bool ambientHandoffService()
             const MelonDSAndroid::LiveRom& rom = ambientPeerRomData.get();
             if (rom.Bytes && rom.Rom == peerRom) ambientPeerRomPath = rom.Path;
             if (!ambientPeerRomPath.empty() && ambientLiveLink) ambientLiveLink->HoldBaselineAck(false);
+            if (!ambientPeerRomPath.empty())
+                MelonDSAndroid::netplayPreparePeerShell(status.Outgoing ? 1 : 0, rom);
         }
         const char* phase = !status.Accepted ? (status.Outgoing ? "outgoing" : "incoming") :
             !peerDescribed || !peerRomSettled ? "accepted" :

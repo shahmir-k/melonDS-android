@@ -400,10 +400,15 @@ bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
     auto romData = NDSCart::AcquireSharedROM(romPath, romFileLength, shareRom);
     if (!romData)
         return false;
-    // Hash what the console will actually run, not a later read of a mutable
-    // SD-card path. SetNDSCart may re-encrypt the secure area in this buffer.
-    const auto acquiredRom = NetplayDescribeRomBytes(romData.get(), romFileLength);
-    if (!acquiredRom.Size)
+    // Only a standalone Ambient source or pre-commit scratch replica needs a
+    // checkpoint identity. Ordinary Netplay consoles use the shared ROM cache;
+    // another cart may already have re-encrypted that buffer's secure area, so
+    // hashing it here would be both extra boot work and a misleading identity.
+    // For private buffers, hash the bytes the console will actually run before
+    // SetNDSCart can re-encrypt the secure area.
+    const auto acquiredRom = shareRom ? NetplayRom{} :
+        NetplayDescribeRomBytes(romData.get(), romFileLength);
+    if (!shareRom && !acquiredRom.Size)
         return false;
 
     // SRAM file loading

@@ -955,6 +955,7 @@ struct AmbientLiveCut
     melonDS::NetplayLiveCheckpoint Local, Peer;
     std::unique_ptr<MelonDSAndroid::LiveCheckpointTransfer> TransferOwner;
     std::chrono::steady_clock::time_point Deadline;
+    std::chrono::steady_clock::time_point LastTrace;
     bool InputFrozen = false;
     bool FenceAcked = false, PreparedAcked = false, ArmedAcked = false, GoAcked = false;
 };
@@ -962,9 +963,38 @@ static std::unique_ptr<AmbientLiveCut> ambientLiveCut; // emulator/GL thread onl
 static std::atomic_bool ambientLiveCutActive{false};   // pause waits until the cut resolves
 static std::atomic_bool ambientLiveCutCancel{false};
 
+static const char* ambientCutPhaseName(AmbientLiveCut::Phase phase)
+{
+    using Phase = AmbientLiveCut::Phase;
+    switch (phase)
+    {
+        case Phase::WaitForPeerFence: return "wait_peer_fence";
+        case Phase::WaitForIdle: return "wait_idle";
+        case Phase::Fencing: return "fencing";
+        case Phase::Transfer: return "transfer";
+        case Phase::Prepared: return "prepared";
+        case Phase::Armed: return "armed";
+        case Phase::Go: return "go";
+        case Phase::Rollback: return "rollback";
+    }
+    return "unknown";
+}
+
 static void ambientCutRollback(const std::string& error)
 {
     if (!ambientLiveCut || ambientLiveCut->PhaseNow == AmbientLiveCut::Phase::Rollback) return;
+    const auto fence = ambientPtr ? ambientPtr->GetHandoffFenceStats() :
+        melonDS::AmbientLAN::HandoffFenceStats{};
+    Platform::Log(Platform::LogLevel::Warn,
+                  "Just Play cut failure phase=%s peerFence=%d idle=%d queued=%zu "
+                  "fence=%llu retired=%u/%u ready=%d/%d: %s\n",
+                  ambientCutPhaseName(ambientLiveCut->PhaseNow),
+                  ambientPtr && ambientPtr->HasPeerHandoffFence(),
+                  MelonDSAndroid::netplayLiveSourceIdle(),
+                  ambientPtr ? ambientPtr->HandoffQueuedFrames() : 0,
+                  (unsigned long long)fence.Epoch,
+                  fence.RetiredThrough, fence.PeerLastSent,
+                  fence.LocalReady, fence.PeerReady, error.c_str());
     ambientLiveCut->Error = error;
     if (ambientLiveCut->TransferOwner) ambientLiveCut->TransferOwner->cancel();
     ambientLiveCut->TransferOwner.reset();
@@ -1018,8 +1048,33 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
         ambientLiveCut = std::move(cut);
         ambientLiveCutCancel.store(false, std::memory_order_release);
         ambientLiveCutActive.store(true, std::memory_order_release);
+        Platform::Log(Platform::LogLevel::Info,
+                      "Just Play cut created phase=%s epoch=%llu peer=%llu\n",
+                      ambientCutPhaseName(ambientLiveCut->PhaseNow),
+                      (unsigned long long)ambientLiveCut->Epoch,
+                      (unsigned long long)ambientLiveCut->PeerID);
     }
     auto& cut = *ambientLiveCut;
+    if (cut.PhaseNow == Phase::WaitForPeerFence || cut.PhaseNow == Phase::WaitForIdle ||
+        cut.PhaseNow == Phase::Fencing)
+    {
+        if (cut.LastTrace == Clock::time_point{} || now - cut.LastTrace >= std::chrono::seconds(2))
+        {
+            cut.LastTrace = now;
+            const auto fence = ambientPtr ? ambientPtr->GetHandoffFenceStats() :
+                melonDS::AmbientLAN::HandoffFenceStats{};
+            Platform::Log(Platform::LogLevel::Info,
+                          "Just Play cut phase=%s peerFence=%d idle=%d queued=%zu "
+                          "fence=%llu retired=%u/%u ready=%d/%d\n",
+                          ambientCutPhaseName(cut.PhaseNow),
+                          ambientPtr && ambientPtr->HasPeerHandoffFence(),
+                          MelonDSAndroid::netplayLiveSourceIdle(),
+                          ambientPtr ? ambientPtr->HandoffQueuedFrames() : 0,
+                          (unsigned long long)fence.Epoch,
+                          fence.RetiredThrough, fence.PeerLastSent,
+                          fence.LocalReady, fence.PeerReady);
+        }
+    }
     auto status = [&](const char* phase) {
         ambientHandoffStatus = std::string(phase) + "\t" + std::to_string(cut.Epoch) +
             "\t" + std::to_string(cut.Mode) + "\t" + std::to_string(cut.PeerID);

@@ -74,6 +74,7 @@ namespace MelonDSAndroid {
     // The source Ambient console never advances. Hashes are ordered by frame,
     // then player and must match the remote device before commit.
     extern void netplayPrepareOwnProofCopy(const melonDS::NetplayLiveCheckpoint& local);
+    extern void netplayPrepareOwnProofShell(int player);
     extern bool netplayProveScratchPair(const melonDS::NetplayLiveCheckpoint& local,
                                        const melonDS::NetplayLiveCheckpoint& peer,
                                        std::unique_ptr<PreparedLiveReplica>& peerReplica,

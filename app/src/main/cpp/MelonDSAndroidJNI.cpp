@@ -1428,6 +1428,7 @@ static bool ambientHandoffService()
             {
                 ambientLiveLink = std::make_unique<melonDS::NetplayLiveLink>(status.Outgoing ? 0 : 1, 7100, peerIP);
                 ambientLiveLink->HoldBaselineAck(true);   // (until the peer's ROM is read: see rom_ready)
+                MelonDSAndroid::netplayPrepareOwnProofShell(status.Outgoing ? 0 : 1);
                 std::vector<u8> base;
                 if (MelonDSAndroid::netplayCaptureBaseline(base)) ambientLiveLink->SendBaseline(std::move(base));
             }

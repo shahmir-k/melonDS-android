@@ -63,6 +63,7 @@ namespace melonDS { extern std::uint64_t LitevAccess[6][0x10000]; }
 #endif
 #include <sched.h>
 #include <zlib.h>
+#include <future>
 #include <thread>
 #include <exception>
 #include <atomic>
@@ -391,12 +392,35 @@ namespace MelonDSAndroid
 
     // the proof's copy of this console, made while the checkpoints cross (the emu thread waits then)
     static std::unique_ptr<PreparedLiveReplica> ownProofCopy;
-    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); }
+    // the proof's own copy made ahead (at the offer, on a worker): the cut only loads its state
+    static std::future<std::unique_ptr<PreparedLiveReplica>> ownProofShell;
+    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); ownProofShell = {}; }
+
+    void netplayPrepareOwnProofShell(int player)
+    {
+        if (!instance || player < 0 || player > 1) return;
+        const Firmware& fw = instance->getNds()->GetFirmware();
+        std::vector<u8> firmware(fw.Buffer(), fw.Buffer() + fw.Length());
+        std::packaged_task<std::unique_ptr<PreparedLiveReplica>()> task(
+            [player, rom = liveRomOf(*instance, activeRomPath), firmware = std::move(firmware),
+             configuration = currentConfiguration, dir = internalFilesDir] {
+                std::string error;
+                auto shell = prepareLiveReplicaShell(player, rom, firmware, configuration, dir, error);
+                if (!shell) Platform::Log(Platform::LogLevel::Warn, "Just Play: own proof copy not made ahead: %s\n", error.c_str());
+                return shell;
+            });
+        ownProofShell = task.get_future();
+        std::thread(std::move(task)).detach();
+    }
     void netplayPrepareOwnProofCopy(const NetplayLiveCheckpoint& local)
     {
         std::string error;
-        ownProofCopy = instance ? prepareLiveReplica(local, liveRomOf(*instance, activeRomPath), currentConfiguration,
-                                                     internalFilesDir, error) : nullptr;
+        std::unique_ptr<PreparedLiveReplica> shell = ownProofShell.valid() ? ownProofShell.get() : nullptr;
+        if (shell && shell->Console->getInstanceId() == local.Player && completeLiveReplica(*shell, local, error))
+            ownProofCopy = std::move(shell);
+        else
+            ownProofCopy = instance ? prepareLiveReplica(local, liveRomOf(*instance, activeRomPath), currentConfiguration,
+                                                         internalFilesDir, error) : nullptr;
         if (instance) instance->getNds()->JIT.JitEnableExecute();
     }
 

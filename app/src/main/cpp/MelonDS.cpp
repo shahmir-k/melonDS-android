@@ -197,25 +197,41 @@ namespace MelonDSAndroid
     {
         error.clear();
         in_addr parsed{};
-        if (liveCandidate || netplay || MPInterface::GetType() != MPInterface_Ambient ||
-            !instance || !instance->getNds() || !peerReplica || !peerReplica->Started ||
-            !peerReplica->Console || !peerReplica->Console->getNds() ||
-            local.Player > 1 || peer.Player != 1 - local.Player ||
-            !local.Epoch || local.Epoch != peer.Epoch ||
-            local.Build != NetplayHandoffCompat() || peer.Build != local.Build ||
-            local.FenceToken == std::array<u8, 16>{} || local.FenceToken != peer.FenceToken ||
-            local.State.empty() || peer.State.empty() ||
-            local.Firmware.empty() || peer.Firmware.empty() ||
-            currentRomDescription() != local.Rom ||
-            instance->getFrame() != local.Frame ||
-            instance->getNds()->GetSysTimestamp() != local.RawClock ||
-            instance->getNds()->Wifi.HandoffBusyMask() != 0 ||
-            peerReplica->Console->getInstanceId() != peer.Player ||
-            peerReplica->Console->loadedRomDescription() != peer.Rom ||
-            peerReplica->Console->getNds()->GetSysTimestamp() != peer.RawClock ||
-            peerReplica->Console->getNds()->Wifi.HandoffBusyMask() != 0 ||
-            inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1)
-        { error = "live Netplay candidate does not match the frozen cut"; return false; }
+        // (each clause named: 'does not match' alone could not be diagnosed from a device log)
+        const char* mismatch =
+            (liveCandidate) ? "liveCandidate" :
+            (netplay) ? "netplay" :
+            (MPInterface::GetType() != MPInterface_Ambient) ? "MPInterface::GetType() != MPInterface_Ambient" :
+            (!instance) ? "!instance" :
+            (!instance->getNds()) ? "!instance->getNds()" :
+            (!peerReplica) ? "!peerReplica" :
+            (!peerReplica->Started) ? "!peerReplica->Started" :
+            (!peerReplica->Console) ? "!peerReplica->Console" :
+            (!peerReplica->Console->getNds()) ? "!peerReplica->Console->getNds()" :
+            (local.Player > 1) ? "local.Player > 1" :
+            (peer.Player != 1 - local.Player) ? "peer.Player != 1 - local.Player" :
+            (!local.Epoch) ? "!local.Epoch" :
+            (local.Epoch != peer.Epoch) ? "local.Epoch != peer.Epoch" :
+            (local.Build != NetplayHandoffCompat()) ? "local.Build != NetplayHandoffCompat()" :
+            (peer.Build != local.Build) ? "peer.Build != local.Build" :
+            (local.FenceToken == std::array<u8, 16>{}) ? "local.FenceToken == std::array<u8, 16>{}" :
+            (local.FenceToken != peer.FenceToken) ? "local.FenceToken != peer.FenceToken" :
+            (local.State.empty()) ? "local.State.empty()" :
+            (peer.State.empty()) ? "peer.State.empty()" :
+            (local.Firmware.empty()) ? "local.Firmware.empty()" :
+            (peer.Firmware.empty()) ? "peer.Firmware.empty()" :
+            (currentRomDescription() != local.Rom) ? "currentRomDescription() != local.Rom" :
+            (instance->getFrame() != local.Frame) ? "instance->getFrame() != local.Frame" :
+            (instance->getNds()->GetSysTimestamp() != local.RawClock) ? "instance->getNds()->GetSysTimestamp() != local.RawClock" :
+            (instance->getNds()->Wifi.HandoffBusyMask() != 0) ? "instance->getNds()->Wifi.HandoffBusyMask() != 0" :
+            (peerReplica->Console->getInstanceId() != peer.Player) ? "peerReplica->Console->getInstanceId() != peer.Player" :
+            (peerReplica->Console->loadedRomDescription() != peer.Rom) ? "peerReplica->Console->loadedRomDescription() != peer.Rom" :
+            (peerReplica->Console->getNds()->GetSysTimestamp() != peer.RawClock) ? "peerReplica->Console->getNds()->GetSysTimestamp() != peer.RawClock" :
+            (peerReplica->Console->getNds()->Wifi.HandoffBusyMask() != 0) ? "peerReplica->Console->getNds()->Wifi.HandoffBusyMask() != 0" :
+            (inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1) ? "inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1" :
+            nullptr;
+        if (mismatch)
+        { error = std::string("live Netplay candidate does not match the frozen cut: ") + mismatch; return false; }
 #ifndef LITEV_HOSTED_NETPLAY
         if (hosted) { error = "Hosted Netplay is not available in this build"; return false; }
 #endif

@@ -914,6 +914,7 @@ static melonDS::AmbientLAN::Config ambientCfg;
 static int ambientMode = -1;                            // -1 off ("Lobby only" / not configured), else AmbientLAN::Visibility
 static bool ambientFg = true;
 static std::vector<std::pair<u32, u16>> ambientPeers;   // NSD finds, kept across installs
+static std::vector<std::string> ambientRomLibrary;       // provider-readable .nds URIs from the app's library
 enum class AmbientHandoffRequestKind { Offer, Respond, Cancel };
 struct AmbientHandoffRequest
 {
@@ -930,6 +931,9 @@ static std::array<u8, 16> ambientOwnOfferToken{};
 static u64 ambientRomEpoch = 0;
 static melonDS::NetplayRom ambientOwnRom{};
 static bool ambientRomPublished = false;
+static u64 ambientPeerRomEpoch = 0;
+static melonDS::NetplayRom ambientPeerRom{};
+static std::string ambientPeerRomPath;
 
 static void ambientUninstall()
 {
@@ -943,6 +947,9 @@ static void ambientUninstall()
     ambientRomEpoch = 0;
     ambientOwnRom = {};
     ambientRomPublished = false;
+    ambientPeerRomEpoch = 0;
+    ambientPeerRom = {};
+    ambientPeerRomPath.clear();
     if (melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
 }
@@ -971,6 +978,9 @@ static void ambientInstall()
     ambientRomEpoch = 0;
     ambientOwnRom = {};
     ambientRomPublished = false;
+    ambientPeerRomEpoch = 0;
+    ambientPeerRom = {};
+    ambientPeerRomPath.clear();
     melonDS::MPInterface::Set(std::move(a), melonDS::MPInterface_Ambient);
     lanApplyRecvTimeout();
 }
@@ -1015,6 +1025,9 @@ static void ambientHandoffService()
             ambientRomEpoch = 0;
             ambientOwnRom = {};
             ambientRomPublished = false;
+            ambientPeerRomEpoch = 0;
+            ambientPeerRom = {};
+            ambientPeerRomPath.clear();
             ambientHandoffStatus = "none";
         }
     }
@@ -1023,8 +1036,8 @@ static void ambientHandoffService()
     {
         if (status.Accepted && ambientRomEpoch != status.Epoch)
         {
-            // Hashing a ROM on external SD can take time. Keep the live source
-            // running and let UI readers observe the offer while the mutex is free.
+            // External-SD hashing may briefly pause the emulator before any
+            // fence. Let UI readers observe the offer while the mutex is free.
             const std::string path = MelonDSAndroid::currentRomPath();
             ambientRomEpoch = status.Epoch;
             ambientOwnRom = {};
@@ -1050,7 +1063,33 @@ static void ambientHandoffService()
         }
         if (status.Accepted && ambientOwnRom.Size && !ambientRomPublished)
             ambientRomPublished = ambientPtr->PublishHandoffRom(ambientOwnRom);
-        const char* phase = status.Accepted ? "accepted" : status.Outgoing ? "outgoing" : "incoming";
+        melonDS::NetplayRom peerRom{};
+        const bool peerDescribed = status.Accepted && ambientRomPublished &&
+            ambientPtr->GetPeerHandoffRom(peerRom);
+        if (peerDescribed &&
+            (ambientPeerRomEpoch != status.Epoch || ambientPeerRom != peerRom))
+        {
+            const std::string sourcePath = MelonDSAndroid::currentRomPath();
+            std::vector<std::string> library = ambientRomLibrary;
+            if (!sourcePath.empty()) library.insert(library.begin(), sourcePath);
+            ambientPeerRomEpoch = status.Epoch;
+            ambientPeerRom = peerRom;
+            ambientPeerRomPath.clear();
+            g.unlock();
+            const std::string found = melonDS::NetplayFindRom(peerRom, library);
+            g.lock();
+            melonDS::AmbientLAN::HandoffOfferStatus current{};
+            melonDS::NetplayRom currentPeer{};
+            if (!ambientPtr || ambientPeerRomEpoch != status.Epoch ||
+                !ambientPtr->GetHandoffOfferStatus(current) || !current.Accepted ||
+                current.Epoch != status.Epoch ||
+                !ambientPtr->GetPeerHandoffRom(currentPeer) || currentPeer != peerRom)
+                return;
+            ambientPeerRomPath = found;
+        }
+        const char* phase = !status.Accepted ? (status.Outgoing ? "outgoing" : "incoming") :
+            !peerDescribed ? "accepted" :
+            ambientPeerRomPath.empty() ? "missing_rom" : "rom_ready";
         char row[96];
         snprintf(row, sizeof(row), "%s\t%llu\t%d\t%llu", phase,
                  (unsigned long long)status.Epoch, (int)status.Mode,
@@ -1064,6 +1103,9 @@ static void ambientHandoffService()
         ambientRomEpoch = 0;
         ambientOwnRom = {};
         ambientRomPublished = false;
+        ambientPeerRomEpoch = 0;
+        ambientPeerRom = {};
+        ambientPeerRomPath.clear();
         ambientHandoffStatus = "closed\t0\t0\t0";
     }
     else if (ambientRomEpoch)
@@ -1071,6 +1113,9 @@ static void ambientHandoffService()
         ambientRomEpoch = 0;
         ambientOwnRom = {};
         ambientRomPublished = false;
+        ambientPeerRomEpoch = 0;
+        ambientPeerRom = {};
+        ambientPeerRomPath.clear();
         ambientHandoffStatus = "closed\t0\t0\t0";
     }
 }
@@ -1461,6 +1506,39 @@ Java_me_magnum_melonds_MelonEmulator_ambientAddPeer(JNIEnv* env, jobject thiz, j
     for (auto& e : ambientPeers) if (e.first == a.s_addr && e.second == (u16)port) return;
     ambientPeers.push_back({a.s_addr, (u16)port});
     if (ambientPtr) ambientPtr->AddPeerAddress(a.s_addr, (u16)port);
+#endif
+}
+
+// Supplied before ROM launch by the Android library, after checking the original
+// external-SD tree grant and probing each provider URI. The source ROM path is
+// tracked separately by the emulator; this list is for the peer's exact ROM.
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientSetRomLibrary(JNIEnv* env, jobject, jobjectArray paths)
+{
+#ifdef LITEV_AMBIENT_LAN
+    std::vector<std::string> library;
+    if (paths)
+    {
+        const jsize count = env->GetArrayLength(paths);
+        library.reserve(static_cast<size_t>(count));
+        for (jsize i = 0; i < count; ++i)
+        {
+            auto path = static_cast<jstring>(env->GetObjectArrayElement(paths, i));
+            if (path)
+            {
+                std::string value = lanJString(env, path);
+                if (!value.empty()) library.push_back(std::move(value));
+                env->DeleteLocalRef(path);
+            }
+        }
+    }
+    std::lock_guard<std::mutex> g(ambientMu);
+    ambientRomLibrary = std::move(library);
+    // A newly granted external-SD tree can make a previously missing peer ROM
+    // available without asking either player to re-open the game.
+    ambientPeerRomEpoch = 0;
+    ambientPeerRom = {};
+    ambientPeerRomPath.clear();
 #endif
 }
 

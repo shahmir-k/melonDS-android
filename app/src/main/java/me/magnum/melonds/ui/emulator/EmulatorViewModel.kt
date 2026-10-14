@@ -4,12 +4,14 @@ import me.magnum.melonds.ui.emulator.model.NetplayTransfer
 import kotlinx.coroutines.withTimeoutOrNull
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -299,6 +301,19 @@ class EmulatorViewModel @Inject constructor(
         startRetroAchievementsSession(rom)
 
         val cheats = getRomInfo(rom)?.let { getRomEnabledCheats(it) } ?: emptyList()
+        // Just Play may need to stage the other player's *different* game at a
+        // live cut. A stale SAF URI must never be mistaken for an available ROM.
+        // Library failures must not prevent this player's ROM from launching.
+        val peerRomLibrary = try {
+            readableRomLibrary()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Log.w("JustPlay", "Peer ROM library unavailable; local ROM launch continues", failure)
+            emptyArray()
+        }
+        MelonEmulator.ambientSetRomLibrary(peerRomLibrary)
+        Log.i("JustPlay", "Peer ROM library: ${peerRomLibrary.size} readable .nds entries")
         val result = emulatorManager.loadRom(rom, cheats)
         when (result) {
             is RomLaunchResult.LaunchFailedRomNotFound,

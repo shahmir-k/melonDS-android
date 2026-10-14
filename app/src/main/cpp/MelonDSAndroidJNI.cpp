@@ -1159,7 +1159,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
             if (ambientPtr->HasPeerHandoffFence() && !ambientPtr->GetHandoffFenceToken(cut.Token))
                 { ambientCutRollback("peer cut token unavailable"); return true; }
             if (!ambientPtr->StartHandoffFence(cut.Epoch, cut.Token))
-                { ambientCutRollback("cannot start Ambient cut fence"); return true; }
+                { ambientCutRollback(std::string("cannot start Ambient cut fence: ") + ambientPtr->FenceStartFailure); return true; }
             MelonDSAndroid::netplayFreezeLiveInput();
             cut.InputFrozen = true;
             cut.FrozenAt = std::chrono::steady_clock::now();

@@ -147,9 +147,8 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
         !checkpoint.Rom.Size || romPath.empty() || internalFilesDir.empty() ||
         !configuration || configuration->consoleType != 0)
         { error = "unsupported or incompatible live checkpoint"; return nullptr; }
-    if (!(NetplayDescribeRom(romPath, true) == checkpoint.Rom))
-        { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
-
+    // (the ROM identity is checked on the bytes loadRom hashes below: hashing the file here too
+    // doubled the ~268 MB read+SHA per replica, ~5 s each on the RG DS)
     LiveJitIdentity sourceJit;   // (must be a cold checkpoint)
     if (!readLiveJitIdentity(checkpoint.State, sourceJit, error)) return nullptr;
 
@@ -195,19 +194,28 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     replica->Console->start();
     replica->Started = true;
 
+    if (!reloadLiveReplica(*replica, checkpoint, error)) return nullptr;
+    return replica;
+}
+
+bool reloadLiveReplica(PreparedLiveReplica& replica, const NetplayLiveCheckpoint& checkpoint,
+                       std::string& error)
+{
+    NDS* nds = replica.Console ? replica.Console->getNds() : nullptr;
+    if (!nds) { error = "no scratch replica to load"; return false; }
     Savestate state(const_cast<u8*>(checkpoint.State.data()),
                     static_cast<u32>(checkpoint.State.size()), false);
     if (state.Error || !nds->DoSavestate(&state) || state.Error)
-        { error = "scratch replica savestate load failed"; return nullptr; }
+        { error = "scratch replica savestate load failed"; return false; }
     const Firmware& loaded = nds->GetFirmware();
     if (loaded.Length() != checkpoint.Firmware.size() ||
         memcmp(loaded.Buffer(), checkpoint.Firmware.data(), loaded.Length()) != 0 ||
         nds->GetSysTimestamp() != checkpoint.RawClock)
-        { error = "scratch replica state differs from checkpoint"; return nullptr; }
+        { error = "scratch replica state differs from checkpoint"; return false; }
     nds->GPU.Headless = true;
     nds->GPU.GPU3D.Headless = true;
     nds->SPU.Silent = true;
-    return replica;
+    return true;
 }
 
 LiveCheckpointTransfer::~LiveCheckpointTransfer()

@@ -48,6 +48,9 @@ internal class AmbientHandoffMonitor {
         }
         val parts = snapshot.status.split('\t')
         val phase = parts[0]
+        // an offer's answer lasts only as long as that offer: a later offer that reuses the epoch
+        // (another session) must be asked again, not shown as already accepted
+        if (phase == "none" || phase == "closed" || phase == "failed" || phase == "committed") answeredEpoch = 0L
         if (phase == "committed") return null
         if (phase == "closed" && snapshot.status != lastClosedStatus) {
             // A declined or cancelled switch should not immediately re-offer

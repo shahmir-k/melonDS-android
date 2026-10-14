@@ -68,6 +68,12 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     const std::string& internalFilesDir,
     std::string& error);
 
+// Loads the checkpoint into an already prepared replica again (after the reversible proof ran it),
+// without reloading its ROM.
+bool reloadLiveReplica(PreparedLiveReplica& replica,
+                       const melonDS::NetplayLiveCheckpoint& checkpoint,
+                       std::string& error);
+
 // Owns the bounded checkpoint socket exchange and the *actual* preloaded peer
 // replica. Start after the Ambient fence is complete, then call
 // serviceOnEmulatorThread() while keeping Ambient::Process() alive and the

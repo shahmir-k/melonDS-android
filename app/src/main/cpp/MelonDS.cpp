@@ -377,7 +377,6 @@ namespace MelonDSAndroid
             NDS* Source;
             ~RestoreSourceJitExecute() { Source->JIT.JitEnableExecute(); }
         } sourceJitExecute {instance->getNds()};
-        const std::string peerPath = peerReplica->RomPath;
         auto own = prepareLiveReplica(local, activeRomPath, currentConfiguration,
                                       internalFilesDir, error);
         if (!own) return false;
@@ -390,7 +389,6 @@ namespace MelonDSAndroid
             {local.Player == 0 ? local.RawClock : peer.RawClock, local.Player == 1 ? local.RawClock : peer.RawClock},
             [&](int player) { consoles[player]->runFrameHeadless(); }, hashes, error);
         own.reset();
-        peerReplica.reset();
         if (!proven ||
             instance->getFrame() != local.Frame ||
             instance->getNds()->GetSysTimestamp() != local.RawClock ||
@@ -398,13 +396,12 @@ namespace MelonDSAndroid
                          instance->getNds()->MainRAMMask + 1) != sourceRam)
         {
             if (error.empty()) error = "reversible live proof did not preserve the source";
+            peerReplica.reset();
             return false;
         }
         // The proof advanced its peer copy; the adopted Netplay replica must
-        // instead begin at the exact frozen (cold) checkpoint.
-        peerReplica = prepareLiveReplica(peer, peerPath, currentConfiguration,
-                                         internalFilesDir, error);
-        if (!peerReplica) return false;
+        // instead begin at the exact frozen (cold) checkpoint: load it again.
+        if (!reloadLiveReplica(*peerReplica, peer, error)) { peerReplica.reset(); return false; }
         Platform::Log(Platform::LogLevel::Info,
                       "Just Play reversible proof p0=%016llx/%016llx p1=%016llx/%016llx\n",
                       (unsigned long long)hashes[0], (unsigned long long)hashes[2],

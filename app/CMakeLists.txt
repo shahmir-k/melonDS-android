@@ -113,6 +113,7 @@ add_library(
         ${ANDROID-CPP}/EmulatorMessageQueueJNI.cpp
         ${ANDROID-CPP}/JniEnvHandler.cpp
         ${ANDROID-CPP}/MelonDS.cpp
+        ${ANDROID-CPP}/LiveCheckpointStaging.cpp
         ${ANDROID-CPP}/MelonDSAndroidCameraHandler.cpp
         ${ANDROID-CPP}/MelonDSAndroidConfiguration.cpp
         ${ANDROID-CPP}/MelonDSAndroidInterface.cpp

@@ -1035,7 +1035,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
             !ambientPtr->HandoffPeerIPv4(peerIP) || !ambientOwnRom.Size)
             return false;
         auto cut = std::make_unique<AmbientLiveCut>();
-        cut->PhaseNow = offer.Outgoing ? Phase::WaitForIdle : Phase::WaitForPeerFence;
+        cut->PhaseNow = Phase::WaitForIdle;   // (either side fences first; an MP client waits there)
         cut->Epoch = offer.Epoch;
         cut->Mode = offer.Mode;
         cut->Player = offer.Outgoing ? 0 : 1;
@@ -1123,11 +1123,16 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
             cut.Deadline = now + std::chrono::seconds(8);
             [[fallthrough]];
         case Phase::WaitForIdle:
-            if (cut.Player == 1 && !ambientPtr->HasPeerHandoffFence())
+            // The game's MP client freezes second: while its host issues commands it is inside an
+            // exchange at nearly every frame boundary. It waits for the peer's fence, then runs on
+            // to its own idle cut. Anyone else (either handoff role) fences first when idle.
+            if (!ambientPtr->HasPeerHandoffFence() && MelonDSAndroid::netplayLiveSourceIsMPClient())
                 { status("fencing"); return false; }
+            if (ambientPtr->HasPeerHandoffFence() && ambientPtr->PeerHandoffEpoch() != cut.Epoch)
+                { ambientCutRollback("peer cut epoch differs from accepted offer"); return true; }
             if (!MelonDSAndroid::netplayLiveSourceIdle() || ambientPtr->HandoffQueuedFrames())
                 { status("fencing"); return false; }
-            if (cut.Player == 1 && !ambientPtr->GetHandoffFenceToken(cut.Token))
+            if (ambientPtr->HasPeerHandoffFence() && !ambientPtr->GetHandoffFenceToken(cut.Token))
                 { ambientCutRollback("peer cut token unavailable"); return true; }
             if (!ambientPtr->StartHandoffFence(cut.Epoch, cut.Token))
                 { ambientCutRollback("cannot start Ambient cut fence"); return true; }

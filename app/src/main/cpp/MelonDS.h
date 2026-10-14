@@ -47,6 +47,7 @@ namespace MelonDSAndroid {
     extern std::string currentRomPath();
     extern melonDS::NetplayRom currentRomDescription();
     extern bool netplayLiveSourceIdle();
+    extern bool netplayLiveSourceIsMPClient();
     extern void netplayFreezeLiveInput();
     extern void netplayResumeLiveInput();
     extern bool netplayCaptureLive(melonDS::AmbientLAN& ambient,

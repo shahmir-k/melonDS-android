@@ -325,6 +325,10 @@ namespace MelonDSAndroid
     {
         return instance && !activeRomPath.empty() ? instance->loadedRomDescription() : NetplayRom{};
     }
+    bool netplayLiveSourceIsMPClient()
+    {
+        return instance && instance->getNds() && instance->getNds()->Wifi.IsMPClientMode();
+    }
     bool netplayLiveSourceIdle()
     {
         return instance && instance->getNds() && instance->getNds()->ConsoleType == 0 &&

@@ -1,6 +1,9 @@
 #ifndef MELONINSTANCE_H
 #define MELONINSTANCE_H
 
+#include <atomic>
+#include <mutex>
+
 #include <string>
 #include "Args.h"
 #include "Configuration.h"
@@ -53,13 +56,14 @@ public:
 
     // Netplay: input is only recorded here; the session applies every player's input to every
     // console a few frames later, identically on every device.
-    void setInputDeferred(bool deferred) { inputDeferred = deferred; }
+    void setInputDeferred(bool deferred);
+    void setRewindSuspendedForNetplay(bool suspended);
     // the last runFrame's timings (record mode's per-frame log)
     struct FrameStats { double loopMs = 0, runFrameMs = 0, emuCpuMs = 0; bool drawn = true; };
     const FrameStats& lastFrameStats() const { return frameStats; }
     int getFrame() const { return frame; }
-    melonDS::u32 getInputMask() { return inputMask; }
-    bool getTouch(u16& x, u16& y) { x = touchX; y = touchY; return touching; }
+    melonDS::u32 getInputMask();
+    bool getTouch(u16& x, u16& y);
     // Netplay: another player's console. Emulates a frame with no presentation (its screens are
     // not shown), rendering exactly like the local console so both stay identical.
     void runFrameHeadless();
@@ -121,6 +125,9 @@ private:
     std::unique_ptr<SaveManager> firmwareSave;
     u32 inputMask;
     bool inputDeferred = false;
+    bool deferredLidClosed = false;
+    std::mutex inputMutex;
+    std::atomic_bool netplayRewindSuspended{false};
     FrameStats frameStats;
     u32 lastRetiredPresented = 0;   // SoftRenderer::RetiredFrames() at the last present
     bool touching = false;

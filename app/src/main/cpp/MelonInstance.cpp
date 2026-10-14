@@ -957,8 +957,22 @@ void MelonInstance::runFrameHeadless()
     nds->RunFrame();
 }
 
+u32 MelonInstance::getInputMask()
+{
+    std::lock_guard<std::mutex> guard(inputMutex);
+    return inputMask;
+}
+
+bool MelonInstance::getTouch(u16& x, u16& y)
+{
+    std::lock_guard<std::mutex> guard(inputMutex);
+    x = touchX; y = touchY;
+    return touching;
+}
+
 void MelonInstance::touchScreen(u16 x, u16 y)
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     touching = true;
     touchX = x;
     touchY = y;
@@ -968,17 +982,46 @@ void MelonInstance::touchScreen(u16 x, u16 y)
 
 void MelonInstance::releaseScreen()
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     touching = false;
     if (!inputDeferred)
         nds->ReleaseScreen();
 }
 
+void MelonInstance::setInputDeferred(bool deferred)
+{
+    std::lock_guard<std::mutex> guard(inputMutex);
+    if (inputDeferred == deferred) return;
+    if (deferred) deferredLidClosed = nds->IsLidClosed();
+    inputDeferred = deferred;
+    if (!deferred)
+    {
+        // The source did not run while a Just Play cut was in doubt. Apply
+        // physical controls only after Ambient has fully reset, so an input
+        // event cannot mutate the frozen checkpoint behind the coordinator.
+        nds->SetKeyMask(inputMask);
+        if (touching) nds->TouchScreen(touchX, touchY);
+        else nds->ReleaseScreen();
+        nds->SetLidClosed(deferredLidClosed);
+    }
+}
+
+void MelonInstance::setRewindSuspendedForNetplay(bool suspended)
+{
+    if (netplayRewindSuspended.exchange(suspended) == suspended) return;
+    const auto settings = std::atomic_load(&currentConfiguration);
+    rewindManager.UpdateRewindSettings(!suspended && settings->rewindEnabled,
+        settings->rewindLengthSeconds, settings->rewindCaptureSpacingSeconds);
+}
+
 void MelonInstance::pressKey(u32 key)
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     // Special handling for Lid input
     if (key == 16 + 7)
     {
-        nds->SetLidClosed(true);
+        deferredLidClosed = true;
+        if (!inputDeferred) nds->SetLidClosed(true);
     }
     else
     {
@@ -990,10 +1033,12 @@ void MelonInstance::pressKey(u32 key)
 
 void MelonInstance::releaseKey(u32 key)
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     // Special handling for Lid input
     if (key == 16 + 7)
     {
-        nds->SetLidClosed(false);
+        deferredLidClosed = false;
+        if (!inputDeferred) nds->SetLidClosed(false);
     }
     else
     {
@@ -1057,7 +1102,8 @@ void MelonInstance::updateConfiguration(std::shared_ptr<EmulatorConfiguration> n
         nds->SPU.SetDegrade10Bit(static_cast<AudioBitDepth>(newConfiguration->audioSettings.audioBitrate));
     }
 
-    rewindManager.UpdateRewindSettings(newConfiguration->rewindEnabled, newConfiguration->rewindLengthSeconds, newConfiguration->rewindCaptureSpacingSeconds);
+    rewindManager.UpdateRewindSettings(!netplayRewindSuspended && newConfiguration->rewindEnabled,
+        newConfiguration->rewindLengthSeconds, newConfiguration->rewindCaptureSpacingSeconds);
 
     std::atomic_store(&currentConfiguration, newConfiguration);
     isRenderConfigurationDirty = true;

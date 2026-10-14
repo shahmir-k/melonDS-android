@@ -17,9 +17,11 @@
 #include <android/asset_manager.h>
 
 using namespace melonDS;
-namespace melonDS { struct NetplayRom; }
+namespace melonDS { class AmbientLAN; struct NetplayRom; struct NetplayLiveCheckpoint; }
 
 namespace MelonDSAndroid {
+    struct PreparedLiveReplica;
+    class LiveCheckpointTransfer;
     typedef struct {
         std::vector<u32> code;
     } Cheat;
@@ -43,6 +45,33 @@ namespace MelonDSAndroid {
     // Read on the emulator thread; empty after firmware boot or a failed ROM load.
     extern std::string currentRomPath();
     extern melonDS::NetplayRom currentRomDescription();
+    extern bool netplayLiveSourceIdle();
+    extern void netplayFreezeLiveInput();
+    extern void netplayResumeLiveInput();
+    extern bool netplayCaptureLive(melonDS::AmbientLAN& ambient,
+                                   const melonDS::NetplayRom& rom, int player,
+                                   melonDS::NetplayLiveCheckpoint& checkpoint,
+                                   std::string& error);
+    extern bool netplayBeginLiveTransfer(LiveCheckpointTransfer& transfer,
+                                         melonDS::NetplayLiveCheckpoint local,
+                                         const melonDS::NetplayRom& peerRom,
+                                         const std::string& peerRomPath,
+                                         const std::string& peerIPv4,
+                                         std::string& error);
+    // Stage the exact peer replica, input socket and wireless backend while the
+    // original Ambient console remains frozen. This does not install the new
+    // backend or run a Netplay frame. Only the emulator/GL thread may call it.
+    extern bool netplayStageLive(const melonDS::NetplayLiveCheckpoint& local,
+                                 const melonDS::NetplayLiveCheckpoint& peer,
+                                 std::unique_ptr<PreparedLiveReplica> peerReplica,
+                                 bool hosted, const std::string& peerIPv4,
+                                 std::string& error);
+    // Both calls require the frozen source and run on the emulator thread.
+    // prove exchanges frame-zero input but advances neither console. Commit
+    // installs the staged backend and starts the already-prepared peer console.
+    extern bool netplayProveStagedLive(std::string& error);
+    extern bool netplayCommitStagedLive(std::string& error);
+    extern void netplayDiscardStagedLive();
     // Just Play (LITEV_AMBIENT_LAN): the console MAC from the device id, false = off
     extern bool ambientFirmwareMac(u8* mac);
     // The next game started runs in Netplay as `player` (the LAN lobby id; 0 = host) of `players`;

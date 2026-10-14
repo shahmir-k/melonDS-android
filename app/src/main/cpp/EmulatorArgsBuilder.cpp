@@ -436,7 +436,9 @@ std::optional<FATStorage> loadSDCard(SdCardSettings settings) noexcept
     return FATStorage(args.value());
 }
 
-std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(const EmulatorConfiguration& configuration, int instanceId)
+std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(
+    const EmulatorConfiguration& configuration, int instanceId,
+    std::optional<Firmware> firmwareOverride)
 {
 #ifdef JIT_ENABLED
     JITArgs _jitArgs {
@@ -458,7 +460,11 @@ std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(const Emulato
     if (!arm7bios)
         return std::nullopt;
 
-    auto firmware = loadFirmware(configuration, configuration.consoleType, instanceId);
+    // A live Netplay replica must use the captured firmware byte-for-byte.
+    // Rebuilding it would also query the Ambient MAC while the handoff owns
+    // the Ambient lock, deadlocking the emulator thread.
+    auto firmware = firmwareOverride ? std::move(firmwareOverride) :
+        loadFirmware(configuration, configuration.consoleType, instanceId);
     if (!firmware)
         return std::nullopt;
 

@@ -120,11 +120,11 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     if (fclose(save) != 0)
         { error = "cannot close scratch save"; return nullptr; }
 
-    auto args = BuildArgsFromConfiguration(*configuration, checkpoint.Player);
+    auto args = BuildArgsFromConfiguration(
+        *configuration, checkpoint.Player,
+        Firmware(checkpoint.Firmware.data(), static_cast<u32>(checkpoint.Firmware.size())));
     if (!args)
         { error = "cannot configure scratch DS"; return nullptr; }
-    (*args)->Firmware = Firmware(checkpoint.Firmware.data(),
-                                 static_cast<u32>(checkpoint.Firmware.size()));
     replica->PrivateNet = std::make_shared<Net>();
     replica->Screenshot.resize(256 * 384);
     replica->Console = std::make_shared<MelonInstance>(

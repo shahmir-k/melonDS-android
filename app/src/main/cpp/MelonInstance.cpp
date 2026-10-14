@@ -343,6 +343,14 @@ MelonInstance::~MelonInstance()
     delete nds;
 }
 
+bool MelonInstance::reassignInstanceId(int newId)
+{
+    if (newId < 0 || newId >= 16) return false;
+    if (!net->ReassignInstance(instanceId, newId)) return false;
+    instanceId = newId;
+    return true;
+}
+
 // Blit the accelerated renderer's 2-layer array texture (layer 0 = top screen,
 // layer 1 = bottom screen, each screenWidth x 192*scale) into the app's stacked
 // frame texture, matching the software renderer's vertical layout (top at y=0,

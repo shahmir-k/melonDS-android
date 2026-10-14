@@ -29,6 +29,9 @@ public:
     ~MelonInstance();
 
     int getInstanceId() { return instanceId; };
+    // Live Just Play handoff: the visible source keeps its exact DS state while
+    // the joining device changes its Netplay/MP slot from 0 to 1.
+    bool reassignInstanceId(int newId);
 
     bool loadRom(std::string romPath, std::string sramPath);
     bool loadGbaRom(std::string romPath, std::string sramPath);

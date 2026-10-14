@@ -23,7 +23,9 @@ class MelonInstance
 {
 
 public:
-    MelonInstance(int instanceId, std::shared_ptr<EmulatorConfiguration> configuration, std::unique_ptr<melonDS::NDSArgs> args, std::shared_ptr<Net> net, std::unique_ptr<ScreenshotRenderer> screenshotRenderer, int consoleType);
+    // A staged/remote console supplies its own firmware save path before Reset() can write.
+    // Empty keeps the normal owner path for the visible console.
+    MelonInstance(int instanceId, std::shared_ptr<EmulatorConfiguration> configuration, std::unique_ptr<melonDS::NDSArgs> args, std::shared_ptr<Net> net, std::unique_ptr<ScreenshotRenderer> screenshotRenderer, int consoleType, std::string firmwareSavePathOverride = {});
     ~MelonInstance();
 
     int getInstanceId() { return instanceId; };

@@ -276,7 +276,7 @@ static RendererSettings netplayRenderSettings()
     return settings;
 }
 
-MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfiguration> configuration, std::unique_ptr<melonDS::NDSArgs> args, std::shared_ptr<Net> net, std::unique_ptr<ScreenshotRenderer> screenshotRenderer, int consoleType) :
+MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfiguration> configuration, std::unique_ptr<melonDS::NDSArgs> args, std::shared_ptr<Net> net, std::unique_ptr<ScreenshotRenderer> screenshotRenderer, int consoleType, std::string firmwareSavePathOverride) :
     instanceId(instanceId),
     currentConfiguration(configuration),
     net(net),
@@ -302,7 +302,11 @@ MelonInstance::MelonInstance(int instanceId, std::shared_ptr<EmulatorConfigurati
         nds = new NDS(std::move(*args), this);
     }
 
-    if (configuration->userInternalFirmwareAndBios)
+    if (!firmwareSavePathOverride.empty())
+    {
+        firmwareSave = std::make_unique<SaveManager>(std::move(firmwareSavePathOverride));
+    }
+    else if (configuration->userInternalFirmwareAndBios)
     {
         std::filesystem::path firmwarePath = MelonDSAndroid::internalFilesDir;
         firmwarePath /= "wfcsettings.bin";

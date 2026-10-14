@@ -841,12 +841,11 @@ namespace MelonDSAndroid
         std::string dir = internalFilesDir + "/netplay";
         mkdir(dir.c_str(), 0700);
         std::string path = dir + "/p" + std::to_string(player) + (tag.empty() ? "" : "-" + tag) + ".sav";
-        if (FILE* f = fopen(path.c_str(), "wb"))
-        {
-            if (!data.empty()) fwrite(data.data(), 1, data.size(), f);
-            fclose(f);
-        }
-        return path;
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f) return {};
+        const bool complete = data.empty() || fwrite(data.data(), 1, data.size(), f) == data.size();
+        const bool closed = fclose(f) == 0;
+        return complete && closed ? path : std::string{};
     }
 
     static std::vector<u8> netplayReadFile(const std::string& path, size_t maxLen = SIZE_MAX)
@@ -1197,6 +1196,10 @@ namespace MelonDSAndroid
     {
         auto r = std::make_unique<NetplayRemote>();
         r->player = player;
+        // The replica must own both save destinations before its constructor calls NDS::Reset.
+        // Savestate loads during a live handoff can write either file immediately.
+        const std::string scratchSavePath = netplaySavePath(player, save, tag);
+        if (scratchSavePath.empty()) return false;
         auto args = BuildArgsFromConfiguration(*currentConfiguration, player);
         if (!args.has_value())
             return false;
@@ -1212,7 +1215,8 @@ namespace MelonDSAndroid
             std::move(args.value()),
             net,
             std::make_unique<ScreenshotRenderer>(r->screenshot.data()),
-            0
+            0,
+            scratchSavePath + ".firmware"
         );
 #ifdef LITEV_JIT_SHARED_CODE
         melonDS::ARMJIT_Global::SetSharedCode(false);
@@ -1223,7 +1227,7 @@ namespace MelonDSAndroid
         nds->GPU.GPU3D.Headless = true;
         netplaySetClock(player, nds);
         netplayLoadScript("debug.litev.npscript2", r->script, player);
-        bool ok = r->console->loadRom(romPath, netplaySavePath(player, save, tag));
+        bool ok = r->console->loadRom(romPath, scratchSavePath);
 #ifdef LITEV_REMOTE_GX_SINK
         if (ok) netplayGxTiming(nds);
 #endif

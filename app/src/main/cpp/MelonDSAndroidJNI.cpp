@@ -953,6 +953,7 @@ struct AmbientLiveCut
     std::string PeerIPv4, PeerRomPath, Error;
     melonDS::NetplayRom OwnRom{}, PeerRom{};
     melonDS::NetplayLiveCheckpoint Local, Peer;
+    std::array<u64, 4> Proof{};
     std::unique_ptr<MelonDSAndroid::LiveCheckpointTransfer> TransferOwner;
     std::chrono::steady_clock::time_point Deadline;
     std::chrono::steady_clock::time_point LastTrace;
@@ -1159,6 +1160,9 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 if (!cut.TransferOwner->take(cut.Peer, replica, error))
                     { ambientCutRollback(error); return true; }
                 cut.TransferOwner.reset();
+                if (!MelonDSAndroid::netplayProveScratchPair(
+                        cut.Local, cut.Peer, replica, cut.Proof, error))
+                    { ambientCutRollback(error); return true; }
                 if (!MelonDSAndroid::netplayStageLive(cut.Local, cut.Peer, std::move(replica),
                         cut.Mode == melonDS::AmbientLAN::HandoffHostedNetplay,
                         cut.PeerIPv4, error))
@@ -1201,7 +1205,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 guard.unlock();
                 const bool started = melonDS::NetplayAwaitLiveStart(7101,
                     cut.PeerIPv4 + ":7101", cut.PeerIPv4, cut.Local, cut.Peer,
-                    ambientLiveCutCancel, error);
+                    ambientLiveCutCancel, error, cut.Proof);
                 const bool proven = started && MelonDSAndroid::netplayProveStagedLive(error);
                 guard.lock();
                 if (ambientLiveCutCancel.load(std::memory_order_acquire))

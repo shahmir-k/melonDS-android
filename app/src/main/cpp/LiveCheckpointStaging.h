@@ -39,8 +39,22 @@ struct PreparedLiveReplica
     std::shared_ptr<melonDS::Net> PrivateNet;
     std::vector<melonDS::u32> Screenshot;
     std::string ScratchDir;
+    std::string RomPath;
     bool Started = false;
 };
+
+// The JITS section is part of guest-visible execution timing. A loader that
+// silently discards it can resume from the same CPU registers and still
+// diverge on the first emulated frame.
+struct LiveJitIdentity
+{
+    melonDS::u64 Build = 0;
+    melonDS::u32 Configuration = 0;
+    bool operator==(const LiveJitIdentity& other) const
+    { return Build == other.Build && Configuration == other.Configuration; }
+};
+bool readLiveJitIdentity(const std::vector<melonDS::u8>& state,
+                         LiveJitIdentity& identity, std::string& error);
 
 // Must run on the emulator/GL thread while the original Ambient console is
 // frozen. ROM bytes are verified, and all savestate writes target scratch

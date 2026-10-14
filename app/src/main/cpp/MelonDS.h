@@ -2,6 +2,7 @@
 #define MELONDS_MELONDS_H
 
 #include <list>
+#include <array>
 #include <vector>
 #include "AndroidFileHandler.h"
 #include "AndroidCameraHandler.h"
@@ -58,6 +59,15 @@ namespace MelonDSAndroid {
                                          const std::string& peerRomPath,
                                          const std::string& peerIPv4,
                                          std::string& error);
+    // Runs two reversible Lockstep frames on disposable copies of both saved
+    // consoles, then reloads the peer candidate from its original checkpoint.
+    // The source Ambient console never advances. Hashes are ordered by frame,
+    // then player and must match the remote device before commit.
+    extern bool netplayProveScratchPair(const melonDS::NetplayLiveCheckpoint& local,
+                                       const melonDS::NetplayLiveCheckpoint& peer,
+                                       std::unique_ptr<PreparedLiveReplica>& peerReplica,
+                                       std::array<u64, 4>& hashes,
+                                       std::string& error);
     // Stage the exact peer replica, input socket and wireless backend while the
     // original Ambient console remains frozen. This does not install the new
     // backend or run a Netplay frame. Only the emulator/GL thread may call it.

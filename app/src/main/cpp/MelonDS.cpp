@@ -355,6 +355,152 @@ namespace MelonDSAndroid
         return transfer.start(std::move(local), peerRom, peerRomPath,
                               currentConfiguration, internalFilesDir, peerIPv4, 7100, error);
     }
+
+    static u64 liveScratchHash(NDS& nds)
+    {
+        u64 parts[8] = {
+            nds.GetSysTimestamp(),
+            XXH3_64bits(nds.ARM9.R, sizeof(nds.ARM9.R)),
+            XXH3_64bits(nds.ARM7.R, sizeof(nds.ARM7.R)),
+            XXH3_64bits(nds.MainRAM, nds.MainRAMMask + 1),
+            XXH3_64bits(nds.SharedWRAM, nds.SharedWRAMSize),
+            XXH3_64bits(nds.ARM7WRAM, nds.ARM7WRAMSize),
+            0, 0
+        };
+        for (int bank = 0; bank < 9; ++bank)
+            parts[6] ^= XXH3_64bits(nds.GPU.VRAM[bank], nds.GPU.VRAMMask[bank] + 1) * (bank + 1);
+        parts[7] = nds.ARM9.R[15] | (u64)nds.ARM7.R[15] << 32;
+        return XXH3_64bits(parts, sizeof(parts));
+    }
+
+    bool netplayProveScratchPair(const NetplayLiveCheckpoint& local,
+                                const NetplayLiveCheckpoint& peer,
+                                std::unique_ptr<PreparedLiveReplica>& peerReplica,
+                                std::array<u64, 4>& hashes, std::string& error)
+    {
+        hashes = {};
+        error.clear();
+        if (netplay || MPInterface::GetType() != MPInterface_Ambient ||
+            !instance || !instance->getNds() || !peerReplica ||
+            !peerReplica->Console || local.Player > 1 ||
+            peer.Player != 1 - local.Player ||
+            instance->getFrame() != local.Frame ||
+            instance->getNds()->GetSysTimestamp() != local.RawClock ||
+            currentRomDescription() != local.Rom)
+        { error = "source changed before reversible live proof"; return false; }
+        const u64 sourceRam = XXH3_64bits(instance->getNds()->MainRAM,
+                                           instance->getNds()->MainRAMMask + 1);
+        const std::string peerPath = peerReplica->RomPath;
+        auto own = prepareLiveReplica(local, activeRomPath, currentConfiguration,
+                                      internalFilesDir, error);
+        if (!own) return false;
+        std::array<MelonInstance*, 2> consoles{};
+        consoles[local.Player] = own->Console.get();
+        consoles[peer.Player] = peerReplica->Console.get();
+        bool timedOut = false;
+        bool runFailed = false;
+        {
+            // Only scratch NDS objects execute against this temporary backend.
+            // The visible source and the Ambient link are restored even when a
+            // proof thread fails, before any PREPARED/ARMED/GO vote is sent.
+            struct RestoreAmbient
+            {
+                std::unique_ptr<MPInterface> Saved;
+                ~RestoreAmbient()
+                {
+                    auto trial = MPInterface::Take();
+                    trial.reset();
+                    MPInterface::Set(std::move(Saved), MPInterface_Ambient);
+                }
+            } restore {MPInterface::Take()};
+            auto trial = std::make_unique<LockstepMP>();
+            LockstepMP* link = trial.get();
+            for (int p = 0; p < 2; ++p)
+            {
+                NDS* nds = consoles[p]->getNds();
+                link->SetClockOrigin(p, p == local.Player ? local.RawClock : peer.RawClock,
+                                     1000000000ull);
+#ifdef LITEV_MP_FASTPOLL
+                link->SetClockSource(p, nds->SysTimestampPtr());
+#else
+                link->SetClock(p, [nds] { return nds->GetSysTimestamp(); });
+#endif
+                link->SetWake(p, *nds);
+                nds->SetKeyMask(0xFFF); // identical, neutral inputs on both devices
+                nds->ReleaseScreen();
+            }
+            MPInterface::Set(std::move(trial), MPInterface_Netplay);
+            for (int p = 0; p < 2; ++p)
+                if (consoles[p]->getNds()->Wifi.IsPoweredOn()) link->Begin(p);
+            std::atomic<bool> finished{false};
+            std::atomic<bool> expired{false};
+            std::atomic<bool> workerFailed{false};
+            std::thread worker;
+            std::thread watchdog;
+            try
+            {
+                watchdog = std::thread([&] {
+                    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+                    while (!finished.load(std::memory_order_acquire) &&
+                           std::chrono::steady_clock::now() < deadline)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    if (!finished.load(std::memory_order_acquire))
+                    { expired.store(true, std::memory_order_release); link->Stop(); }
+                });
+                worker = std::thread([&] {
+                    try
+                    {
+                        for (int f = 0; f < 2; ++f)
+                        {
+                            consoles[peer.Player]->runFrameHeadless();
+                            hashes[f * 2 + peer.Player] = liveScratchHash(*consoles[peer.Player]->getNds());
+                        }
+                    }
+                    catch (...)
+                    { workerFailed.store(true, std::memory_order_release); link->Stop(); }
+                });
+                for (int f = 0; f < 2; ++f)
+                {
+                    consoles[local.Player]->runFrameHeadless();
+                    hashes[f * 2 + local.Player] = liveScratchHash(*consoles[local.Player]->getNds());
+                }
+            }
+            catch (const std::exception& exception)
+            {
+                runFailed = true;
+                error = std::string("cannot execute reversible live proof: ") + exception.what();
+                link->Stop();
+            }
+            if (worker.joinable()) worker.join();
+            finished.store(true, std::memory_order_release);
+            if (watchdog.joinable()) watchdog.join();
+            timedOut = expired.load(std::memory_order_acquire);
+            runFailed |= workerFailed.load(std::memory_order_acquire);
+        }
+        own.reset();
+        peerReplica.reset();
+        instance->getNds()->JIT.JitEnableExecute();
+        if (timedOut || runFailed ||
+            instance->getFrame() != local.Frame ||
+            instance->getNds()->GetSysTimestamp() != local.RawClock ||
+            XXH3_64bits(instance->getNds()->MainRAM,
+                         instance->getNds()->MainRAMMask + 1) != sourceRam)
+        {
+            if (error.empty()) error = timedOut ? "reversible live proof timed out" :
+                                       "reversible live proof did not preserve the source";
+            return false;
+        }
+        // The proof advanced its peer copy; the adopted Netplay replica must
+        // instead begin at the exact frozen checkpoint, with its warm JIT.
+        peerReplica = prepareLiveReplica(peer, peerPath, currentConfiguration,
+                                         internalFilesDir, error);
+        if (!peerReplica) return false;
+        Platform::Log(Platform::LogLevel::Info,
+                      "Just Play reversible proof p0=%016llx/%016llx p1=%016llx/%016llx\n",
+                      (unsigned long long)hashes[0], (unsigned long long)hashes[2],
+                      (unsigned long long)hashes[1], (unsigned long long)hashes[3]);
+        return true;
+    }
 #ifndef LITEV_AMBIENT_LAN
     bool ambientFirmwareMac(u8*) { return false; }
 #endif

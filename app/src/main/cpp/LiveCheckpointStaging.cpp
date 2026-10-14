@@ -24,6 +24,25 @@ namespace MelonDSAndroid
 {
 using namespace melonDS;
 
+bool readLiveJitIdentity(const std::vector<u8>& bytes,
+                         LiveJitIdentity& identity, std::string& error)
+{
+    identity = {};
+    if (bytes.empty() || bytes.size() > UINT32_MAX)
+        { error = "live checkpoint has no valid savestate"; return false; }
+    Savestate state(const_cast<u8*>(bytes.data()), static_cast<u32>(bytes.size()), false);
+    if (state.Error || !state.HasSection("JITS"))
+        { error = "live checkpoint has no JIT profile section"; return false; }
+    state.Section("JITS");
+    u32 present = 0;
+    state.Var64(&identity.Build);
+    state.Var32(&identity.Configuration);
+    state.Var32(&present);
+    if (state.Error || !identity.Build || !identity.Configuration || present != 1)
+        { error = "live checkpoint has no restorable JIT profile"; return false; }
+    return true;
+}
+
 bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
                            const NetplayRom& rom, int player,
                            NetplayLiveCheckpoint& checkpoint, std::string& error)
@@ -61,6 +80,8 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
         { error = "source savestate capture failed"; return false; }
     captured.State.assign(static_cast<const u8*>(state.Buffer()),
                           static_cast<const u8*>(state.Buffer()) + state.Length());
+    LiveJitIdentity jit;
+    if (!readLiveJitIdentity(captured.State, jit, error)) return false;
     if (ambient.HandoffFenceAborted() || ambient.HandoffQueuedFrames() ||
         nds->Wifi.HandoffBusyMask())
         { error = "Ambient link changed during checkpoint capture"; return false; }
@@ -102,6 +123,9 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     if (!(NetplayDescribeRom(romPath, true) == checkpoint.Rom))
         { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
 
+    LiveJitIdentity sourceJit;
+    if (!readLiveJitIdentity(checkpoint.State, sourceJit, error)) return nullptr;
+
     auto replica = std::make_unique<PreparedLiveReplica>();
     const std::string parent = internalFilesDir + "/netplay";
     if (mkdir(parent.c_str(), 0700) != 0 && errno != EEXIST)
@@ -113,6 +137,7 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     if (!mkdtemp(name.data()))
         { error = "cannot create live checkpoint scratch directory"; return nullptr; }
     replica->ScratchDir = std::move(name);
+    replica->RomPath = romPath;
     const std::string savePath = replica->ScratchDir + "/console.sav";
     FILE* save = fopen(savePath.c_str(), "wb");
     if (!save)
@@ -142,6 +167,16 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
         { error = "scratch replica loaded different ROM bytes"; return nullptr; }
     replica->Console->start();
     replica->Started = true;
+
+    Savestate scratchState;
+    if (!nds->DoSavestate(&scratchState) || scratchState.Error || !scratchState.Length())
+        { error = "cannot inspect scratch JIT configuration"; return nullptr; }
+    std::vector<u8> scratchBytes(static_cast<const u8*>(scratchState.Buffer()),
+                                 static_cast<const u8*>(scratchState.Buffer()) + scratchState.Length());
+    LiveJitIdentity scratchJit;
+    if (!readLiveJitIdentity(scratchBytes, scratchJit, error)) return nullptr;
+    if (!(sourceJit == scratchJit))
+        { error = "live checkpoint JIT build or configuration differs from this device"; return nullptr; }
 
     Savestate state(const_cast<u8*>(checkpoint.State.data()),
                     static_cast<u32>(checkpoint.State.size()), false);
@@ -192,6 +227,11 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
         Ok = NetplayExchangeLiveCheckpoints(
             TcpPort, address, PeerIPv4, Local, ExpectedPeerRom,
             [this](const NetplayLiveCheckpoint& candidate, std::string& reason) {
+                LiveJitIdentity own, theirs;
+                if (!readLiveJitIdentity(Local.State, own, reason) ||
+                    !readLiveJitIdentity(candidate.State, theirs, reason)) return false;
+                if (!(own == theirs))
+                { reason = "peer JIT build or configuration differs from this device"; return false; }
                 return Bridge.Request(candidate, reason, Cancelled);
             }, Cancelled, Peer, Error);
         Done.store(true, std::memory_order_release);

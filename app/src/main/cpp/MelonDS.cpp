@@ -1085,11 +1085,31 @@ namespace MelonDSAndroid
     }
 #endif
 
+    // Opt-in live-cut diagnostic. Frame zero distinguishes a checkpoint/load mismatch from a
+    // divergence caused by advancing Netplay. It never sends packets or changes emulated state.
+    static void liveHandoffTrace(MelonInstance& console, int player, int frames)
+    {
+        static const bool enabled = [] {
+            char value[PROP_VALUE_MAX] = {0};
+            return __system_property_get("debug.litev.handofftrace", value) > 0 && atoi(value) != 0;
+        }();
+        if (!enabled || !netplay || !netplay->live ||
+            (frames > 10 && frames % 10 != 0)) return;
+        NDS* nds = console.getNds();
+        Platform::Log(Platform::LogLevel::Info,
+                      "HANDOFF_TRACE p%d f%d sys=%llu pc9=%08x pc7=%08x ram=%016llx wifi=%d mp=%d\n",
+                      player, frames, (unsigned long long)nds->GetSysTimestamp(),
+                      nds->ARM9.R[15], nds->ARM7.R[15],
+                      (unsigned long long)XXH3_64bits(nds->MainRAM, nds->MainRAMMask + 1),
+                      nds->Wifi.IsPoweredOn(), nds->Wifi.IsMultiplayer());
+    }
+
     // Desync check, every 60 frames: each device sends the hash of its own console to everyone;
     // the others compare it with their copy of that console. Also logged (NETPLAY_HASH) for
     // offline diffs.
     static void netplayHash(MelonInstance& console, int player, int frames)
     {
+        liveHandoffTrace(console, player, frames);
         if (frames % 60) return;
         NDS* nds = console.getNds();
         u64 hash = XXH3_64bits(nds->MainRAM, nds->MainRAMMask + 1) ^ nds->GetSysTimestamp();
@@ -1288,6 +1308,9 @@ namespace MelonDSAndroid
         netplaySetClock(localPlayer, instance->getNds());
         for (auto& remote : netplay->remotes)
             netplaySetClock(remote->player, remote->console->getNds());
+        liveHandoffTrace(*instance, localPlayer, 0);
+        for (auto& remote : netplay->remotes)
+            liveHandoffTrace(*remote->console, remote->player, 0);
         if (instance->getNds()->Wifi.IsPoweredOn())
             MPInterface::Get().Begin(localPlayer);
         for (auto& remote : netplay->remotes)

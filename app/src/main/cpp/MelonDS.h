@@ -20,7 +20,7 @@
 #include <android/asset_manager.h>
 
 using namespace melonDS;
-namespace melonDS { class AmbientLAN; struct NetplayRom; struct NetplayLiveCheckpoint; }
+namespace melonDS { class AmbientLAN; struct NetplayRom; struct NetplayLiveCheckpoint; class NetplayLiveLink; }
 
 namespace MelonDSAndroid {
     struct PreparedLiveReplica;
@@ -65,12 +65,15 @@ namespace MelonDSAndroid {
                                          melonDS::NetplayLiveCheckpoint local,
                                          const melonDS::NetplayRom& peerRom,
                                          std::shared_future<LiveRom> peerRomData,
-                                         const std::string& peerIPv4,
+                                         melonDS::NetplayLiveLink& link,
                                          std::string& error);
+    // this console's state now (warm, no cache reset): the baseline of the cut's checkpoint delta
+    extern bool netplayCaptureBaseline(std::vector<melonDS::u8>& state);
     // Runs two reversible Lockstep frames on disposable copies of both saved
     // consoles, then reloads the peer candidate from its original checkpoint.
     // The source Ambient console never advances. Hashes are ordered by frame,
     // then player and must match the remote device before commit.
+    extern void netplayPrepareOwnProofCopy(const melonDS::NetplayLiveCheckpoint& local);
     extern bool netplayProveScratchPair(const melonDS::NetplayLiveCheckpoint& local,
                                        const melonDS::NetplayLiveCheckpoint& peer,
                                        std::unique_ptr<PreparedLiveReplica>& peerReplica,

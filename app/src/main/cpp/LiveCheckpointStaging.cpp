@@ -75,10 +75,10 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
 {
     checkpoint = {};
     error.clear();
+    // (from this console's freeze on: its state is final then, whatever the fence still settles)
     if (player < 0 || player > 1 || !rom.Size || source.loadedRomDescription() != rom ||
-        !ambient.HandoffFenceComplete() || ambient.HandoffFenceAborted() ||
-        ambient.HandoffQueuedFrames())
-        { error = "Ambient handoff fence is not quiescent"; return false; }
+        !ambient.GetHandoffFenceStats().Epoch || ambient.HandoffFenceAborted())
+        { error = "Ambient handoff fence is not started"; return false; }
     NDS* nds = source.getNds();
     if (!nds || nds->ConsoleType != 0 || nds->Wifi.HandoffBusyMask())
         { error = "source DS is not safe to checkpoint"; return false; }
@@ -110,8 +110,7 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
                           static_cast<const u8*>(state.Buffer()) + state.Length());
     LiveJitIdentity jit;
     if (!readLiveJitIdentity(captured.State, jit, error)) return false;
-    if (ambient.HandoffFenceAborted() || ambient.HandoffQueuedFrames() ||
-        nds->Wifi.HandoffBusyMask())
+    if (ambient.HandoffFenceAborted() || nds->Wifi.HandoffBusyMask())
         { error = "Ambient link changed during checkpoint capture"; return false; }
     checkpoint = std::move(captured);
     return true;
@@ -151,26 +150,16 @@ LiveRom liveRomOf(const MelonInstance& console, const std::string& path)
     return rom;
 }
 
-std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
-    const NetplayLiveCheckpoint& checkpoint, const LiveRom& rom,
+std::unique_ptr<PreparedLiveReplica> prepareLiveReplicaShell(
+    int player, const LiveRom& rom, const std::vector<u8>& firmware,
     std::shared_ptr<EmulatorConfiguration> configuration,
     const std::string& internalFilesDir, std::string& error)
 {
     error.clear();
-    if (checkpoint.Build != NetplayHandoffCompat())
-        { error = "checkpoint emulation compatibility differs (handoff protocol or emulation LITEV options)"; return nullptr; }
-    if (checkpoint.Player > 1 || !checkpoint.Epoch ||
-        checkpoint.FenceToken == std::array<u8, 16>{} ||
-        checkpoint.State.empty() || checkpoint.State.size() > (64u << 20) ||
-        checkpoint.Firmware.empty() || checkpoint.Firmware.size() > (1u << 20) ||
-        !checkpoint.Rom.Size || !rom.Bytes || internalFilesDir.empty() ||
-        !configuration || configuration->consoleType != 0)
-        { error = "unsupported or incompatible live checkpoint"; return nullptr; }
-    if (rom.Rom != checkpoint.Rom)
-        { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
-    LiveJitIdentity sourceJit;   // (must be a cold checkpoint)
-    if (!readLiveJitIdentity(checkpoint.State, sourceJit, error)) return nullptr;
-
+    if (player < 0 || player > 1 || !rom.Bytes || !rom.Rom.Size || firmware.empty() ||
+        firmware.size() > (1u << 20) || internalFilesDir.empty() || !configuration ||
+        configuration->consoleType != 0)
+        { error = "unsupported live replica"; return nullptr; }
     auto replica = std::make_unique<PreparedLiveReplica>();
     const std::string parent = internalFilesDir + "/netplay";
     if (mkdir(parent.c_str(), 0700) != 0 && errno != EEXIST)
@@ -191,14 +180,13 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
         { error = "cannot close scratch save"; return nullptr; }
 
     auto args = BuildArgsFromConfiguration(
-        *configuration, checkpoint.Player,
-        Firmware(checkpoint.Firmware.data(), static_cast<u32>(checkpoint.Firmware.size())));
+        *configuration, player, Firmware(firmware.data(), static_cast<u32>(firmware.size())));
     if (!args)
         { error = "cannot configure scratch DS"; return nullptr; }
     replica->PrivateNet = std::make_shared<Net>();
     replica->Screenshot.resize(256 * 384);
     replica->Console = std::make_shared<MelonInstance>(
-        checkpoint.Player, configuration, std::move(*args), replica->PrivateNet,
+        player, configuration, std::move(*args), replica->PrivateNet,
         std::make_unique<ScreenshotRenderer>(replica->Screenshot.data()), 0,
         replica->ScratchDir + "/console.firmware");
     NDS* nds = replica->Console->getNds();
@@ -208,12 +196,40 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     replica->Console->setInputDeferred(true);
     if (!replica->Console->loadRomBytes(rom.Bytes, rom.Length, rom.Rom, savePath))
         { error = "cannot load scratch replica ROM"; return nullptr; }
-    if (replica->Console->loadedRomDescription() != checkpoint.Rom)
-        { error = "scratch replica loaded different ROM bytes"; return nullptr; }
     replica->Console->start();
     replica->Started = true;
+    return replica;
+}
 
-    if (!reloadLiveReplica(*replica, checkpoint, error)) return nullptr;
+bool completeLiveReplica(PreparedLiveReplica& replica, const NetplayLiveCheckpoint& checkpoint, std::string& error)
+{
+    error.clear();
+    if (checkpoint.Build != NetplayHandoffCompat())
+        { error = "checkpoint emulation compatibility differs (handoff protocol or emulation LITEV options)"; return false; }
+    if (checkpoint.Player > 1 || !checkpoint.Epoch ||
+        checkpoint.FenceToken == std::array<u8, 16>{} ||
+        checkpoint.State.empty() || checkpoint.State.size() > (64u << 20) ||
+        checkpoint.Firmware.empty() || checkpoint.Firmware.size() > (1u << 20) || !checkpoint.Rom.Size ||
+        !replica.Console || replica.Console->getInstanceId() != checkpoint.Player)
+        { error = "unsupported or incompatible live checkpoint"; return false; }
+    if (replica.Console->loadedRomDescription() != checkpoint.Rom)
+        { error = "scratch replica ROM does not match the checkpoint"; return false; }
+    LiveJitIdentity sourceJit;   // (must be a cold checkpoint)
+    if (!readLiveJitIdentity(checkpoint.State, sourceJit, error)) return false;
+    replica.Console->getNds()->SetFirmware(Firmware(checkpoint.Firmware.data(), static_cast<u32>(checkpoint.Firmware.size())));
+    return reloadLiveReplica(replica, checkpoint, error);
+}
+
+std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
+    const NetplayLiveCheckpoint& checkpoint, const LiveRom& rom,
+    std::shared_ptr<EmulatorConfiguration> configuration,
+    const std::string& internalFilesDir, std::string& error)
+{
+    if (rom.Rom != checkpoint.Rom)
+        { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
+    auto replica = prepareLiveReplicaShell(checkpoint.Player, rom, checkpoint.Firmware, std::move(configuration),
+                                           internalFilesDir, error);
+    if (!replica || !completeLiveReplica(*replica, checkpoint, error)) return nullptr;
     return replica;
 }
 
@@ -247,16 +263,14 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
                                    std::shared_future<LiveRom> peerRom,
                                    std::shared_ptr<EmulatorConfiguration> configuration,
                                    const std::string& internalFilesDir,
-                                   const std::string& peerIPv4, u16 tcpPort,
+                                   NetplayLiveLink& link,
                                    std::string& error)
 {
     error.clear();
-    in_addr parsed{};
     if (Started || local.Player > 1 || !local.Epoch || !local.Build ||
         !local.Rom.Size || local.State.empty() || local.Firmware.empty() ||
         !expectedPeerRom.Size || !peerRom.valid() || !configuration ||
-        internalFilesDir.empty() || !tcpPort || tcpPort == UINT16_MAX ||
-        inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1)
+        internalFilesDir.empty())
     { error = "invalid live checkpoint transfer parameters"; return false; }
     Started = true;
     Local = std::move(local);
@@ -264,12 +278,9 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
     PeerRom = std::move(peerRom);
     Configuration = std::move(configuration);
     InternalFilesDir = internalFilesDir;
-    PeerIPv4 = peerIPv4;
-    TcpPort = tcpPort;
+    Link = &link;
     Worker = std::thread([this] {
-        const std::string address = PeerIPv4 + ":" + std::to_string(TcpPort);
-        Ok = NetplayExchangeLiveCheckpoints(
-            TcpPort, address, PeerIPv4, Local, ExpectedPeerRom,
+        Ok = Link->ExchangeCheckpoints(Local, ExpectedPeerRom,
             [this](const NetplayLiveCheckpoint& candidate, std::string& reason) {
                 LiveJitIdentity own, theirs;
                 if (!readLiveJitIdentity(Local.State, own, reason) ||

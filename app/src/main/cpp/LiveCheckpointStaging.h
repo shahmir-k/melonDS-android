@@ -82,6 +82,16 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     const std::string& internalFilesDir,
     std::string& error);
 
+// A replica before its checkpoint: scratch storage, the ROM loaded, started (any valid firmware;
+// the checkpoint's replaces it). Made ahead of the cut, off the emulator thread; completed at the
+// cut with the checkpoint (completeLiveReplica: identity checks, firmware, state).
+std::unique_ptr<PreparedLiveReplica> prepareLiveReplicaShell(
+    int player, const LiveRom& rom, const std::vector<melonDS::u8>& firmware,
+    std::shared_ptr<EmulatorConfiguration> configuration,
+    const std::string& internalFilesDir, std::string& error);
+bool completeLiveReplica(PreparedLiveReplica& replica, const melonDS::NetplayLiveCheckpoint& checkpoint,
+                         std::string& error);
+
 // Loads the checkpoint into an already prepared replica again (after the reversible proof ran it),
 // without reloading its ROM.
 bool reloadLiveReplica(PreparedLiveReplica& replica,
@@ -108,7 +118,7 @@ public:
                std::shared_future<LiveRom> peerRom,
                std::shared_ptr<EmulatorConfiguration> configuration,
                const std::string& internalFilesDir,
-               const std::string& peerIPv4, melonDS::u16 tcpPort,
+               melonDS::NetplayLiveLink& link,
                std::string& error);
     bool serviceOnEmulatorThread();
     bool finished() const { return Done.load(std::memory_order_acquire); }
@@ -127,8 +137,8 @@ private:
     std::unique_ptr<PreparedLiveReplica> Replica;
     std::shared_ptr<EmulatorConfiguration> Configuration;
     std::shared_future<LiveRom> PeerRom;
-    std::string InternalFilesDir, PeerIPv4, Error;
-    melonDS::u16 TcpPort = 0;
+    std::string InternalFilesDir, Error;
+    melonDS::NetplayLiveLink* Link = nullptr;
     bool Started = false;
     bool Ok = false;
     bool Taken = false;

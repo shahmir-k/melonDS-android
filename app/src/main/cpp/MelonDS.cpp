@@ -187,7 +187,7 @@ namespace MelonDSAndroid
     };
     static std::unique_ptr<LiveNetplayCandidate> liveCandidate;
 
-    void netplayDiscardStagedLive() { liveCandidate.reset(); }
+
 
     bool netplayStageLive(const NetplayLiveCheckpoint& local,
                           const NetplayLiveCheckpoint& peer,
@@ -374,11 +374,30 @@ namespace MelonDSAndroid
                                   NetplayLiveCheckpoint local,
                                   const NetplayRom& peerRom,
                                   std::shared_future<LiveRom> peerRomData,
-                                  const std::string& peerIPv4,
+                                  NetplayLiveLink& link,
                                   std::string& error)
     {
         return transfer.start(std::move(local), peerRom, std::move(peerRomData),
-                              currentConfiguration, internalFilesDir, peerIPv4, 7100, error);
+                              currentConfiguration, internalFilesDir, link, error);
+    }
+    bool netplayCaptureBaseline(std::vector<u8>& state)
+    {
+        if (!instance || !instance->getNds()) return false;
+        Savestate s;
+        if (!instance->getNds()->DoSavestate(&s) || s.Error || !s.Length()) return false;
+        state.assign((const u8*)s.Buffer(), (const u8*)s.Buffer() + s.Length());
+        return true;
+    }
+
+    // the proof's copy of this console, made while the checkpoints cross (the emu thread waits then)
+    static std::unique_ptr<PreparedLiveReplica> ownProofCopy;
+    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); }
+    void netplayPrepareOwnProofCopy(const NetplayLiveCheckpoint& local)
+    {
+        std::string error;
+        ownProofCopy = instance ? prepareLiveReplica(local, liveRomOf(*instance, activeRomPath), currentConfiguration,
+                                                     internalFilesDir, error) : nullptr;
+        if (instance) instance->getNds()->JIT.JitEnableExecute();
     }
 
     bool netplayProveScratchPair(const NetplayLiveCheckpoint& local,
@@ -404,8 +423,11 @@ namespace MelonDSAndroid
             ~RestoreSourceJitExecute() { Source->JIT.JitEnableExecute(); }
         } sourceJitExecute {instance->getNds()};
         // (the running console's own ROM buffer: no second read of the file)
-        auto own = prepareLiveReplica(local, liveRomOf(*instance, activeRomPath), currentConfiguration,
+        auto own = ownProofCopy && ownProofCopy->Console &&
+                   ownProofCopy->Console->getNds()->GetSysTimestamp() == local.RawClock ? std::move(ownProofCopy) :
+                   prepareLiveReplica(local, liveRomOf(*instance, activeRomPath), currentConfiguration,
                                       internalFilesDir, error);
+        ownProofCopy.reset();
         if (!own) return false;
         std::array<MelonInstance*, 2> consoles{};
         consoles[local.Player] = own->Console.get();

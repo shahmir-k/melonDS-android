@@ -946,6 +946,13 @@ static std::string ambientPeerRomPath;
 // The peer's ROM read and identified on a worker as soon as it is found (offer accepted), so the
 // cut does not read 268 MB from the SD card. (A packaged_task future: dropping it never waits.)
 static std::shared_future<MelonDSAndroid::LiveRom> ambientPeerRomData;
+// The live handoff's TCP link (NetplayLiveLink), opened with the offer: this console's state goes
+// over as the baseline at once, so the cut sends only a delta, and every later step of the cut
+// is one round trip on it.
+static std::unique_ptr<melonDS::NetplayLiveLink> ambientLiveLink;
+static u64 ambientPrefetchEpoch = 0;          // the offer whose peer ROM is being read ahead
+static std::string ambientPrefetchPath;       // the only library ROM with the peer's game code
+static u64 ambientPrefetchSize = 0;
 static std::shared_future<MelonDSAndroid::LiveRom> readLiveRomAhead(const std::string& path)
 {
     std::packaged_task<MelonDSAndroid::LiveRom()> task([path] { return MelonDSAndroid::readLiveRom(path); });
@@ -955,8 +962,7 @@ static std::shared_future<MelonDSAndroid::LiveRom> readLiveRomAhead(const std::s
 }
 struct AmbientLiveCut
 {
-    enum class Phase { WaitForPeerFence, WaitForIdle, Fencing, Transfer,
-                       Prepared, Armed, Go, Rollback };
+    enum class Phase { WaitForPeerFence, WaitForIdle, Fencing, Transfer, Go, Rollback };
     Phase PhaseNow;
     u64 Epoch = 0;
     int Mode = 0, Player = 0;
@@ -964,6 +970,7 @@ struct AmbientLiveCut
     std::array<u8, 16> Token{};
     std::string PeerIPv4, PeerRomPath, Error;
     std::shared_future<MelonDSAndroid::LiveRom> PeerRomData;
+    std::chrono::steady_clock::time_point FrozenAt;   // (the 'Just Play t=' freeze stamps)
     melonDS::NetplayRom OwnRom{}, PeerRom{};
     melonDS::NetplayLiveCheckpoint Local, Peer;
     std::array<u64, 4> Proof{};
@@ -971,7 +978,7 @@ struct AmbientLiveCut
     std::chrono::steady_clock::time_point Deadline;
     std::chrono::steady_clock::time_point LastTrace;
     bool InputFrozen = false;
-    bool FenceAcked = false, PreparedAcked = false, ArmedAcked = false, GoAcked = false;
+    bool FenceAcked = false, OwnCopyMade = false;
 };
 static std::unique_ptr<AmbientLiveCut> ambientLiveCut; // emulator/GL thread only, under ambientMu
 static std::atomic_bool ambientLiveCutActive{false};   // pause waits until the cut resolves
@@ -986,8 +993,6 @@ static const char* ambientCutPhaseName(AmbientLiveCut::Phase phase)
         case Phase::WaitForIdle: return "wait_idle";
         case Phase::Fencing: return "fencing";
         case Phase::Transfer: return "transfer";
-        case Phase::Prepared: return "prepared";
-        case Phase::Armed: return "armed";
         case Phase::Go: return "go";
         case Phase::Rollback: return "rollback";
     }
@@ -1090,6 +1095,11 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                           fence.LocalReady, fence.PeerReady, fence.Aborted);
         }
     }
+    // the freeze's per-phase times in the log ("Just Play t=<ms> <phase>")
+    auto stamp = [&](const char* what) {
+        Platform::Log(Platform::LogLevel::Info, "Just Play t=%lldms %s\n", (long long)std::chrono::duration_cast<
+                      std::chrono::milliseconds>(std::chrono::steady_clock::now() - cut.FrozenAt).count(), what);
+    };
     auto status = [&](const char* phase) {
         ambientHandoffStatus = std::string(phase) + "\t" + std::to_string(cut.Epoch) +
             "\t" + std::to_string(cut.Mode) + "\t" + std::to_string(cut.PeerID);
@@ -1152,27 +1162,50 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 { ambientCutRollback("cannot start Ambient cut fence"); return true; }
             MelonDSAndroid::netplayFreezeLiveInput();
             cut.InputFrozen = true;
+            cut.FrozenAt = std::chrono::steady_clock::now();
+            stamp("frozen (fence sent)");
+            {
+                // this console's state is final from its freeze: capture and send the checkpoint now,
+                // while the fence completes
+                std::string error;
+                if (!MelonDSAndroid::netplayCaptureLive(*ambientPtr, cut.OwnRom, cut.Player, cut.Local, error))
+                    { ambientCutRollback(error); return true; }
+                if (ambientLiveLink && !ambientLiveLink->SendCheckpoint(cut.Local, error))
+                    Platform::Log(Platform::LogLevel::Warn, "Just Play: early checkpoint not sent: %s\n", error.c_str());
+                stamp("checkpoint captured and sent");
+            }
             cut.PhaseNow = Phase::Fencing;
             cut.Deadline = now + std::chrono::seconds(8);
             status("fencing");
             return true;
         case Phase::Fencing:
+            // the checkpoints cross (and the replicas are staged) while the fence completes
+            if (!cut.TransferOwner)
+            {
+                std::string error;
+                cut.TransferOwner = std::make_unique<MelonDSAndroid::LiveCheckpointTransfer>();
+                if (!ambientLiveLink)
+                    { ambientCutRollback("live link to the peer was not opened"); return true; }
+                if (!MelonDSAndroid::netplayBeginLiveTransfer(*cut.TransferOwner, cut.Local,
+                        cut.PeerRom, cut.PeerRomData, *ambientLiveLink, error))
+                    { ambientCutRollback(error); return true; }
+            }
+            if (!cut.OwnCopyMade)
+            {
+                cut.OwnCopyMade = true;   // (the proof's own copy, while the checkpoints cross)
+                MelonDSAndroid::netplayPrepareOwnProofCopy(cut.Local);
+                stamp("own proof copy ready");
+            }
+            cut.TransferOwner->serviceOnEmulatorThread();
             if (!cut.FenceAcked && ambientPtr->CanAcknowledgeHandoffFence())
                 cut.FenceAcked = ambientPtr->AcknowledgeHandoffFence();
             if (ambientPtr->HandoffFenceComplete())
             {
-                std::string error;
-                if (!MelonDSAndroid::netplayCaptureLive(*ambientPtr, cut.OwnRom, cut.Player,
-                                                        cut.Local, error))
-                    { ambientCutRollback(error); return true; }
-                cut.TransferOwner = std::make_unique<MelonDSAndroid::LiveCheckpointTransfer>();
-                if (!MelonDSAndroid::netplayBeginLiveTransfer(*cut.TransferOwner, cut.Local,
-                        cut.PeerRom, cut.PeerRomData, cut.PeerIPv4, error))
-                    { ambientCutRollback(error); return true; }
+                stamp("fence complete");
                 cut.PhaseNow = Phase::Transfer;
                 cut.Deadline = now + std::chrono::seconds(35);
             }
-            status(cut.PhaseNow == Phase::Transfer ? "transferring" : "fencing");
+            status("transferring");
             return true;
         case Phase::Transfer:
             cut.TransferOwner->serviceOnEmulatorThread();
@@ -1183,52 +1216,31 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 if (!cut.TransferOwner->take(cut.Peer, replica, error))
                     { ambientCutRollback(error); return true; }
                 cut.TransferOwner.reset();
+                stamp("checkpoints exchanged, peer replica staged");
                 if (!MelonDSAndroid::netplayProveScratchPair(
                         cut.Local, cut.Peer, replica, cut.Proof, error))
                     { ambientCutRollback(error); return true; }
+                stamp("reversible proof done");
                 if (!MelonDSAndroid::netplayStageLive(cut.Local, cut.Peer, std::move(replica),
                         cut.Mode == melonDS::AmbientLAN::HandoffHostedNetplay,
                         cut.PeerIPv4, error))
                     { ambientCutRollback(error); return true; }
-                cut.PreparedAcked = ambientPtr->AcknowledgeHandoffPrepared();
-                if (!cut.PreparedAcked)
-                    { ambientCutRollback("cannot vote PREPARED on Ambient link"); return true; }
-                cut.PhaseNow = Phase::Prepared;
-                cut.Deadline = now + std::chrono::seconds(8);
-            }
-            status(cut.PhaseNow == Phase::Prepared ? "verifying" : "transferring");
-            return true;
-        case Phase::Prepared:
-            if (ambientPtr->HandoffPreparedComplete())
-            {
-                cut.ArmedAcked = ambientPtr->AcknowledgeHandoffArmed();
-                if (!cut.ArmedAcked)
-                    { ambientCutRollback("cannot vote ARMED on Ambient link"); return true; }
-                cut.PhaseNow = Phase::Armed;
-                cut.Deadline = now + std::chrono::seconds(8);
-            }
-            status("verifying");
-            return true;
-        case Phase::Armed:
-            if (ambientPtr->HandoffArmedComplete())
-            {
-                cut.GoAcked = ambientPtr->AcknowledgeHandoffGo();
-                if (!cut.GoAcked)
-                    { ambientCutRollback("cannot vote GO on Ambient link"); return true; }
+                // (both prepare votes crossed with the checkpoints on the live link; the start
+                // manifest is the last step, no Ambient PREPARED/ARMED/GO round trips)
                 cut.PhaseNow = Phase::Go;
                 cut.Deadline = now + std::chrono::seconds(8);
             }
-            status("verifying");
+            status(cut.PhaseNow == Phase::Go ? "verifying" : "transferring");
             return true;
         case Phase::Go:
-            if (ambientPtr->HandoffGoComplete())
+            if (ambientLiveLink)
             {
                 std::string error;
                 status("committing");
+                stamp("start manifest exchange");
                 guard.unlock();
-                const bool started = melonDS::NetplayAwaitLiveStart(7101,
-                    cut.PeerIPv4 + ":7101", cut.PeerIPv4, cut.Local, cut.Peer,
-                    ambientLiveCutCancel, error, cut.Proof);
+                const bool started = ambientLiveLink->ExchangeStart(cut.Local, cut.Peer, cut.Proof,
+                                                                    ambientLiveCutCancel, error);
                 const bool proven = started && MelonDSAndroid::netplayProveStagedLive(error);
                 guard.lock();
                 if (ambientLiveCutCancel.load(std::memory_order_acquire))
@@ -1252,6 +1264,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                                   "Just Play live commit unresolved: %s\n", error.c_str());
                     return false;
                 }
+                stamp("committed (first Netplay frame next)");
                 close("committed");
                 return false;
             }
@@ -1310,7 +1323,7 @@ static void ambientUninstall()
     ambientRomPublished = false;
     ambientPeerRomEpoch = 0;
     ambientPeerRom = {};
-    ambientPeerRomPath.clear(); ambientPeerRomData = {};
+    ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
     if (melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
 }
@@ -1341,7 +1354,7 @@ static void ambientInstall()
     ambientRomPublished = false;
     ambientPeerRomEpoch = 0;
     ambientPeerRom = {};
-    ambientPeerRomPath.clear(); ambientPeerRomData = {};
+    ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
     melonDS::MPInterface::Set(std::move(a), melonDS::MPInterface_Ambient);
     lanApplyRecvTimeout();
 }
@@ -1394,7 +1407,7 @@ static bool ambientHandoffService()
             ambientRomPublished = false;
             ambientPeerRomEpoch = 0;
             ambientPeerRom = {};
-            ambientPeerRomPath.clear(); ambientPeerRomData = {};
+            ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
             ambientHandoffStatus = "none";
             ambientHandoffTerminalStatus.clear();
         }
@@ -1402,6 +1415,51 @@ static bool ambientHandoffService()
     melonDS::AmbientLAN::HandoffOfferStatus status{};
     if (ambientPtr->GetHandoffOfferStatus(status))
     {
+        // As soon as an offer exists (before anyone answers), read the peer's ROM ahead: the one
+        // library ROM with the peer's game code (from its presence). Reading and hashing 268 MB
+        // from the SD card took seconds of the RG DS cut freeze when it started at the answer.
+        if (status.Epoch != ambientPrefetchEpoch)
+        {
+            ambientPrefetchEpoch = status.Epoch;
+            ambientPrefetchPath.clear();
+            std::string peerIP;
+            ambientLiveLink.reset();
+            if (ambientPtr->HandoffPeerIPv4(peerIP))
+            {
+                ambientLiveLink = std::make_unique<melonDS::NetplayLiveLink>(status.Outgoing ? 0 : 1, 7100, peerIP);
+                std::vector<u8> base;
+                if (MelonDSAndroid::netplayCaptureBaseline(base)) ambientLiveLink->SendBaseline(std::move(base));
+            }
+            char peerHex[17];
+            snprintf(peerHex, sizeof(peerHex), "%016llx", (unsigned long long)status.PeerID);
+            std::string game;
+            for (const std::string& row : ambientPtr->NearbyRows())
+                if (row.compare(0, 16, peerHex) == 0)
+                {
+                    const size_t a = row.find('\t'), b = a == std::string::npos ? a : row.find('\t', a + 1);
+                    if (b != std::string::npos) game = row.substr(b + 1, 4);
+                }
+            int matches = 0;
+            std::string match;   // (the first library ROM with the peer's game code)
+            for (const std::string& path : ambientRomLibrary)
+            {
+                if (game.size() != 4) break;
+                Platform::FileHandle* f = Platform::OpenFile(path, Platform::FileMode::Read);
+                if (!f) continue;
+                u8 head[16] = {};
+                const bool read = Platform::FileRead(head, 16, 1, f) == 1;
+                const u64 size = Platform::FileLength(f);
+                Platform::CloseFile(f);
+                if (read && !memcmp(head + 12, game.data(), 4) && !matches++) { match = path; ambientPrefetchSize = size; }
+            }
+            if (matches)
+            {
+                ambientPrefetchPath = match;
+                ambientPeerRomData = readLiveRomAhead(match);
+                Platform::Log(Platform::LogLevel::Info, "Just Play: reading the peer's ROM ahead (%s, %d candidates)\n",
+                              game.c_str(), matches);
+            }
+        }
         if (status.Accepted && ambientRomEpoch != status.Epoch)
         {
             // This is the digest of the bytes actually loaded into the source
@@ -1436,25 +1494,29 @@ static bool ambientHandoffService()
             if (!sourcePath.empty()) library.insert(library.begin(), sourcePath);
             ambientPeerRomEpoch = status.Epoch;
             ambientPeerRom = peerRom;
-            ambientPeerRomPath.clear(); ambientPeerRomData = {};
-            g.unlock();
-            const std::string found = melonDS::NetplayFindRom(peerRom, library, true);
-            g.lock();
-            melonDS::AmbientLAN::HandoffOfferStatus current{};
-            melonDS::NetplayRom currentPeer{};
-            if (!ambientPtr || ambientPeerRomEpoch != status.Epoch ||
-                !ambientPtr->GetHandoffOfferStatus(current) || !current.Accepted ||
-                current.Epoch != status.Epoch ||
-                !ambientPtr->GetPeerHandoffRom(currentPeer) || currentPeer != peerRom)
-            {
-                if (ambientLiveCut) ambientCutRollback("peer ROM identity changed during cut");
-                return ambientLiveCut != nullptr;
-            }
-            ambientPeerRomPath = found;
-            if (!found.empty()) ambientPeerRomData = readLiveRomAhead(found);
+            // Found and read on a worker, never on the emulator thread (hashing a second 268 MB candidate
+            // there froze the RG DS cut for 4 s): the ROM read ahead since the offer when it is the
+            // peer's, else the library search, then a read of the ROM it finds.
+            std::shared_future<MelonDSAndroid::LiveRom> ahead =
+                ambientPrefetchSize == peerRom.Size ? ambientPeerRomData : std::shared_future<MelonDSAndroid::LiveRom>{};
+            std::packaged_task<MelonDSAndroid::LiveRom()> task([ahead, peerRom, library] {
+                if (ahead.valid() && ahead.get().Bytes && ahead.get().Rom == peerRom) return ahead.get();
+                const std::string found = melonDS::NetplayFindRom(peerRom, library, true);
+                return found.empty() ? MelonDSAndroid::LiveRom{} : MelonDSAndroid::readLiveRom(found);
+            });
+            ambientPeerRomData = task.get_future().share();
+            std::thread(std::move(task)).detach();
+            ambientPeerRomPath.clear();
+        }
+        const bool peerRomSettled = peerDescribed && ambientPeerRomData.valid() &&
+            ambientPeerRomData.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        if (peerRomSettled && ambientPeerRomPath.empty())
+        {
+            const MelonDSAndroid::LiveRom& rom = ambientPeerRomData.get();
+            if (rom.Bytes && rom.Rom == peerRom) ambientPeerRomPath = rom.Path;
         }
         const char* phase = !status.Accepted ? (status.Outgoing ? "outgoing" : "incoming") :
-            !peerDescribed ? "accepted" :
+            !peerDescribed || !peerRomSettled ? "accepted" :
             ambientPeerRomPath.empty() ? "missing_rom" : "rom_ready";
         char row[96];
         snprintf(row, sizeof(row), "%s\t%llu\t%d\t%llu", phase,
@@ -1471,7 +1533,7 @@ static bool ambientHandoffService()
         ambientRomPublished = false;
         ambientPeerRomEpoch = 0;
         ambientPeerRom = {};
-        ambientPeerRomPath.clear(); ambientPeerRomData = {};
+        ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
         ambientHandoffStatus = ambientHandoffTerminalStatus.empty() ?
             "closed\t0\t0\t0" : ambientHandoffTerminalStatus;
     }
@@ -1482,7 +1544,7 @@ static bool ambientHandoffService()
         ambientRomPublished = false;
         ambientPeerRomEpoch = 0;
         ambientPeerRom = {};
-        ambientPeerRomPath.clear(); ambientPeerRomData = {};
+        ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
         ambientHandoffStatus = ambientHandoffTerminalStatus.empty() ?
             "closed\t0\t0\t0" : ambientHandoffTerminalStatus;
     }
@@ -1947,7 +2009,7 @@ Java_me_magnum_melonds_MelonEmulator_ambientSetRomLibrary(JNIEnv* env, jobject, 
     // available without asking either player to re-open the game.
     ambientPeerRomEpoch = 0;
     ambientPeerRom = {};
-    ambientPeerRomPath.clear(); ambientPeerRomData = {};
+    ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
 #endif
 }
 
@@ -2147,6 +2209,7 @@ double getCurrentMillis() {
 
 void* emulate(void*)
 {
+    Platform::Log(Platform::LogLevel::Info, "emu tid=%d\n", (int)gettid());   // (handofftest.sh samples this thread)
     double startTick = getCurrentMillis();
     double lastTick = startTick;
     double lastMeasureFpsTick = startTick;

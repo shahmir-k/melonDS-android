@@ -31,16 +31,34 @@ static bool readLiveJitIdentityBytes(const u8* bytes, size_t length,
     if (!bytes || !length || length > UINT32_MAX)
         { error = "live checkpoint has no valid savestate"; return false; }
     Savestate state(const_cast<u8*>(bytes), static_cast<u32>(length), false);
-    if (state.Error || !state.HasSection("JITS"))
-        { error = "live checkpoint has no JIT profile section"; return false; }
-    state.Section("JITS");
-    u32 present = 0;
-    state.Var64(&identity.Build);
-    state.Var32(&identity.Configuration);
-    state.Var32(&present);
-    if (state.Error || !identity.Build || !identity.Configuration || present != 1)
-        { error = "live checkpoint has no restorable JIT profile"; return false; }
-    return true;
+    if (state.Error || length < 16)
+        { error = "live checkpoint has invalid savestate header"; return false; }
+    // The peer supplied these bytes. Do not use Savestate::FindSection here:
+    // a corrupt zero section length can leave that legacy scanner looping.
+    for (size_t offset = 16; offset < length;)
+    {
+        if (length - offset < 16)
+            { error = "live checkpoint has truncated section header"; return false; }
+        u32 sectionLength = 0;
+        memcpy(&sectionLength, bytes + offset + 4, sizeof(sectionLength));
+        if (sectionLength < 16 || sectionLength > length - offset)
+            { error = "live checkpoint has invalid section length"; return false; }
+        if (memcmp(bytes + offset, "JITS", 4) == 0)
+        {
+            if (sectionLength < 32)
+                { error = "live checkpoint has truncated JIT profile"; return false; }
+            memcpy(&identity.Build, bytes + offset + 16, sizeof(identity.Build));
+            memcpy(&identity.Configuration, bytes + offset + 24, sizeof(identity.Configuration));
+            u32 present = 0;
+            memcpy(&present, bytes + offset + 28, sizeof(present));
+            if (!identity.Build || !identity.Configuration || present != 1)
+                { error = "live checkpoint has no restorable JIT profile"; return false; }
+            return true;
+        }
+        offset += sectionLength;
+    }
+    error = "live checkpoint has no JIT profile section";
+    return false;
 }
 
 bool readLiveJitIdentity(const std::vector<u8>& bytes,
@@ -174,14 +192,16 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     replica->Console->start();
     replica->Started = true;
 
-    Savestate scratchState;
-    if (!nds->DoSavestate(&scratchState) || scratchState.Error || !scratchState.Length())
-        { error = "cannot inspect scratch JIT configuration"; return nullptr; }
-    LiveJitIdentity scratchJit;
-    if (!readLiveJitIdentityBytes(static_cast<const u8*>(scratchState.Buffer()),
-                                  scratchState.Length(), scratchJit, error)) return nullptr;
-    if (!(sourceJit == scratchJit))
-        { error = "live checkpoint JIT build or configuration differs from this device"; return nullptr; }
+    {
+        Savestate scratchState;
+        if (!nds->DoSavestate(&scratchState) || scratchState.Error || !scratchState.Length())
+            { error = "cannot inspect scratch JIT configuration"; return nullptr; }
+        LiveJitIdentity scratchJit;
+        if (!readLiveJitIdentityBytes(static_cast<const u8*>(scratchState.Buffer()),
+                                      scratchState.Length(), scratchJit, error)) return nullptr;
+        if (!(sourceJit == scratchJit))
+            { error = "live checkpoint JIT build or configuration differs from this device"; return nullptr; }
+    }
 
     Savestate state(const_cast<u8*>(checkpoint.State.data()),
                     static_cast<u32>(checkpoint.State.size()), false);

@@ -380,6 +380,7 @@ class EmulatorActivity : AppCompatActivity() {
     private val showMultiplayerDialog = mutableStateOf(false)
     private val ambientHandoffScreen = mutableStateOf<AmbientHandoffScreen?>(null)
     private val ambientHandoffMonitor = AmbientHandoffMonitor()
+    private var peerLeftShown = false
     private var ambientHandoffNativeStatus = "none"
 
     private val activeOverlays = EmulatorOverlayTracker(
@@ -590,6 +591,11 @@ class EmulatorActivity : AppCompatActivity() {
                     runGroupCommand(3 shl 8)
                     Toast.makeText(this@EmulatorActivity, getString(R.string.multiplayer_peer_lost), Toast.LENGTH_LONG).show()
                 }
+                // a live (switched from LAN) session: the game plays on alone, nothing reloads
+                if (status == "PEER LEFT" && !peerLeftShown) {
+                    peerLeftShown = true
+                    Toast.makeText(this@EmulatorActivity, getString(R.string.multiplayer_peer_left_live), Toast.LENGTH_LONG).show()
+                } else if (status == null) peerLeftShown = false
                 // session speed (any player's fast-forward key): "FF 2x by P2" / "uncapped by P1", "" = normal.
                 // The session's own state (not parsed from the status: a wait or a player who left hid it).
                 // No session: nothing to announce; the next one starts from normal speed.

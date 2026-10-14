@@ -1871,6 +1871,12 @@ Java_me_magnum_melonds_MelonEmulator_ambientConfigure(JNIEnv* env, jobject thiz,
 {
 #ifdef LITEV_AMBIENT_LAN
     std::lock_guard<std::mutex> g(ambientMu);
+    // a live Netplay session's end: back to discovery with the same console (no reload)
+    MelonDSAndroid::netplaySetLiveExitHandler([] {
+        ambientInstall();
+        if (MelonDSAndroid::netplayLocalWifiOn() && melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
+            melonDS::MPInterface::Get().Begin(0);
+    });
     ambientCfg.DeviceID = (u64)deviceId;
     ambientCfg.Name = lanJString(env, name);
     // Presence advertises the live handoff compatibility (protocol + emulation options), not the

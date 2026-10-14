@@ -1,6 +1,7 @@
 #ifndef MELONDS_MELONDS_H
 #define MELONDS_MELONDS_H
 
+#include <functional>
 #include <future>
 #include <list>
 #include <array>
@@ -50,6 +51,10 @@ namespace MelonDSAndroid {
     extern melonDS::NetplayRom currentRomDescription();
     extern bool netplayLiveSourceIdle();
     extern bool netplayLiveSourceIsMPClient();
+    // live (handed-off) Netplay's end: the frontend's way back to discovery, called on the emu thread
+    extern void netplaySetLiveExitHandler(std::function<void()> handler);
+    extern bool netplayLocalWifiOn();
+    extern void netplayRequestLiveLeave();
     extern void netplayFreezeLiveInput();
     extern void netplayResumeLiveInput();
     extern bool netplayCaptureLive(melonDS::AmbientLAN& ambient,

@@ -139,6 +139,11 @@ namespace MelonDSAndroid
         bool live = false;
         bool liveFirstInputSubmitted = false;
         NetplayFrameInput liveFirstInput;
+        // A live session ends by the game (NetplayLiveExit: every device leaves after the same
+        // frame) or when the other player is gone (liveLeave requested from outside); the local
+        // console then plays on alone in discovery (netplayLeaveLive), never reloaded.
+        std::unique_ptr<NetplayLiveExit> liveExit;
+        std::atomic<bool> liveEnded {false}, liveLeave {false};
         // Hosted Netplay (docs/HYBRID-NETPLAY.md, design F): the host (player 0) runs every console
         // and records what the link returns to each; every guest runs only its own console, whose
         // link replays the host's record of it. The guests' inputs travel to the host only.
@@ -233,6 +238,7 @@ namespace MelonDSAndroid
         session.autoDelay = false;
         session.hosted = hosted;
         session.live = true;
+        session.liveExit = std::make_unique<NetplayLiveExit>(2);
 
         int inputPlayer = local.Player;
         int peerInputPlayer = peer.Player;
@@ -1251,7 +1257,13 @@ namespace MelonDSAndroid
         // plain Netplay: every device waits for every input, so a player gone for good (its app
         // closed, its session ended by a dropped group link) would hold the others forever
         if (!netplay->hosted && netplay->input && netplay->input->MsSincePeer() > kNetplayPeerLostMs
-            && std::chrono::steady_clock::now() - netplay->created > std::chrono::seconds(30)) return "PEER LOST";
+            && std::chrono::steady_clock::now() - netplay->created > std::chrono::seconds(30))
+        {
+            // a live session never reloads the game: the local console plays on alone (as a DS
+            // whose partner walked out of range), back in discovery
+            if (netplay->live) { netplayRequestLiveLeave(); return "PEER LEFT"; }
+            return "PEER LOST";
+        }
         std::string status = netplay->waiting ? "waiting for other player" : netplay->hosted ? "Hosted Netplay" : "Netplay";
 #ifdef LITEV_HOSTED_NETPLAY
         if (netplay->record)
@@ -1319,6 +1331,8 @@ namespace MelonDSAndroid
 #endif
             hostedEndFrame(*r->console, r->player, f, in);
             netplayHash(*r->console, r->player, f + 1);
+            if (s.liveExit && s.liveExit->EndFrame(r->player, f, r->console->getNds()->Wifi.MPExchanges))
+                break;   // (the local console leaves after this same frame)
         }
     }
 
@@ -1840,10 +1854,59 @@ namespace MelonDSAndroid
         }
     }
 
+    // A live session's end: the local console - the same object that ran in Netplay - plays on alone,
+    // back in discovery. No state moves, nothing reloads: the remote copies are dropped (their
+    // scratch saves are never written), the link goes back to Ambient (liveExitHandler, from the
+    // frontend), and the inputs already scheduled for the next frames run first.
+    static std::vector<NetplayFrameInput> liveScheduled;
+    static std::function<void()> liveExitHandler;
+    void netplaySetLiveExitHandler(std::function<void()> handler) { liveExitHandler = std::move(handler); }
+    bool netplayLocalWifiOn() { return instance && instance->getNds() && instance->getNds()->Wifi.IsPoweredOn(); }
+    void netplayRequestLiveLeave()
+    {
+        // the other player is gone: end the waits now (they never complete), leave on the next frame
+        if (!netplay || !netplay->live || netplay->liveLeave.exchange(true)) return;
+        if (netplay->liveExit) netplay->liveExit->Cancel();
+        netplayStopLink();
+        if (netplay->input) netplay->input->Abort();
+    }
+    static void netplayLeaveLive()
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const bool byGame = netplay->liveEnded && !netplay->liveLeave;
+        const int last = netplay->frame - 1;
+        liveScheduled.clear();
+        if (byGame && netplay->input)
+            for (int f = netplay->frame; f < netplay->frame + netplay->input->CurrentDelay() &&
+                                         netplay->input->HasInput(netplay->player, f); f++)
+                liveScheduled.push_back(netplay->input->Get(netplay->player, f));
+        if (netplay->liveExit) netplay->liveExit->Cancel();
+        netplayStop();
+        if (!liveScheduled.empty()) instance->setInputDeferred(true);   // (netplayStop resumed live input)
+        if (instance->getInstanceId() != 0) instance->reassignInstanceId(0);
+        if (liveExitHandler) liveExitHandler();
+        Platform::Log(Platform::LogLevel::Info, "Netplay: live session ended %s after frame %d; playing on alone in "
+                      "discovery (%zu scheduled inputs first), swap %.1f ms\n", byGame ? "by the game" : "(other player gone)",
+                      last, liveScheduled.size(),
+                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+    }
+
     u32 loop()
     {
+        if (netplay && netplay->live && (netplay->liveEnded || netplay->liveLeave))
+            netplayLeaveLive();
         MPInterface::Get().Process();
         if (!netplay) instance->updateBattery();
+        if (!netplay && !liveScheduled.empty())
+        {
+            // the inputs this console's Netplay had already scheduled (the input delay), in order;
+            // live input from the frame after the last
+            netplayApply(*instance, liveScheduled.front());
+            liveScheduled.erase(liveScheduled.begin());
+            const u32 lines = instance->runFrame();
+            if (liveScheduled.empty()) instance->setInputDeferred(false);
+            return lines;
+        }
         if (netplay)
         {
             NetplayFrameInput local;
@@ -1972,6 +2035,8 @@ namespace MelonDSAndroid
 #endif
             netplayHash(*instance, netplay->player, netplay->frame);
             if (netplay->frame % 60 == 0) netplayCheck(*netplay);
+            if (netplay->liveExit && netplay->liveExit->EndFrame(netplay->player, frame, instance->getNds()->Wifi.MPExchanges))
+                netplay->liveEnded = true;   // every console stops after this frame: leave before the next
             return lines;
         }
         recordService();

@@ -805,6 +805,7 @@
     <string name="multiplayer_speed">Netplay: %1$s</string>
     <string name="multiplayer_speed_normal">Netplay: normal speed</string>
     <string name="multiplayer_peer_lost">Another player stopped responding: the Netplay session ended</string>
+    <string name="multiplayer_peer_left_live">The other player left. Your game goes on.</string>
     <string name="multiplayer_leave_group_confirm">Leave the group? You stop following the host. A running Netplay session ends here and the game restarts normally.</string>
     <string name="multiplayer_runs_consoles">runs every console</string>
     <string name="multiplayer_pick_server_hint">Tap a player to make them the host that runs every console (pick the strongest device).</string>

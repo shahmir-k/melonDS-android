@@ -2,6 +2,7 @@
 #define LIVE_CHECKPOINT_STAGING_H
 
 #include <atomic>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -57,13 +58,26 @@ struct LiveJitIdentity
 bool readLiveJitIdentity(const std::vector<melonDS::u8>& state,
                          LiveJitIdentity& identity, std::string& error);
 
+// A ROM in memory for a replica: read and identified ahead of the cut (readLiveRom, on a worker,
+// once the peer's ROM is found), or the running console's own buffer. Reading and hashing a
+// 268 MB ROM file took 2-7 s of the RG DS cut freeze per replica.
+struct LiveRom
+{
+    std::string Path;
+    std::shared_ptr<const melonDS::u8[]> Bytes;
+    melonDS::u32 Length = 0;
+    melonDS::NetplayRom Rom;
+};
+LiveRom readLiveRom(const std::string& path);
+LiveRom liveRomOf(const MelonInstance& console, const std::string& path);
+
 // Must run on the emulator/GL thread while the original Ambient console is
 // frozen. ROM bytes are verified, and all savestate writes target scratch
 // storage. The caller retains the returned object through PREPARED/ARMED/GO;
 // rebuilding a replica after the vote would invalidate that vote.
 std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     const melonDS::NetplayLiveCheckpoint& checkpoint,
-    const std::string& romPath,
+    const LiveRom& rom,
     std::shared_ptr<EmulatorConfiguration> configuration,
     const std::string& internalFilesDir,
     std::string& error);
@@ -91,7 +105,7 @@ public:
 
     bool start(melonDS::NetplayLiveCheckpoint local,
                const melonDS::NetplayRom& expectedPeerRom,
-               const std::string& peerRomPath,
+               std::shared_future<LiveRom> peerRom,
                std::shared_ptr<EmulatorConfiguration> configuration,
                const std::string& internalFilesDir,
                const std::string& peerIPv4, melonDS::u16 tcpPort,
@@ -112,7 +126,8 @@ private:
     melonDS::NetplayRom ExpectedPeerRom;
     std::unique_ptr<PreparedLiveReplica> Replica;
     std::shared_ptr<EmulatorConfiguration> Configuration;
-    std::string PeerRomPath, InternalFilesDir, PeerIPv4, Error;
+    std::shared_future<LiveRom> PeerRom;
+    std::string InternalFilesDir, PeerIPv4, Error;
     melonDS::u16 TcpPort = 0;
     bool Started = false;
     bool Ok = false;

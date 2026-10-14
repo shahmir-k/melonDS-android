@@ -351,11 +351,11 @@ namespace MelonDSAndroid
     bool netplayBeginLiveTransfer(LiveCheckpointTransfer& transfer,
                                   NetplayLiveCheckpoint local,
                                   const NetplayRom& peerRom,
-                                  const std::string& peerRomPath,
+                                  std::shared_future<LiveRom> peerRomData,
                                   const std::string& peerIPv4,
                                   std::string& error)
     {
-        return transfer.start(std::move(local), peerRom, peerRomPath,
+        return transfer.start(std::move(local), peerRom, std::move(peerRomData),
                               currentConfiguration, internalFilesDir, peerIPv4, 7100, error);
     }
 
@@ -381,7 +381,8 @@ namespace MelonDSAndroid
             NDS* Source;
             ~RestoreSourceJitExecute() { Source->JIT.JitEnableExecute(); }
         } sourceJitExecute {instance->getNds()};
-        auto own = prepareLiveReplica(local, activeRomPath, currentConfiguration,
+        // (the running console's own ROM buffer: no second read of the file)
+        auto own = prepareLiveReplica(local, liveRomOf(*instance, activeRomPath), currentConfiguration,
                                       internalFilesDir, error);
         if (!own) return false;
         std::array<MelonInstance*, 2> consoles{};

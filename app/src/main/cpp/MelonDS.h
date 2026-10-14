@@ -1,6 +1,7 @@
 #ifndef MELONDS_MELONDS_H
 #define MELONDS_MELONDS_H
 
+#include <future>
 #include <list>
 #include <array>
 #include <vector>
@@ -23,6 +24,7 @@ namespace melonDS { class AmbientLAN; struct NetplayRom; struct NetplayLiveCheck
 namespace MelonDSAndroid {
     struct PreparedLiveReplica;
     class LiveCheckpointTransfer;
+    struct LiveRom;
     typedef struct {
         std::vector<u32> code;
     } Cheat;
@@ -57,7 +59,7 @@ namespace MelonDSAndroid {
     extern bool netplayBeginLiveTransfer(LiveCheckpointTransfer& transfer,
                                          melonDS::NetplayLiveCheckpoint local,
                                          const melonDS::NetplayRom& peerRom,
-                                         const std::string& peerRomPath,
+                                         std::shared_future<LiveRom> peerRomData,
                                          const std::string& peerIPv4,
                                          std::string& error);
     // Runs two reversible Lockstep frames on disposable copies of both saved

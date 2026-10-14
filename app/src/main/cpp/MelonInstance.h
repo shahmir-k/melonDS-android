@@ -39,6 +39,12 @@ public:
     bool reassignInstanceId(int newId);
 
     bool loadRom(std::string romPath, std::string sramPath);
+    // ROM bytes already in memory (a live handoff replica: the peer ROM read ahead of the cut, or
+    // the running console's own ROM); `rom` is their identity.
+    bool loadRomBytes(std::shared_ptr<const melonDS::u8[]> romData, melonDS::u32 length,
+                      const melonDS::NetplayRom& rom, std::string sramPath);
+    // The cart's ROM buffer (for a replica of this console: no second read of the file)
+    std::shared_ptr<const melonDS::u8[]> romBytes(melonDS::u32& length) const;
     bool loadGbaRom(std::string romPath, std::string sramPath);
     void loadRumblePak();
     void loadGbaMemoryExpansion();

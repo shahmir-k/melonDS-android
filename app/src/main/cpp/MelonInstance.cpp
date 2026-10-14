@@ -389,9 +389,7 @@ void MelonInstance::blitAcceleratedFrame(u32 srcArrayTex, u32 dstTex, int dstWid
 bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
 {
     loadedRom = {};
-    unique_ptr<u8[]> sramData;
     u32 romFileLength = 0;
-    u32 sramFileLength = 0;
 
     // Ordinary Netplay replicas share ROM storage. A standalone source and
     // pre-commit scratch replica must instead load independent original bytes:
@@ -410,6 +408,15 @@ bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
         NetplayDescribeRomBytes(romData.get(), romFileLength);
     if (!shareRom && !acquiredRom.Size)
         return false;
+    return loadRomBytes(std::move(romData), romFileLength, acquiredRom, sramPath);
+}
+
+bool MelonInstance::loadRomBytes(std::shared_ptr<const u8[]> romData, u32 romFileLength,
+                                 const NetplayRom& acquiredRom, std::string sramPath)
+{
+    loadedRom = {};
+    unique_ptr<u8[]> sramData;
+    u32 sramFileLength = 0;
 
     // SRAM file loading
     FileHandle* sramFile = Platform::OpenFile(sramPath, FileMode::Read);
@@ -449,6 +456,13 @@ bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
     loadedRom = acquiredRom;
 
     return true;
+}
+
+std::shared_ptr<const u8[]> MelonInstance::romBytes(u32& length) const
+{
+    const auto* cart = nds ? nds->NDSCartSlot.GetCart() : nullptr;
+    length = cart ? cart->GetROMLength() : 0;
+    return cart ? cart->GetROMOwner() : nullptr;
 }
 
 bool MelonInstance::loadGbaRom(std::string romPath, std::string sramPath)

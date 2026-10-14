@@ -2,6 +2,8 @@
 #include <EGL/eglext.h>
 #include <jni.h>
 #include <algorithm>
+#include <thread>
+#include <future>
 #include <chrono>
 #include <array>
 #include <deque>
@@ -941,6 +943,16 @@ static bool ambientRomPublished = false;
 static u64 ambientPeerRomEpoch = 0;
 static melonDS::NetplayRom ambientPeerRom{};
 static std::string ambientPeerRomPath;
+// The peer's ROM read and identified on a worker as soon as it is found (offer accepted), so the
+// cut does not read 268 MB from the SD card. (A packaged_task future: dropping it never waits.)
+static std::shared_future<MelonDSAndroid::LiveRom> ambientPeerRomData;
+static std::shared_future<MelonDSAndroid::LiveRom> readLiveRomAhead(const std::string& path)
+{
+    std::packaged_task<MelonDSAndroid::LiveRom()> task([path] { return MelonDSAndroid::readLiveRom(path); });
+    auto future = task.get_future().share();
+    std::thread(std::move(task)).detach();
+    return future;
+}
 struct AmbientLiveCut
 {
     enum class Phase { WaitForPeerFence, WaitForIdle, Fencing, Transfer,
@@ -951,6 +963,7 @@ struct AmbientLiveCut
     u64 PeerID = 0;
     std::array<u8, 16> Token{};
     std::string PeerIPv4, PeerRomPath, Error;
+    std::shared_future<MelonDSAndroid::LiveRom> PeerRomData;
     melonDS::NetplayRom OwnRom{}, PeerRom{};
     melonDS::NetplayLiveCheckpoint Local, Peer;
     std::array<u64, 4> Proof{};
@@ -1044,6 +1057,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
         cut->OwnRom = ambientOwnRom;
         cut->PeerRom = peerRom;
         cut->PeerRomPath = ambientPeerRomPath;
+        cut->PeerRomData = ambientPeerRomData;
         cut->PeerIPv4 = std::move(peerIP);
         cut->Deadline = now + std::chrono::seconds(15);
         ambientLiveCut = std::move(cut);
@@ -1153,7 +1167,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                     { ambientCutRollback(error); return true; }
                 cut.TransferOwner = std::make_unique<MelonDSAndroid::LiveCheckpointTransfer>();
                 if (!MelonDSAndroid::netplayBeginLiveTransfer(*cut.TransferOwner, cut.Local,
-                        cut.PeerRom, cut.PeerRomPath, cut.PeerIPv4, error))
+                        cut.PeerRom, cut.PeerRomData, cut.PeerIPv4, error))
                     { ambientCutRollback(error); return true; }
                 cut.PhaseNow = Phase::Transfer;
                 cut.Deadline = now + std::chrono::seconds(35);
@@ -1296,7 +1310,7 @@ static void ambientUninstall()
     ambientRomPublished = false;
     ambientPeerRomEpoch = 0;
     ambientPeerRom = {};
-    ambientPeerRomPath.clear();
+    ambientPeerRomPath.clear(); ambientPeerRomData = {};
     if (melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
         melonDS::MPInterface::Set(melonDS::MPInterface_Dummy);
 }
@@ -1327,7 +1341,7 @@ static void ambientInstall()
     ambientRomPublished = false;
     ambientPeerRomEpoch = 0;
     ambientPeerRom = {};
-    ambientPeerRomPath.clear();
+    ambientPeerRomPath.clear(); ambientPeerRomData = {};
     melonDS::MPInterface::Set(std::move(a), melonDS::MPInterface_Ambient);
     lanApplyRecvTimeout();
 }
@@ -1380,7 +1394,7 @@ static bool ambientHandoffService()
             ambientRomPublished = false;
             ambientPeerRomEpoch = 0;
             ambientPeerRom = {};
-            ambientPeerRomPath.clear();
+            ambientPeerRomPath.clear(); ambientPeerRomData = {};
             ambientHandoffStatus = "none";
             ambientHandoffTerminalStatus.clear();
         }
@@ -1422,7 +1436,7 @@ static bool ambientHandoffService()
             if (!sourcePath.empty()) library.insert(library.begin(), sourcePath);
             ambientPeerRomEpoch = status.Epoch;
             ambientPeerRom = peerRom;
-            ambientPeerRomPath.clear();
+            ambientPeerRomPath.clear(); ambientPeerRomData = {};
             g.unlock();
             const std::string found = melonDS::NetplayFindRom(peerRom, library, true);
             g.lock();
@@ -1437,6 +1451,7 @@ static bool ambientHandoffService()
                 return ambientLiveCut != nullptr;
             }
             ambientPeerRomPath = found;
+            if (!found.empty()) ambientPeerRomData = readLiveRomAhead(found);
         }
         const char* phase = !status.Accepted ? (status.Outgoing ? "outgoing" : "incoming") :
             !peerDescribed ? "accepted" :
@@ -1456,7 +1471,7 @@ static bool ambientHandoffService()
         ambientRomPublished = false;
         ambientPeerRomEpoch = 0;
         ambientPeerRom = {};
-        ambientPeerRomPath.clear();
+        ambientPeerRomPath.clear(); ambientPeerRomData = {};
         ambientHandoffStatus = ambientHandoffTerminalStatus.empty() ?
             "closed\t0\t0\t0" : ambientHandoffTerminalStatus;
     }
@@ -1467,7 +1482,7 @@ static bool ambientHandoffService()
         ambientRomPublished = false;
         ambientPeerRomEpoch = 0;
         ambientPeerRom = {};
-        ambientPeerRomPath.clear();
+        ambientPeerRomPath.clear(); ambientPeerRomData = {};
         ambientHandoffStatus = ambientHandoffTerminalStatus.empty() ?
             "closed\t0\t0\t0" : ambientHandoffTerminalStatus;
     }
@@ -1926,7 +1941,7 @@ Java_me_magnum_melonds_MelonEmulator_ambientSetRomLibrary(JNIEnv* env, jobject, 
     // available without asking either player to re-open the game.
     ambientPeerRomEpoch = 0;
     ambientPeerRom = {};
-    ambientPeerRomPath.clear();
+    ambientPeerRomPath.clear(); ambientPeerRomData = {};
 #endif
 }
 

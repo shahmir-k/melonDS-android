@@ -12,6 +12,7 @@
 #include "GPU.h"
 #include "GPU3D.h"
 #include "MelonInstance.h"
+#include "NDSCart.h"
 #include "Savestate.h"
 #include "SPU.h"
 #include "SPI_Firmware.h"
@@ -132,8 +133,26 @@ PreparedLiveReplica::~PreparedLiveReplica()
     }
 }
 
+LiveRom readLiveRom(const std::string& path)
+{
+    LiveRom rom;
+    rom.Path = path;
+    rom.Bytes = NDSCart::AcquireSharedROM(path, rom.Length, false);   // (private buffer)
+    if (rom.Bytes) rom.Rom = NetplayDescribeRomBytes(rom.Bytes.get(), rom.Length);
+    return rom;
+}
+
+LiveRom liveRomOf(const MelonInstance& console, const std::string& path)
+{
+    LiveRom rom;
+    rom.Path = path;
+    rom.Bytes = console.romBytes(rom.Length);
+    rom.Rom = console.loadedRomDescription();
+    return rom;
+}
+
 std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
-    const NetplayLiveCheckpoint& checkpoint, const std::string& romPath,
+    const NetplayLiveCheckpoint& checkpoint, const LiveRom& rom,
     std::shared_ptr<EmulatorConfiguration> configuration,
     const std::string& internalFilesDir, std::string& error)
 {
@@ -144,11 +163,11 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
         checkpoint.FenceToken == std::array<u8, 16>{} ||
         checkpoint.State.empty() || checkpoint.State.size() > (64u << 20) ||
         checkpoint.Firmware.empty() || checkpoint.Firmware.size() > (1u << 20) ||
-        !checkpoint.Rom.Size || romPath.empty() || internalFilesDir.empty() ||
+        !checkpoint.Rom.Size || !rom.Bytes || internalFilesDir.empty() ||
         !configuration || configuration->consoleType != 0)
         { error = "unsupported or incompatible live checkpoint"; return nullptr; }
-    // (the ROM identity is checked on the bytes loadRom hashes below: hashing the file here too
-    // doubled the ~268 MB read+SHA per replica, ~5 s each on the RG DS)
+    if (rom.Rom != checkpoint.Rom)
+        { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
     LiveJitIdentity sourceJit;   // (must be a cold checkpoint)
     if (!readLiveJitIdentity(checkpoint.State, sourceJit, error)) return nullptr;
 
@@ -163,7 +182,7 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     if (!mkdtemp(name.data()))
         { error = "cannot create live checkpoint scratch directory"; return nullptr; }
     replica->ScratchDir = std::move(name);
-    replica->RomPath = romPath;
+    replica->RomPath = rom.Path;
     const std::string savePath = replica->ScratchDir + "/console.sav";
     FILE* save = fopen(savePath.c_str(), "wb");
     if (!save)
@@ -187,7 +206,7 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     nds->GPU.GPU3D.Headless = true;
     nds->SPU.Silent = true;
     replica->Console->setInputDeferred(true);
-    if (!replica->Console->loadRom(romPath, savePath))
+    if (!replica->Console->loadRomBytes(rom.Bytes, rom.Length, rom.Rom, savePath))
         { error = "cannot load scratch replica ROM"; return nullptr; }
     if (replica->Console->loadedRomDescription() != checkpoint.Rom)
         { error = "scratch replica loaded different ROM bytes"; return nullptr; }
@@ -225,7 +244,7 @@ LiveCheckpointTransfer::~LiveCheckpointTransfer()
 
 bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
                                    const NetplayRom& expectedPeerRom,
-                                   const std::string& peerRomPath,
+                                   std::shared_future<LiveRom> peerRom,
                                    std::shared_ptr<EmulatorConfiguration> configuration,
                                    const std::string& internalFilesDir,
                                    const std::string& peerIPv4, u16 tcpPort,
@@ -235,14 +254,14 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
     in_addr parsed{};
     if (Started || local.Player > 1 || !local.Epoch || !local.Build ||
         !local.Rom.Size || local.State.empty() || local.Firmware.empty() ||
-        !expectedPeerRom.Size || peerRomPath.empty() || !configuration ||
+        !expectedPeerRom.Size || !peerRom.valid() || !configuration ||
         internalFilesDir.empty() || !tcpPort || tcpPort == UINT16_MAX ||
         inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1)
     { error = "invalid live checkpoint transfer parameters"; return false; }
     Started = true;
     Local = std::move(local);
     ExpectedPeerRom = expectedPeerRom;
-    PeerRomPath = peerRomPath;
+    PeerRom = std::move(peerRom);
     Configuration = std::move(configuration);
     InternalFilesDir = internalFilesDir;
     PeerIPv4 = peerIPv4;
@@ -274,7 +293,7 @@ bool LiveCheckpointTransfer::serviceOnEmulatorThread()
 {
     if (!Started || Done.load(std::memory_order_acquire)) return false;
     return Bridge.Service([this](const NetplayLiveCheckpoint& candidate, std::string& error) {
-        Replica = prepareLiveReplica(candidate, PeerRomPath, Configuration,
+        Replica = prepareLiveReplica(candidate, PeerRom.get(), Configuration,
                                      InternalFilesDir, error);
         return Replica != nullptr;
     });

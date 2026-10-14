@@ -38,6 +38,7 @@
 #include "net/NetplayInput.h"
 #include "LitevCores.h"
 #include "SkipRepeatAuto.h"
+#include "sereneds_build_id.h"
 
 enum GbaSlotType {
     NONE = 0,
@@ -928,6 +929,7 @@ static void ambientInstall()
     melonDS::AmbientLAN::Config c = ambientCfg;
     memcpy(c.GameCode, code.data(), 4);
     c.Vis = ambientMode;
+    c.AllowHandoff = SERENEDS_HANDOFF_BUILD_CLEAN != 0;
     auto a = std::make_unique<melonDS::AmbientLAN>(c);
     if (!a->Ok()) return;
     a->SetForeground(ambientFg);
@@ -1287,13 +1289,15 @@ Java_me_magnum_melonds_MelonEmulator_groupToLan(JNIEnv* env, jobject thiz)
 // before a game starts (the MAC comes from the id); a change of mode while running applies its visibility now, and
 // "lobby only" / back on from the next game.
 JNIEXPORT void JNICALL
-Java_me_magnum_melonds_MelonEmulator_ambientConfigure(JNIEnv* env, jobject thiz, jlong deviceId, jstring name, jint mode, jint buildId)
+Java_me_magnum_melonds_MelonEmulator_ambientConfigure(JNIEnv* env, jobject thiz, jlong deviceId, jstring name, jint mode)
 {
 #ifdef LITEV_AMBIENT_LAN
     std::lock_guard<std::mutex> g(ambientMu);
     ambientCfg.DeviceID = (u64)deviceId;
     ambientCfg.Name = lanJString(env, name);
-    ambientCfg.BuildID = (u32)buildId;
+    // Presence advertises the native compatibility fingerprint, not the Java
+    // package version. The full 64-bit value also binds live checkpoints.
+    ambientCfg.BuildID = (u32)(SERENEDS_HANDOFF_BUILD_ID ^ (SERENEDS_HANDOFF_BUILD_ID >> 32));
     ambientMode = mode >= 0 && mode <= 2 ? mode : -1;
     if (ambientPtr && ambientMode >= 0) ambientPtr->SetVisibility(ambientMode);
 #endif

@@ -111,7 +111,7 @@ object MelonEmulator {
 
     // Just Play local wireless (LITEV_AMBIENT_LAN; AmbientWireless.kt). mode: 0 everyone nearby, 1 only while the
     // game's wireless is on, 2 hidden, 3 lobby only (off). Configure before a game starts.
-    external fun ambientConfigure(deviceId: Long, name: String, mode: Int, buildId: Int)
+    external fun ambientConfigure(deviceId: Long, name: String, mode: Int)
     external fun ambientSetForeground(foreground: Boolean)
     external fun ambientAddPeer(ip: String, port: Int)
     external fun ambientPort(): Int

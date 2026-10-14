@@ -388,14 +388,22 @@ void MelonInstance::blitAcceleratedFrame(u32 srcArrayTex, u32 dstTex, int dstWid
 
 bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
 {
+    loadedRom = {};
     unique_ptr<u8[]> sramData;
     u32 romFileLength = 0;
     u32 sramFileLength = 0;
 
-    // ROM file loading: shared with every other console in this process running the same file
-    // (Netplay runs all players' consoles here)
-    auto romData = NDSCart::AcquireSharedROM(romPath, romFileLength);
+    // Ordinary Netplay replicas share ROM storage. A standalone source and
+    // pre-commit scratch replica must instead load independent original bytes:
+    // a shared cart may already have re-encrypted its secure area in place.
+    const bool shareRom = MelonDSAndroid::netplayActive();
+    auto romData = NDSCart::AcquireSharedROM(romPath, romFileLength, shareRom);
     if (!romData)
+        return false;
+    // Hash what the console will actually run, not a later read of a mutable
+    // SD-card path. SetNDSCart may re-encrypt the secure area in this buffer.
+    const auto acquiredRom = NetplayDescribeRomBytes(romData.get(), romFileLength);
+    if (!acquiredRom.Size)
         return false;
 
     // SRAM file loading
@@ -433,6 +441,7 @@ bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
 
     nds->SetNDSCart(std::move(cart));
     ndsSave = std::make_unique<SaveManager>(sramPath);
+    loadedRom = acquiredRom;
 
     return true;
 }
@@ -512,6 +521,7 @@ void MelonInstance::loadGbaMemoryExpansion()
 
 bool MelonInstance::bootFirmware()
 {
+    loadedRom = {};
     if (nds->NeedsDirectBoot())
         return false;
 

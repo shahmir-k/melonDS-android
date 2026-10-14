@@ -13,6 +13,7 @@
 #include "renderer/ScreenshotRenderer.h"
 #include "retroachievements/RetroAchievementsManager.h"
 #include "net/Net.h"
+#include "net/NetplayInput.h"
 
 using namespace melonDS;
 
@@ -29,6 +30,7 @@ public:
     ~MelonInstance();
 
     int getInstanceId() { return instanceId; };
+    const melonDS::NetplayRom& loadedRomDescription() const { return loadedRom; }
     // Live Just Play handoff: the visible source keeps its exact DS state while
     // the joining device changes its Netplay/MP slot from 0 to 1.
     bool reassignInstanceId(int newId);
@@ -108,6 +110,7 @@ private:
     int skipRepeatMode = 1;        // debug.litev.skiprepeat value in force (polled in runFrame)
     bool skipRepeatMp = false;     // Netplay or LAN running
     int instanceId;
+    melonDS::NetplayRom loadedRom;
     int consoleType;
     NDS* nds;
     std::shared_ptr<Net> net;

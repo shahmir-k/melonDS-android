@@ -1036,20 +1036,13 @@ static void ambientHandoffService()
     {
         if (status.Accepted && ambientRomEpoch != status.Epoch)
         {
-            // External-SD hashing may briefly pause the emulator before any
-            // fence. Let UI readers observe the offer while the mutex is free.
-            const std::string path = MelonDSAndroid::currentRomPath();
+            // This is the digest of the bytes actually loaded into the source
+            // console, taken before cartridge secure-area re-encryption. A
+            // later same-size replacement of the SAF document cannot lie here.
+            const melonDS::NetplayRom described = MelonDSAndroid::currentRomDescription();
             ambientRomEpoch = status.Epoch;
             ambientOwnRom = {};
             ambientRomPublished = false;
-            g.unlock();
-            const melonDS::NetplayRom described = melonDS::NetplayDescribeRom(path);
-            g.lock();
-            melonDS::AmbientLAN::HandoffOfferStatus current{};
-            if (!ambientPtr || ambientRomEpoch != status.Epoch ||
-                !ambientPtr->GetHandoffOfferStatus(current) || !current.Accepted ||
-                current.Epoch != status.Epoch)
-                return;
             if (!described.Size || described.Size > (512u << 20))
             {
                 ambientPtr->CancelHandoffOffer();
@@ -1076,7 +1069,7 @@ static void ambientHandoffService()
             ambientPeerRom = peerRom;
             ambientPeerRomPath.clear();
             g.unlock();
-            const std::string found = melonDS::NetplayFindRom(peerRom, library);
+            const std::string found = melonDS::NetplayFindRom(peerRom, library, true);
             g.lock();
             melonDS::AmbientLAN::HandoffOfferStatus current{};
             melonDS::NetplayRom currentPeer{};

@@ -174,6 +174,10 @@ namespace MelonDSAndroid
         return std::string(nds->NDSCartSlot.GetCart()->GetHeader().GameCode, 4);
     }
     std::string currentRomPath() { return activeRomPath; }
+    NetplayRom currentRomDescription()
+    {
+        return instance && !activeRomPath.empty() ? instance->loadedRomDescription() : NetplayRom{};
+    }
 #ifndef LITEV_AMBIENT_LAN
     bool ambientFirmwareMac(u8*) { return false; }
 #endif

@@ -17,6 +17,7 @@
 #include <android/asset_manager.h>
 
 using namespace melonDS;
+namespace melonDS { struct NetplayRom; }
 
 namespace MelonDSAndroid {
     typedef struct {
@@ -41,6 +42,7 @@ namespace MelonDSAndroid {
     // The currently loaded NDS file/SAF URI, for exact Just Play ROM identity checks.
     // Read on the emulator thread; empty after firmware boot or a failed ROM load.
     extern std::string currentRomPath();
+    extern melonDS::NetplayRom currentRomDescription();
     // Just Play (LITEV_AMBIENT_LAN): the console MAC from the device id, false = off
     extern bool ambientFirmwareMac(u8* mac);
     // The next game started runs in Netplay as `player` (the LAN lobby id; 0 = host) of `players`;

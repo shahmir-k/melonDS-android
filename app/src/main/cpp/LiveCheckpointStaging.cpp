@@ -31,7 +31,7 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
     error.clear();
     if (!SERENEDS_HANDOFF_BUILD_CLEAN || !SERENEDS_HANDOFF_BUILD_ID)
         { error = "native handoff build is not clean"; return false; }
-    if (player < 0 || player > 1 || !rom.Size ||
+    if (player < 0 || player > 1 || !rom.Size || source.loadedRomDescription() != rom ||
         !ambient.HandoffFenceComplete() || ambient.HandoffFenceAborted() ||
         ambient.HandoffQueuedFrames())
         { error = "Ambient handoff fence is not quiescent"; return false; }
@@ -98,7 +98,7 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
         !checkpoint.Rom.Size || romPath.empty() || internalFilesDir.empty() ||
         !configuration || configuration->consoleType != 0)
         { error = "unsupported or incompatible live checkpoint"; return nullptr; }
-    if (!(NetplayDescribeRom(romPath) == checkpoint.Rom))
+    if (!(NetplayDescribeRom(romPath, true) == checkpoint.Rom))
         { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
 
     auto replica = std::make_unique<PreparedLiveReplica>();
@@ -137,6 +137,8 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     replica->Console->setInputDeferred(true);
     if (!replica->Console->loadRom(romPath, savePath))
         { error = "cannot load scratch replica ROM"; return nullptr; }
+    if (replica->Console->loadedRomDescription() != checkpoint.Rom)
+        { error = "scratch replica loaded different ROM bytes"; return nullptr; }
     replica->Console->start();
     replica->Started = true;
 

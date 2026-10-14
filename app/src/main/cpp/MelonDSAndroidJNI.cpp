@@ -69,6 +69,11 @@ bool isFastForwardEnabled = false;
 // the fast-forward speed setting: in Netplay the session's speed drives the variables above,
 // and the fast-forward key asks the session for this
 static float ffSetting = 2.0f;
+// the group's fast-forward (below: a Netplay session, or a LAN session of Just Play links)
+static int groupToggleSpeed();
+static int groupSpeedShown();
+static bool groupSpeed(float& multiplier);
+static std::string groupSpeedLabel();
 #endif
 #ifdef LITEV_AGGRESSIVE_SKIP
 // Frameskip-based fast-forward ("Fast-forward max frameskip" setting, 0..9, default 0).
@@ -694,8 +699,8 @@ JNIEXPORT void JNICALL
 Java_me_magnum_melonds_MelonEmulator_setFastForwardEnabled(JNIEnv* env, jobject thiz, jboolean enabled)
 {
 #ifdef LITEV_NP_SPEED
-    // Netplay: the session's speed drives fast-forward (the key: netplayToggleFastForward)
-    if (MelonDSAndroid::netplaySpeedShown() >= 0) return;
+    // Netplay / a LAN session: the session's speed drives fast-forward (the key: netplayToggleFastForward)
+    if (groupSpeedShown() >= 0) return;
 #endif
     isFastForwardEnabled = enabled;
     if (enabled) {
@@ -738,7 +743,7 @@ Java_me_magnum_melonds_MelonEmulator_updateEmulatorConfiguration(JNIEnv* env, jo
     ffSetting = newConfiguration.fastForwardSpeedMultiplier;
     // plain Netplay: the session's speed drives fast-forward; the setting is what the key asks for next
     float npSpeed;
-    const bool npDriven = MelonDSAndroid::netplaySpeed(npSpeed);
+    const bool npDriven = groupSpeed(npSpeed);
     if (!npDriven)
 #endif
     fastForwardSpeedMultiplier = newConfiguration.fastForwardSpeedMultiplier;
@@ -961,6 +966,56 @@ static void ambientInstall() {}
 static bool ambientHasLinks() { return false; }
 #endif
 
+#ifdef LITEV_NP_SPEED
+// ---- the group's fast-forward: ONE speed for every player of a Netplay session (NetplayInput: with the inputs) or of
+// a LAN session (AmbientLAN::ToggleSpeed: the linked players). The key, the pacing (the frame loop), the key's state and
+// the notice are the same for both; leaving the group is normal speed (the frame loop), the key then is local again.
+// -1 / false / "": no group.
+static int groupToggleSpeed()
+{
+    int r = MelonDSAndroid::netplayToggleSpeed(ffSetting);
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (r < 0 && ambientPtr && ambientPtr->HasLinks()) r = ambientPtr->ToggleSpeed(NetplaySpeed::Encode(ffSetting)) != 0;
+#endif
+    return r;
+}
+static int groupSpeedShown()
+{
+    int r = MelonDSAndroid::netplaySpeedShown();
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (r < 0 && ambientPtr && ambientPtr->HasLinks()) r = ambientPtr->SpeedShown() != 0;
+#endif
+    return r;
+}
+static bool groupSpeed(float& multiplier)
+{
+    if (MelonDSAndroid::netplaySpeed(multiplier)) return true;
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (ambientPtr && ambientPtr->HasLinks()) { multiplier = NetplaySpeed::Multiplier(ambientPtr->Speed()); return true; }
+#endif
+    return false;
+}
+static std::string groupSpeedLabel()
+{
+    std::string r = MelonDSAndroid::netplaySpeedLabel();
+#ifdef LITEV_AMBIENT_LAN
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (r.empty() && ambientPtr && ambientPtr->HasLinks() && ambientPtr->Speed())
+    {
+        const int code = ambientPtr->Speed();
+        char b[24];
+        snprintf(b, sizeof(b), "FF %gx", NetplaySpeed::Multiplier(code));
+        const std::string who = ambientPtr->SpeedWho();
+        r = (code == NetplaySpeed::kUncapped ? std::string("uncapped") : b) + (who.empty() ? "" : " by " + who);
+    }
+#endif
+    return r;
+}
+#endif
+
 // ---- Group: a Netplay lobby kept connected while its session runs -----------------------------
 // At the host's Start every device keeps its lobby link (a LAN, port 7064; the session itself uses
 // 7100) as the group's control channel, not installed as the MPInterface: the host sends group
@@ -1130,34 +1185,38 @@ Java_me_magnum_melonds_MelonEmulator_netplayKind(JNIEnv* env, jobject thiz)
     return MelonDSAndroid::netplayKind();
 }
 
-// Netplay: a press of the fast-forward key toggles the session's speed for every player; returns
-// what the key shows (1 fast, 0 normal), -1 = not in Netplay (the key is local)
+// Netplay / a LAN session: a press of the fast-forward key toggles the session's speed for every player;
+// returns what the key shows (1 fast, 0 normal), -1 = no session (the key is local)
 JNIEXPORT jint JNICALL
 Java_me_magnum_melonds_MelonEmulator_netplayToggleFastForward(JNIEnv* env, jobject thiz)
 {
 #ifdef LITEV_NP_SPEED
-    return MelonDSAndroid::netplayToggleSpeed(ffSetting);
+    return groupToggleSpeed();
 #else
     return -1;
 #endif
 }
 
-// Netplay: what the fast-forward key shows (the session's speed, or this player's press in flight)
+// Netplay / a LAN session: what the fast-forward key shows (the session's speed, or this player's press in flight)
 JNIEXPORT jint JNICALL
 Java_me_magnum_melonds_MelonEmulator_netplayFastForwardShown(JNIEnv* env, jobject thiz)
 {
 #ifdef LITEV_NP_SPEED
-    return MelonDSAndroid::netplaySpeedShown();
+    return groupSpeedShown();
 #else
     return -1;
 #endif
 }
 
-// Netplay: the session speed ("" normal, else "FF 2x by P2" / "uncapped by P1")
+// Netplay / a LAN session: the session speed ("" normal, else "FF 2x by P2" / "uncapped by P1")
 JNIEXPORT jstring JNICALL
 Java_me_magnum_melonds_MelonEmulator_netplaySpeedLabel(JNIEnv* env, jobject thiz)
 {
+#ifdef LITEV_NP_SPEED
+    return env->NewStringUTF(groupSpeedLabel().c_str());     // (also a LAN session's)
+#else
     return env->NewStringUTF(MelonDSAndroid::netplaySpeedLabel().c_str());
+#endif
 }
 
 JNIEXPORT jstring JNICALL
@@ -1364,7 +1423,8 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
                  "beacons=%llu blocked_us=%llu exchanges=%llu frame_blocked_us=%u frame_exchanges=%u rtt_ms=%u "
                  "slow_fps_x100=%u slow_wait_us=%u slow_exchanges_x100=%u slow_offer=%u "
                  "host_wait_us=%llu host_wait_calls=%llu host_wait_misses=%llu host_wait_timeouts=%llu "
-                 "client_wait_us=%llu client_wait_calls=%llu client_wait_misses=%llu",
+                 "client_wait_us=%llu client_wait_calls=%llu client_wait_misses=%llu "
+                 "stale_regular=%llu stale_cmd=%llu stale_reply=%llu stale_ack=%llu",
                  (unsigned long long)s.Frames, s.Nearby, s.Links, (unsigned long long)s.LinksOpened, (unsigned long long)s.PresenceTx,
                  (unsigned long long)s.PresenceRx, (unsigned long long)s.LinkTx, (unsigned long long)s.LinkRx,
                  (unsigned long long)s.BeaconsInjected, (unsigned long long)s.BlockedUs, (unsigned long long)s.Exchanges,
@@ -1372,7 +1432,9 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
                  s.SlowExchangesPerFrameX100, s.SlowdownPending ? 1u : 0u,
                  (unsigned long long)s.HostWaitUs, (unsigned long long)s.HostWaitCalls, (unsigned long long)s.HostWaitMisses,
                  (unsigned long long)s.HostWaitTimeouts,
-                 (unsigned long long)s.ClientWaitUs, (unsigned long long)s.ClientWaitCalls, (unsigned long long)s.ClientWaitMisses);
+                 (unsigned long long)s.ClientWaitUs, (unsigned long long)s.ClientWaitCalls, (unsigned long long)s.ClientWaitMisses,
+                 (unsigned long long)s.Stale[0], (unsigned long long)s.Stale[1], (unsigned long long)s.Stale[2],
+                 (unsigned long long)s.Stale[3]);
         r = b;
     }
 #endif
@@ -1539,12 +1601,13 @@ void* emulate(void*)
         double actualSleepMs = 0.0;
 
 #ifdef LITEV_NP_SPEED
-        // Netplay: the session's speed (plain: the same frame on every device) is the fast-forward
-        // state: pacing, frameskip, skip-repeat and the sound follow it as for local fast-forward.
+        // Netplay / a LAN session: the session's speed (plain Netplay: the same frame on every device; a LAN
+        // session: the same chip time) is the fast-forward state: pacing, frameskip, skip-repeat and the sound
+        // follow it as for local fast-forward. Leaving the session: normal speed.
         {
             static bool npDriven = false;
             float m;
-            if (MelonDSAndroid::netplaySpeed(m))
+            if (groupSpeed(m))
             {
                 npDriven = true;
                 isFastForwardEnabled = m != 1.0f;

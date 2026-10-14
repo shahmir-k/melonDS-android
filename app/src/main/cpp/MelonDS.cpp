@@ -390,6 +390,11 @@ namespace MelonDSAndroid
         { error = "source changed before reversible live proof"; return false; }
         const u64 sourceRam = XXH3_64bits(instance->getNds()->MainRAM,
                                            instance->getNds()->MainRAMMask + 1);
+        struct RestoreSourceJitExecute
+        {
+            NDS* Source;
+            ~RestoreSourceJitExecute() { Source->JIT.JitEnableExecute(); }
+        } sourceJitExecute {instance->getNds()};
         const std::string peerPath = peerReplica->RomPath;
         auto own = prepareLiveReplica(local, activeRomPath, currentConfiguration,
                                       internalFilesDir, error);
@@ -479,7 +484,6 @@ namespace MelonDSAndroid
         }
         own.reset();
         peerReplica.reset();
-        instance->getNds()->JIT.JitEnableExecute();
         if (timedOut || runFailed ||
             instance->getFrame() != local.Frame ||
             instance->getNds()->GetSysTimestamp() != local.RawClock ||

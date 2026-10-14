@@ -24,13 +24,13 @@ namespace MelonDSAndroid
 {
 using namespace melonDS;
 
-bool readLiveJitIdentity(const std::vector<u8>& bytes,
-                         LiveJitIdentity& identity, std::string& error)
+static bool readLiveJitIdentityBytes(const u8* bytes, size_t length,
+                                     LiveJitIdentity& identity, std::string& error)
 {
     identity = {};
-    if (bytes.empty() || bytes.size() > UINT32_MAX)
+    if (!bytes || !length || length > UINT32_MAX)
         { error = "live checkpoint has no valid savestate"; return false; }
-    Savestate state(const_cast<u8*>(bytes.data()), static_cast<u32>(bytes.size()), false);
+    Savestate state(const_cast<u8*>(bytes), static_cast<u32>(length), false);
     if (state.Error || !state.HasSection("JITS"))
         { error = "live checkpoint has no JIT profile section"; return false; }
     state.Section("JITS");
@@ -41,6 +41,12 @@ bool readLiveJitIdentity(const std::vector<u8>& bytes,
     if (state.Error || !identity.Build || !identity.Configuration || present != 1)
         { error = "live checkpoint has no restorable JIT profile"; return false; }
     return true;
+}
+
+bool readLiveJitIdentity(const std::vector<u8>& bytes,
+                         LiveJitIdentity& identity, std::string& error)
+{
+    return readLiveJitIdentityBytes(bytes.data(), bytes.size(), identity, error);
 }
 
 bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
@@ -171,10 +177,9 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     Savestate scratchState;
     if (!nds->DoSavestate(&scratchState) || scratchState.Error || !scratchState.Length())
         { error = "cannot inspect scratch JIT configuration"; return nullptr; }
-    std::vector<u8> scratchBytes(static_cast<const u8*>(scratchState.Buffer()),
-                                 static_cast<const u8*>(scratchState.Buffer()) + scratchState.Length());
     LiveJitIdentity scratchJit;
-    if (!readLiveJitIdentity(scratchBytes, scratchJit, error)) return nullptr;
+    if (!readLiveJitIdentityBytes(static_cast<const u8*>(scratchState.Buffer()),
+                                  scratchState.Length(), scratchJit, error)) return nullptr;
     if (!(sourceJit == scratchJit))
         { error = "live checkpoint JIT build or configuration differs from this device"; return nullptr; }
 

@@ -43,9 +43,10 @@ struct PreparedLiveReplica
     bool Started = false;
 };
 
-// The JITS section is part of guest-visible execution timing. A loader that
-// silently discards it can resume from the same CPU registers and still
-// diverge on the first emulated frame.
+// The JITS section is part of guest-visible execution timing: a loader from
+// another build discards a warm one and diverges on the first frame. Live
+// checkpoints are therefore cold (Savestate::ColdCaches: empty JIT and HLE
+// caches, build 0); Configuration holds the JIT settings that shape blocks.
 struct LiveJitIdentity
 {
     melonDS::u64 Build = 0;

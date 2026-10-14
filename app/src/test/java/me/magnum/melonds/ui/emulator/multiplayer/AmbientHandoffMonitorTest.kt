@@ -68,6 +68,14 @@ class AmbientHandoffMonitorTest {
         assertNull(monitor.screen(snapshot(status = failed), null))
     }
 
+    @Test fun failureReasonFromNativeIsShown() {
+        val monitor = AmbientHandoffMonitor()
+        val reason = "the guest rejected our checkpoint: peer JIT settings differ"
+        val screen = monitor.screen(snapshot(status = "failed\t12\t1\t255\t$reason"), null)
+            as AmbientHandoffScreen.Failed
+        assertEquals(reason, screen.reason)
+    }
+
     private fun snapshot(
         status: String = "none",
         stats: String = "",

@@ -1080,9 +1080,13 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
         ambientHandoffStatus = std::string(phase) + "\t" + std::to_string(cut.Epoch) +
             "\t" + std::to_string(cut.Mode) + "\t" + std::to_string(cut.PeerID);
     };
-    const auto close = [&](const char* phase) {
+    // A failed/unresolved status carries its reason as a fifth field (shown by the app's dialog).
+    const auto close = [&](const char* phase, std::string reason = {}) {
+        std::replace(reason.begin(), reason.end(), '\t', ' ');
+        std::replace(reason.begin(), reason.end(), '\n', ' ');
         const std::string result = std::string(phase) + "\t" + std::to_string(cut.Epoch) +
-            "\t" + std::to_string(cut.Mode) + "\t" + std::to_string(cut.PeerID);
+            "\t" + std::to_string(cut.Mode) + "\t" + std::to_string(cut.PeerID) +
+            (reason.empty() ? "" : "\t" + reason);
         if (cut.InputFrozen && !MelonDSAndroid::netplayActive())
             MelonDSAndroid::netplayResumeLiveInput();
         ambientLiveCut.reset();
@@ -1224,7 +1228,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                     guard.unlock();
                     ambientInstall();
                     guard.lock();
-                    close("unresolved");
+                    close("unresolved", error);
                     Platform::Log(Platform::LogLevel::Error,
                                   "Just Play live commit unresolved: %s\n", error.c_str());
                     return false;
@@ -1241,13 +1245,13 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
             {
                 // No game frame was frozen and no fence exists: the reliable
                 // offer cancellation can finish without tearing down LAN.
-                close("failed");
+                close("failed", cut.Error);
                 return false;
             }
             if (ambientPtr && ambientPtr->ResetHandoffFenceAfterAbort())
             {
                 const std::string reason = cut.Error;
-                close("failed");
+                close("failed", reason);
                 Platform::Log(Platform::LogLevel::Warn,
                               "Just Play resumed Ambient after handoff failure: %s\n", reason.c_str());
                 return false;
@@ -1262,7 +1266,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 ambientUninstall();
                 ambientInstall();
                 guard.lock();
-                close("failed");
+                close("failed", reason);
                 Platform::Log(Platform::LogLevel::Warn,
                               "Just Play restarted Ambient after reset timeout: %s\n", reason.c_str());
                 return false;
@@ -1302,7 +1306,6 @@ static void ambientInstall()
     melonDS::AmbientLAN::Config c = ambientCfg;
     memcpy(c.GameCode, code.data(), 4);
     c.Vis = ambientMode;
-    c.AllowHandoff = SERENEDS_HANDOFF_BUILD_CLEAN != 0;
     c.RequireHandoffOffer = true;
     auto a = std::make_unique<melonDS::AmbientLAN>(c);
     if (!a->Ok()) return;
@@ -1850,9 +1853,10 @@ Java_me_magnum_melonds_MelonEmulator_ambientConfigure(JNIEnv* env, jobject thiz,
     std::lock_guard<std::mutex> g(ambientMu);
     ambientCfg.DeviceID = (u64)deviceId;
     ambientCfg.Name = lanJString(env, name);
-    // Presence advertises the native compatibility fingerprint, not the Java
-    // package version. The full 64-bit value also binds live checkpoints.
-    ambientCfg.BuildID = (u32)(SERENEDS_HANDOFF_BUILD_ID ^ (SERENEDS_HANDOFF_BUILD_ID >> 32));
+    // Presence advertises the live handoff compatibility (protocol + emulation options), not the
+    // Java package version. The full 64-bit value also binds live checkpoints.
+    const u64 compat = melonDS::NetplayHandoffCompat();
+    ambientCfg.BuildID = (u32)(compat ^ (compat >> 32));
     ambientMode = mode >= 0 && mode <= 2 ? mode : -1;
     if (ambientPtr && ambientMode >= 0) ambientPtr->SetVisibility(ambientMode);
 #endif

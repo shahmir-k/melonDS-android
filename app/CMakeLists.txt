@@ -155,8 +155,6 @@ target_link_libraries(melonDS-android-frontend android core net-utils oboe faad 
 # Recordings name the build that made them (meta.txt "build"): app and core commits, "-dirty" if modified
 add_custom_target(sereneds_build_id
         COMMAND ${CMAKE_COMMAND} -DAPP=${CMAKE_CURRENT_SOURCE_DIR} -DLIB=${CMAKE_CURRENT_SOURCE_DIR}/${CORE-LIB}
-                -DCACHE=${CMAKE_BINARY_DIR}/CMakeCache.txt
-                -DPROFILE=${CMAKE_CURRENT_SOURCE_DIR}/${ANDROID-CPP}/pgo/core-cs.profdata
                 -DOUT=${CMAKE_CURRENT_BINARY_DIR}/sereneds_build_id.h -P ${CMAKE_CURRENT_SOURCE_DIR}/build_id.cmake
         BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/sereneds_build_id.h)
 add_dependencies(melonDS-android-frontend sereneds_build_id)

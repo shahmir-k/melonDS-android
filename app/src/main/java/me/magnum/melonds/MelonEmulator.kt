@@ -122,7 +122,7 @@ object MelonEmulator {
     external fun ambientOfferHandoff(mode: Int): Boolean // 1 plain Netplay, 2 Hosted; true = request queued
     external fun ambientRespondHandoff(epoch: Long, accept: Boolean): Boolean
     external fun ambientCancelHandoff(): Boolean
-    external fun ambientHandoffStatus(): String // "phase\tepoch\tmode\tpeer_id"; phase also includes missing_rom/rom_ready
+    external fun ambientHandoffStatus(): String // "phase\tepoch\tmode\tpeer_id[\treason]" (reason: failed/unresolved); phase also includes missing_rom/rom_ready
 
     // Group: the Netplay lobby kept connected while its session runs, so the host's commands
     // (mode switch, Hosted server change, end) reach everyone. Commands: (server << 16) |

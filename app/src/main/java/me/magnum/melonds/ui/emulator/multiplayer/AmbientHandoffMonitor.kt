@@ -92,8 +92,10 @@ internal class AmbientHandoffMonitor {
         }
 
         if (snapshot.status == dismissedTerminal) return null
-        if (phase == "failed") return AmbientHandoffScreen.Failed("The native switch failed; LAN was restored.")
-        if (phase == "unresolved") return AmbientHandoffScreen.Unresolved("The native commit could not be confirmed.")
+        // failed/unresolved carry the native reason as a fifth field
+        val reason = parts.getOrNull(4)?.takeIf { it.isNotBlank() }
+        if (phase == "failed") return AmbientHandoffScreen.Failed(reason ?: "The native switch failed; LAN was restored.")
+        if (phase == "unresolved") return AmbientHandoffScreen.Unresolved(reason ?: "The native commit could not be confirmed.")
         if (parts.size != 4) return AmbientHandoffScreen.Unresolved("Invalid native handoff status.")
         val epoch = parts[1].toLongOrNull() ?: return AmbientHandoffScreen.Unresolved("Invalid handoff epoch.")
         val mode = when (parts[2]) {

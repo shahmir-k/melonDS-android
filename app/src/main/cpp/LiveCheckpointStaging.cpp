@@ -18,7 +18,6 @@
 #include "net/AmbientLAN.h"
 #include "net/Net.h"
 #include "renderer/ScreenshotRenderer.h"
-#include "sereneds_build_id.h"
 
 namespace MelonDSAndroid
 {
@@ -51,8 +50,10 @@ static bool readLiveJitIdentityBytes(const u8* bytes, size_t length,
             memcpy(&identity.Configuration, bytes + offset + 24, sizeof(identity.Configuration));
             u32 present = 0;
             memcpy(&present, bytes + offset + 28, sizeof(present));
-            if (!identity.Build || !identity.Configuration || present != 1)
-                { error = "live checkpoint has no restorable JIT profile"; return false; }
+            if (present != 1)
+                { error = "live checkpoint was saved without the JIT (interpreter)"; return false; }
+            if (identity.Build)
+                { error = "live checkpoint carries a build-specific JIT profile (a peer from before cold handoff checkpoints)"; return false; }
             return true;
         }
         offset += sectionLength;
@@ -73,8 +74,6 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
 {
     checkpoint = {};
     error.clear();
-    if (!SERENEDS_HANDOFF_BUILD_CLEAN || !SERENEDS_HANDOFF_BUILD_ID)
-        { error = "native handoff build is not clean"; return false; }
     if (player < 0 || player > 1 || !rom.Size || source.loadedRomDescription() != rom ||
         !ambient.HandoffFenceComplete() || ambient.HandoffFenceAborted() ||
         ambient.HandoffQueuedFrames())
@@ -85,7 +84,7 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
 
     NetplayLiveCheckpoint captured;
     captured.Epoch = ambient.GetHandoffFenceStats().Epoch;
-    captured.Build = SERENEDS_HANDOFF_BUILD_ID;
+    captured.Build = NetplayHandoffCompat();
     captured.RawClock = nds->GetSysTimestamp();
     captured.Frame = source.getFrame();
     captured.Player = static_cast<u8>(player);
@@ -98,7 +97,11 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
         { error = "source firmware is unavailable"; return false; }
     captured.Firmware.assign(firmware.Buffer(), firmware.Buffer() + firmware.Length());
 
+    // Cold: this console's JIT and HLE caches are reset exactly as every loader of the
+    // checkpoint resets them, so the copies on the peer (any build with the same emulation
+    // options) run on identically. Netplay continues from this very console.
     Savestate state;
+    state.ColdCaches = true;
     if (!nds->DoSavestate(&state) || state.Error || state.Length() == 0 ||
         state.Length() > (64u << 20))
         { error = "source savestate capture failed"; return false; }
@@ -135,9 +138,9 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     const std::string& internalFilesDir, std::string& error)
 {
     error.clear();
-    if (!SERENEDS_HANDOFF_BUILD_CLEAN || !SERENEDS_HANDOFF_BUILD_ID ||
-        checkpoint.Build != SERENEDS_HANDOFF_BUILD_ID ||
-        checkpoint.Player > 1 || !checkpoint.Epoch ||
+    if (checkpoint.Build != NetplayHandoffCompat())
+        { error = "checkpoint emulation compatibility differs (handoff protocol or emulation LITEV options)"; return nullptr; }
+    if (checkpoint.Player > 1 || !checkpoint.Epoch ||
         checkpoint.FenceToken == std::array<u8, 16>{} ||
         checkpoint.State.empty() || checkpoint.State.size() > (64u << 20) ||
         checkpoint.Firmware.empty() || checkpoint.Firmware.size() > (1u << 20) ||
@@ -147,7 +150,7 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     if (!(NetplayDescribeRom(romPath, true) == checkpoint.Rom))
         { error = "scratch replica ROM does not match the checkpoint"; return nullptr; }
 
-    LiveJitIdentity sourceJit;
+    LiveJitIdentity sourceJit;   // (must be a cold checkpoint)
     if (!readLiveJitIdentity(checkpoint.State, sourceJit, error)) return nullptr;
 
     auto replica = std::make_unique<PreparedLiveReplica>();
@@ -191,17 +194,6 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
         { error = "scratch replica loaded different ROM bytes"; return nullptr; }
     replica->Console->start();
     replica->Started = true;
-
-    {
-        Savestate scratchState;
-        if (!nds->DoSavestate(&scratchState) || scratchState.Error || !scratchState.Length())
-            { error = "cannot inspect scratch JIT configuration"; return nullptr; }
-        LiveJitIdentity scratchJit;
-        if (!readLiveJitIdentityBytes(static_cast<const u8*>(scratchState.Buffer()),
-                                      scratchState.Length(), scratchJit, error)) return nullptr;
-        if (!(sourceJit == scratchJit))
-            { error = "live checkpoint JIT build or configuration differs from this device"; return nullptr; }
-    }
 
     Savestate state(const_cast<u8*>(checkpoint.State.data()),
                     static_cast<u32>(checkpoint.State.size()), false);
@@ -256,7 +248,13 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
                 if (!readLiveJitIdentity(Local.State, own, reason) ||
                     !readLiveJitIdentity(candidate.State, theirs, reason)) return false;
                 if (!(own == theirs))
-                { reason = "peer JIT build or configuration differs from this device"; return false; }
+                {
+                    char text[128];
+                    snprintf(text, sizeof(text), "peer JIT settings differ (block size/literal/branch: peer %08x, here %08x)",
+                             theirs.Configuration, own.Configuration);
+                    reason = text;
+                    return false;
+                }
                 return Bridge.Request(candidate, reason, Cancelled);
             }, Cancelled, Peer, Error);
         Done.store(true, std::memory_order_release);

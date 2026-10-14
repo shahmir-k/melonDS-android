@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <arpa/inet.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -155,5 +156,84 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     nds->GPU.GPU3D.Headless = true;
     nds->SPU.Silent = true;
     return replica;
+}
+
+LiveCheckpointTransfer::~LiveCheckpointTransfer()
+{
+    cancel();
+}
+
+bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
+                                   const NetplayRom& expectedPeerRom,
+                                   const std::string& peerRomPath,
+                                   std::shared_ptr<EmulatorConfiguration> configuration,
+                                   const std::string& internalFilesDir,
+                                   const std::string& peerIPv4, u16 tcpPort,
+                                   std::string& error)
+{
+    error.clear();
+    in_addr parsed{};
+    if (Started || local.Player > 1 || !local.Epoch || !local.Build ||
+        !local.Rom.Size || local.State.empty() || local.Firmware.empty() ||
+        !expectedPeerRom.Size || peerRomPath.empty() || !configuration ||
+        internalFilesDir.empty() || !tcpPort || tcpPort == UINT16_MAX ||
+        inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1)
+    { error = "invalid live checkpoint transfer parameters"; return false; }
+    Started = true;
+    Local = std::move(local);
+    ExpectedPeerRom = expectedPeerRom;
+    PeerRomPath = peerRomPath;
+    Configuration = std::move(configuration);
+    InternalFilesDir = internalFilesDir;
+    PeerIPv4 = peerIPv4;
+    TcpPort = tcpPort;
+    Worker = std::thread([this] {
+        const std::string address = PeerIPv4 + ":" + std::to_string(TcpPort);
+        Ok = NetplayExchangeLiveCheckpoints(
+            TcpPort, address, PeerIPv4, Local, ExpectedPeerRom,
+            [this](const NetplayLiveCheckpoint& candidate, std::string& reason) {
+                return Bridge.Request(candidate, reason, Cancelled);
+            }, Cancelled, Peer, Error);
+        Done.store(true, std::memory_order_release);
+    });
+    return true;
+}
+
+bool LiveCheckpointTransfer::serviceOnEmulatorThread()
+{
+    if (!Started || Done.load(std::memory_order_acquire)) return false;
+    return Bridge.Service([this](const NetplayLiveCheckpoint& candidate, std::string& error) {
+        Replica = prepareLiveReplica(candidate, PeerRomPath, Configuration,
+                                     InternalFilesDir, error);
+        return Replica != nullptr;
+    });
+}
+
+bool LiveCheckpointTransfer::take(NetplayLiveCheckpoint& peer,
+                                  std::unique_ptr<PreparedLiveReplica>& replica,
+                                  std::string& error)
+{
+    error.clear();
+    if (!Started || Taken || !finished()) return false;
+    if (Worker.joinable()) Worker.join();
+    Taken = true;
+    error = Error;
+    if (!Ok || Cancelled.load(std::memory_order_acquire) || !Replica)
+    {
+        if (error.empty()) error = "live checkpoint transfer did not prepare a replica";
+        Replica.reset();
+        return false;
+    }
+    peer = std::move(Peer);
+    replica = std::move(Replica);
+    return true;
+}
+
+void LiveCheckpointTransfer::cancel()
+{
+    Cancelled.store(true, std::memory_order_release);
+    Bridge.Cancel();
+    if (Worker.joinable()) Worker.join();
+    Replica.reset();
 }
 }

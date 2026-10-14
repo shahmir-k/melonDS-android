@@ -1,8 +1,10 @@
 #ifndef LIVE_CHECKPOINT_STAGING_H
 #define LIVE_CHECKPOINT_STAGING_H
 
+#include <atomic>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "Configuration.h"
@@ -50,6 +52,51 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplica(
     std::shared_ptr<EmulatorConfiguration> configuration,
     const std::string& internalFilesDir,
     std::string& error);
+
+// Owns the bounded checkpoint socket exchange and the *actual* preloaded peer
+// replica. Start after the Ambient fence is complete, then call
+// serviceOnEmulatorThread() while keeping Ambient::Process() alive and the
+// visible source frozen. The network worker waits in its prepare callback;
+// it never constructs an NDS or touches GL itself. Destruction cancels/joins
+// the worker and discards the scratch replica unless take() transferred it.
+// start/service/take/cancel/destruction all belong on the emulator/GL thread.
+class LiveCheckpointTransfer
+{
+public:
+    LiveCheckpointTransfer() = default;
+    LiveCheckpointTransfer(const LiveCheckpointTransfer&) = delete;
+    LiveCheckpointTransfer& operator=(const LiveCheckpointTransfer&) = delete;
+    ~LiveCheckpointTransfer();
+
+    bool start(melonDS::NetplayLiveCheckpoint local,
+               const melonDS::NetplayRom& expectedPeerRom,
+               const std::string& peerRomPath,
+               std::shared_ptr<EmulatorConfiguration> configuration,
+               const std::string& internalFilesDir,
+               const std::string& peerIPv4, melonDS::u16 tcpPort,
+               std::string& error);
+    bool serviceOnEmulatorThread();
+    bool finished() const { return Done.load(std::memory_order_acquire); }
+    bool take(melonDS::NetplayLiveCheckpoint& peer,
+              std::unique_ptr<PreparedLiveReplica>& replica,
+              std::string& error);
+    void cancel();
+
+private:
+    melonDS::NetplayLivePrepareBridge Bridge;
+    std::atomic<bool> Cancelled{false};
+    std::atomic<bool> Done{false};
+    std::thread Worker;
+    melonDS::NetplayLiveCheckpoint Local, Peer;
+    melonDS::NetplayRom ExpectedPeerRom;
+    std::unique_ptr<PreparedLiveReplica> Replica;
+    std::shared_ptr<EmulatorConfiguration> Configuration;
+    std::string PeerRomPath, InternalFilesDir, PeerIPv4, Error;
+    melonDS::u16 TcpPort = 0;
+    bool Started = false;
+    bool Ok = false;
+    bool Taken = false;
+};
 }
 
 #endif

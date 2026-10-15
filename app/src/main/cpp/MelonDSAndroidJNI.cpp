@@ -860,6 +860,8 @@ static void lanApplyRecvTimeout()
 }
 
 static void ambientUninstall();
+static void ambientPark();
+static bool ambientUnpark();
 static void lanEndAll()
 {
     ambientUninstall();     // (the lobby / a session replaces Just Play while it is open)
@@ -1250,13 +1252,14 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                 // No replica frame has run. Clear the Ambient owner pointer
                 // before replacing its singleton backend with the staged one.
                 guard.unlock();
-                ambientUninstall();
+                ambientPark();   // (kept linked while Netplay runs: the way back resumes it)
                 const bool committed = MelonDSAndroid::netplayCommitStagedLive(error);
                 guard.lock();
                 if (!committed)
                 {
                     MelonDSAndroid::netplayDiscardStagedLive();
                     guard.unlock();
+                    ambientUninstall();
                     ambientInstall();
                     guard.lock();
                     close("unresolved", error);
@@ -1308,9 +1311,71 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
     return false;
 }
 
+// A committed live session parks the Ambient backend instead of destroying it: a worker keeps its
+// link and presence serviced (as the headless harness does), and the session's end - by the game or
+// the other player leaving - resumes it (ambientUnpark): the same link, no new discovery, the
+// players' next talk forms a new LAN session at once.
+static std::unique_ptr<melonDS::MPInterface> ambientParked;
+static std::chrono::steady_clock::time_point ambientDebugUntil;   // (Ambient state in the log after a return)
+static std::thread ambientParkedService;
+static std::atomic<bool> ambientParkedRun{false};
+static void ambientDropParked()
+{
+    if (!ambientParked) return;
+    ambientParkedRun.store(false, std::memory_order_release);
+    if (ambientParkedService.joinable()) ambientParkedService.join();
+    ambientParked.reset();
+}
+static void ambientResetOfferState()
+{
+    ambientHandoffRequests.clear();
+    ambientHandoffStatus = "none";
+    ambientHandoffTerminalStatus.clear();
+    ambientOwnOfferEpoch = 0;
+    ambientOwnOfferToken = {};
+    ambientRomEpoch = 0;
+    ambientOwnRom = {};
+    ambientRomPublished = false;
+    ambientPeerRomEpoch = 0;
+    ambientPeerRom = {};
+    ambientPeerRomPath.clear(); ambientPeerRomData = {}; ambientLiveLink.reset();
+}
+static void ambientPark()
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    ambientDropParked();
+    if (!ambientPtr || melonDS::MPInterface::GetType() != melonDS::MPInterface_Ambient) return;
+    melonDS::AmbientLAN* a = ambientPtr;
+    ambientPtr = nullptr;
+    ambientResetOfferState();
+    ambientParked = melonDS::MPInterface::Take();   // (Dummy installed meanwhile)
+    ambientParkedRun.store(true, std::memory_order_release);
+    ambientParkedService = std::thread([a] {
+        while (ambientParkedRun.load(std::memory_order_acquire))
+        { a->Process(); std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+    });
+}
+static bool ambientUnpark()
+{
+    std::lock_guard<std::mutex> g(ambientMu);
+    if (!ambientParked || ambientPtr || melonDS::MPInterface::GetType() != melonDS::MPInterface_Dummy) return false;
+    ambientParkedRun.store(false, std::memory_order_release);
+    if (ambientParkedService.joinable()) ambientParkedService.join();
+    auto* a = static_cast<melonDS::AmbientLAN*>(ambientParked.get());
+    a->EndCommittedHandoff();
+    ambientPtr = a;
+    ambientResetOfferState();
+    melonDS::MPInterface::Set(std::move(ambientParked), melonDS::MPInterface_Ambient);
+    lanApplyRecvTimeout();
+    ambientDebugUntil = std::chrono::steady_clock::now() + std::chrono::seconds(40);
+    Platform::Log(Platform::LogLevel::Info, "Ambient resumed after the live session: %s\n", a->DebugLine().c_str());
+    return true;
+}
+
 static void ambientUninstall()
 {
     std::lock_guard<std::mutex> g(ambientMu);
+    ambientDropParked();
     if (!ambientPtr) return;
     ambientPtr = nullptr;
     ambientHandoffRequests.clear();
@@ -1332,9 +1397,13 @@ static void ambientInstall()
 {
     std::lock_guard<std::mutex> g(ambientMu);
     if (ambientPtr || ambientMode < 0 || MelonDSAndroid::netplayActive() || melonDS::MPInterface::GetType() != melonDS::MPInterface_Dummy)
+    {
+        Platform::Log(Platform::LogLevel::Info, "Ambient: not installed (existing=%d mode=%d netplay=%d mp=%d)\n", ambientPtr != nullptr,
+                      ambientMode, MelonDSAndroid::netplayActive(), (int)melonDS::MPInterface::GetType());
         return;
+    }
     std::string code = MelonDSAndroid::romGameCode();
-    if (code.size() != 4) return;       // (firmware boot: no game)
+    if (code.size() != 4) { Platform::Log(Platform::LogLevel::Info, "Ambient: not installed (no game code)\n"); return; }
     melonDS::AmbientLAN::Config c = ambientCfg;
     memcpy(c.GameCode, code.data(), 4);
     c.Vis = ambientMode;
@@ -1365,6 +1434,15 @@ static void ambientInstall()
 static bool ambientHandoffService()
 {
     std::unique_lock<std::mutex> g(ambientMu);
+    if (ambientPtr && std::chrono::steady_clock::now() < ambientDebugUntil)
+    {
+        static auto last = std::chrono::steady_clock::time_point{};
+        if (std::chrono::steady_clock::now() - last > std::chrono::seconds(2))
+        {
+            last = std::chrono::steady_clock::now();
+            Platform::Log(Platform::LogLevel::Info, "Ambient after return: %s\n", ambientPtr->DebugLine().c_str());
+        }
+    }
     if (!ambientPtr)
     {
         if (!ambientLiveCut) return false;
@@ -1618,6 +1696,8 @@ bool ambientFirmwareMac(u8* mac)
 }
 #else
 static void ambientUninstall() {}
+static void ambientPark() {}
+static bool ambientUnpark() { return false; }
 static void ambientInstall() {}
 static bool ambientHandoffService() { return false; }
 static void ambientHandoffCleanup() {}
@@ -1958,7 +2038,7 @@ Java_me_magnum_melonds_MelonEmulator_ambientConfigure(JNIEnv* env, jobject thiz,
     std::lock_guard<std::mutex> g(ambientMu);
     // a live Netplay session's end: back to discovery with the same console (no reload)
     MelonDSAndroid::netplaySetLiveExitHandler([] {
-        ambientInstall();
+        if (!ambientUnpark()) ambientInstall();
         if (MelonDSAndroid::netplayLocalWifiOn() && melonDS::MPInterface::GetType() == melonDS::MPInterface_Ambient)
             melonDS::MPInterface::Get().Begin(0);
     });

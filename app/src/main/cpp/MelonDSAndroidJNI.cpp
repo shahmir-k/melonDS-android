@@ -2247,7 +2247,7 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
                  "host_wait_us=%llu host_wait_calls=%llu host_wait_misses=%llu host_wait_timeouts=%llu "
                  "client_wait_us=%llu client_wait_calls=%llu client_wait_misses=%llu "
                  "stale_regular=%llu stale_cmd=%llu stale_reply=%llu stale_ack=%llu "
-                 "link_rtt_us=%u emu_us=%u predicted_fps_x100=%u verdict=%d",
+                 "link_rtt_us=%u emu_us=%u predicted_fps_x100=%u verdict=%d auto_ok=%d",
                  (unsigned long long)s.Frames, s.Nearby, s.Links, (unsigned long long)s.LinksOpened, (unsigned long long)s.PresenceTx,
                  (unsigned long long)s.PresenceRx, (unsigned long long)s.LinkTx, (unsigned long long)s.LinkRx,
                  (unsigned long long)s.BeaconsInjected, (unsigned long long)s.BlockedUs, (unsigned long long)s.Exchanges,
@@ -2257,7 +2257,7 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
                  (unsigned long long)s.HostWaitTimeouts,
                  (unsigned long long)s.ClientWaitUs, (unsigned long long)s.ClientWaitCalls, (unsigned long long)s.ClientWaitMisses,
                  (unsigned long long)s.Stale[0], (unsigned long long)s.Stale[1], (unsigned long long)s.Stale[2],
-                 (unsigned long long)s.Stale[3], s.LinkRttUs, s.EmuUs, s.PredFpsX100, s.Verdict);
+                 (unsigned long long)s.Stale[3], s.LinkRttUs, s.EmuUs, s.PredFpsX100, s.Verdict, s.AutoSwitchOk ? 1 : 0);
         r = b;
     }
 #endif

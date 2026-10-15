@@ -17,6 +17,7 @@
 #include "Configuration.h"
 #include "DSi.h"
 #include "DSiSupport.h"
+#include "EmulatorArgsBuilder.h"
 #include "DSi_I2C.h"
 #include "GPU.h"
 #include "GPU_Soft.h"
@@ -426,7 +427,37 @@ bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
     nds->SetNDSCart(std::move(cart));
     ndsSave = std::make_unique<SaveManager>(sramPath);
 
+    if (isDSiWareTitle() && !currentConfiguration->showBootScreen)
+    {
+        // A DSiWare title boots exactly as with the boot screen on: the console was built with
+        // the boot-screen-off BIOS patch before the cart was known, so put the dumped BIOSes back
+        // and reset again
+        auto arm9i = MelonDSAndroid::loadDSiARM9BIOS(*currentConfiguration, true);
+        auto arm7i = MelonDSAndroid::loadDSiARM7BIOS(*currentConfiguration, true);
+        if (!arm9i || !arm7i)
+            return false;
+        auto dsi = (DSi*) nds;
+        dsi->ARM9iBIOS = *arm9i;
+        dsi->ARM7iBIOS = *arm7i;
+        nds->Reset();
+        setBatteryLevels();
+        setDateTime();
+    }
+
     return true;
+}
+
+bool MelonInstance::isDSiWareTitle()
+{
+    auto cart = nds->NDSCartSlot.GetCart();
+    return nds->ConsoleType == 1 && cart != nullptr && cart->GetHeader().IsDSiWare();
+}
+
+bool MelonInstance::directBoot()
+{
+    // a DSiWare title never boots directly (it goes through the DSi boot sequence, as with the boot screen on)
+    bool bootScreen = currentConfiguration->showBootScreen || isDSiWareTitle();
+    return !bootScreen || nds->NeedsDirectBoot();
 }
 
 bool MelonInstance::loadGbaRom(std::string romPath, std::string sramPath)
@@ -512,13 +543,7 @@ bool MelonInstance::bootFirmware()
 
 void MelonInstance::start()
 {
-    auto cart = nds->NDSCartSlot.GetCart();
-    if (nds->ConsoleType == 1 && cart != nullptr && cart->GetHeader().IsDSiWare() && !currentConfiguration->showBootScreen)
-    {
-        auto dsi = (DSi*) nds;
-        DSiSupport::SetupDSiDirectBoot(dsi);
-    }
-    else if (!currentConfiguration->showBootScreen || nds->NeedsDirectBoot())
+    if (directBoot())
     {
         // This seems to be unused, but it's required
         std::string romName;
@@ -538,7 +563,7 @@ void MelonInstance::reset()
     // If there is a cart inserted, check if direct boot is required
     if (nds->GetNDSCart())
     {
-        if (!currentConfiguration->showBootScreen || nds->NeedsDirectBoot())
+        if (directBoot())
         {
             // This seems to be unused, but it's required
             std::string romName;

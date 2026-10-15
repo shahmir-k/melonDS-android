@@ -93,6 +93,8 @@ public:
     void updateBattery();
 
 private:
+    bool isDSiWareTitle();
+    bool directBoot();
     void updateRenderer();
     void blitAcceleratedFrame(melonDS::u32 srcArrayTex, melonDS::u32 dstTex, int dstWidth, int dstHeight);
     void setBatteryLevels();

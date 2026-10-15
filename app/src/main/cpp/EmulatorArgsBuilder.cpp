@@ -240,7 +240,7 @@ Firmware generateFirmware(const EmulatorConfiguration& configuration, int type, 
     return firmware;
 }
 
-std::unique_ptr<DSiBIOSImage> loadDSiARM9BIOS(const EmulatorConfiguration& configuration) noexcept
+std::unique_ptr<DSiBIOSImage> loadDSiARM9BIOS(const EmulatorConfiguration& configuration, bool dsiWareTitle) noexcept
 {
     std::string path = configuration.dsiBios9Path;
 
@@ -250,7 +250,8 @@ std::unique_ptr<DSiBIOSImage> loadDSiARM9BIOS(const EmulatorConfiguration& confi
         FileRead(bios->data(), bios->size(), 1, f);
         CloseFile(f);
 
-        if (!configuration.showBootScreen)
+        // a DSiWare title always boots through the DSi boot sequence (no direct boot), so its BIOS stays as dumped
+        if (!configuration.showBootScreen && !dsiWareTitle)
         {
             // herp
             *(u32*)bios->data() = 0xEAFFFFFE; // overwrites the reset vector
@@ -267,7 +268,7 @@ std::unique_ptr<DSiBIOSImage> loadDSiARM9BIOS(const EmulatorConfiguration& confi
     return nullptr;
 }
 
-std::unique_ptr<DSiBIOSImage> loadDSiARM7BIOS(const EmulatorConfiguration& configuration) noexcept
+std::unique_ptr<DSiBIOSImage> loadDSiARM7BIOS(const EmulatorConfiguration& configuration, bool dsiWareTitle) noexcept
 {
     std::string path = configuration.dsiBios7Path;
 
@@ -277,7 +278,8 @@ std::unique_ptr<DSiBIOSImage> loadDSiARM7BIOS(const EmulatorConfiguration& confi
         FileRead(bios->data(), bios->size(), 1, f);
         CloseFile(f);
 
-        if (!configuration.showBootScreen)
+        // a DSiWare title always boots through the DSi boot sequence (no direct boot), so its BIOS stays as dumped
+        if (!configuration.showBootScreen && !dsiWareTitle)
         {
             // herp
             *(u32*)bios->data() = 0xEAFFFFFE; // overwrites the reset vector
@@ -476,11 +478,11 @@ std::optional<std::unique_ptr<NDSArgs>> BuildArgsFromConfiguration(const Emulato
 
     if (configuration.consoleType == 1)
     {
-        auto arm7ibios = loadDSiARM7BIOS(configuration);
+        auto arm7ibios = loadDSiARM7BIOS(configuration, false);
         if (!arm7ibios)
             return std::nullopt;
 
-        auto arm9ibios = loadDSiARM9BIOS(configuration);
+        auto arm9ibios = loadDSiARM9BIOS(configuration, false);
         if (!arm9ibios)
             return std::nullopt;
 

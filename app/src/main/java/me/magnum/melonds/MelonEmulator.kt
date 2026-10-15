@@ -122,6 +122,8 @@ object MelonEmulator {
     external fun ambientOfferHandoff(mode: Int): Boolean // 1 plain Netplay, 2 Hosted; true = request queued
     external fun ambientRespondHandoff(epoch: Long, accept: Boolean): Boolean
     external fun ambientCancelHandoff(): Boolean
+    external fun ambientSetAutoSwitch(auto: Boolean)  // a LAN session the network cannot carry moves to Netplay without asking
+    external fun ambientTakeAutoSwitchNotice(): Boolean // true once after an automatic switch committed
     external fun ambientHandoffStatus(): String // "phase\tepoch\tmode\tpeer_id[\treason]" (reason: failed/unresolved); phase also includes missing_rom/rom_ready
 
     // Group: the Netplay lobby kept connected while its session runs, so the host's commands

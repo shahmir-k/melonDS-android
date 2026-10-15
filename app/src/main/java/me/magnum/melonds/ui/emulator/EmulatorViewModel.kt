@@ -437,6 +437,7 @@ class EmulatorViewModel @Inject constructor(
     }
 
     fun getLanPlayerName(): String = settingsRepository.getFirmwareConfiguration().nickname
+    fun isLocalWirelessAutoSwitch(): Boolean = !settingsRepository.getLocalWirelessAskBeforeSwitch()
 
     fun resumeEmulator() {
         sessionCoroutineScope.launch {

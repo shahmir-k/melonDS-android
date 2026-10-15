@@ -26,6 +26,8 @@ interface SettingsRepository {
     fun getNetplayRomCacheMaxSize(): SizeUnit
     // Just Play local wireless: 0 everyone nearby, 1 only while in a wireless menu, 2 hidden, 3 lobby only
     fun getLocalWirelessMode(): Int
+    // Just Play: true = ask before moving a too-slow LAN session to Netplay (default: switch automatically)
+    fun getLocalWirelessAskBeforeSwitch(): Boolean
 
     fun getDefaultConsoleType(): ConsoleType
     fun getFirmwareConfiguration(): FirmwareConfiguration

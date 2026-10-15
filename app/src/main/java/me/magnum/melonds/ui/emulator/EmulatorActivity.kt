@@ -624,6 +624,9 @@ class EmulatorActivity : AppCompatActivity() {
                             )
                         }
                         ambientHandoffNativeStatus = snapshot.status
+                        ambientHandoffMonitor.autoSwitch = viewModel.isLocalWirelessAutoSwitch()
+                        if (withContext(Dispatchers.IO) { MelonEmulator.ambientTakeAutoSwitchNotice() })
+                            Toast.makeText(this@EmulatorActivity, R.string.local_wireless_auto_switched, Toast.LENGTH_LONG).show()
                         ambientHandoffScreen.value = ambientHandoffMonitor.screen(snapshot, ambientHandoffScreen.value)
                     } else ambientHandoffScreen.value = null
                     delay(250)

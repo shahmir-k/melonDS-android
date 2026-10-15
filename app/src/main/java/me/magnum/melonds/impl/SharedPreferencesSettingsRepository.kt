@@ -240,6 +240,10 @@ class SharedPreferencesSettingsRepository(
         return preferences.getString("local_wireless_mode", "0")?.toIntOrNull() ?: 0
     }
 
+    override fun getLocalWirelessAskBeforeSwitch(): Boolean {
+        return preferences.getBoolean("local_wireless_ask_switch", false)
+    }
+
     override fun getDefaultConsoleType(): ConsoleType {
         val consoleTypePreference = preferences.getString("console_type", "ds")!!
         return enumValueOfIgnoreCase(consoleTypePreference)

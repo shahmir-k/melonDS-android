@@ -942,6 +942,13 @@ static std::deque<AmbientHandoffRequest> ambientHandoffRequests;
 static std::string ambientHandoffStatus = "none";
 static std::string ambientHandoffTerminalStatus;
 static u64 ambientLastOfferEpoch = 0;
+// Just Play's automatic Netplay switch (default; "Ask before switching" turns it off): AmbientLAN::AutoHandoffDue
+// makes the offer, an incoming offer is accepted without the dialog. ambientAutoEpoch: the offer that was automatic
+// (its commit shows the app's notice once).
+static std::atomic_bool ambientAutoSwitch{true};
+static u64 ambientAutoEpoch = 0;
+static bool ambientAutoOfferQueued = false;
+static std::atomic_bool ambientAutoNotice{false};
 static u64 ambientOwnOfferEpoch = 0;
 static std::array<u8, 16> ambientOwnOfferToken{};
 static u64 ambientRomEpoch = 0;
@@ -1273,6 +1280,7 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
                     return false;
                 }
                 stamp("committed (first Netplay frame next)");
+                if (cut.Epoch == ambientAutoEpoch) ambientAutoNotice.store(true);
                 close("committed");
                 return false;
             }
@@ -1450,6 +1458,28 @@ static bool ambientHandoffService()
         ambientCutRollback("Ambient backend disappeared during live cut");
         return ambientHandoffAdvance(g);
     }
+    if (ambientAutoSwitch.load(std::memory_order_relaxed) && !ambientLiveCut && ambientHandoffRequests.empty())
+    {
+        u64 offered = 0;
+        melonDS::AmbientLAN::HandoffMode offeredMode;
+        melonDS::AmbientLAN::HandoffOfferStatus open{};
+        if (ambientPtr->IncomingHandoffOffer(offered, offeredMode))
+        {
+            if (ambientPtr->RespondToHandoffOffer(offered, true))
+            {
+                ambientAutoEpoch = offered;
+                Platform::Log(Platform::LogLevel::Info, "Just Play: automatic switch, accepted the peer's offer %llu\n",
+                              (unsigned long long)offered);
+            }
+        }
+        else if (!ambientPtr->GetHandoffOfferStatus(open) && ambientPtr->AutoHandoffDue())
+        {
+            Platform::Log(Platform::LogLevel::Info, "Just Play: automatic switch, the network cannot carry this LAN session: %s\n",
+                          ambientPtr->DebugLine().c_str());
+            ambientHandoffRequests.push_back({AmbientHandoffRequestKind::Offer, 0, melonDS::AmbientLAN::HandoffPlainNetplay, false});
+            ambientAutoOfferQueued = true;
+        }
+    }
     while (!ambientHandoffRequests.empty())
     {
         const auto request = ambientHandoffRequests.front();
@@ -1468,8 +1498,10 @@ static bool ambientHandoffService()
             {
                 ambientLastOfferEpoch = ambientOwnOfferEpoch = epoch;
                 ambientOwnOfferToken = token;
+                if (ambientAutoOfferQueued) ambientAutoEpoch = epoch;
             }
             else ambientHandoffStatus = "failed\t0\t0\t0";
+            ambientAutoOfferQueued = false;
         }
         else if (request.Kind == AmbientHandoffRequestKind::Respond)
         {
@@ -2281,6 +2313,24 @@ Java_me_magnum_melonds_MelonEmulator_ambientCancelHandoff(JNIEnv*, jobject)
     if (!ambientPtr || ambientHandoffRequests.size() >= 8) return JNI_FALSE;
     ambientHandoffRequests.push_back({AmbientHandoffRequestKind::Cancel});
     return JNI_TRUE;
+#else
+    return JNI_FALSE;
+#endif
+}
+
+JNIEXPORT void JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientSetAutoSwitch(JNIEnv*, jobject, jboolean autoSwitch)
+{
+#ifdef LITEV_AMBIENT_LAN
+    ambientAutoSwitch.store(autoSwitch == JNI_TRUE);
+#endif
+}
+
+JNIEXPORT jboolean JNICALL
+Java_me_magnum_melonds_MelonEmulator_ambientTakeAutoSwitchNotice(JNIEnv*, jobject)
+{
+#ifdef LITEV_AMBIENT_LAN
+    return ambientAutoNotice.exchange(false) ? JNI_TRUE : JNI_FALSE;
 #else
     return JNI_FALSE;
 #endif

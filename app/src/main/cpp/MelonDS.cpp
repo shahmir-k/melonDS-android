@@ -1515,13 +1515,45 @@ namespace MelonDSAndroid
         // object. A live promoted remote uses exactly the same wait path, and
         // Hosted ReplayMP's silence callback also retains this pointer.
         if (netplay->input) netplay->input->Abort();
+        const auto t0 = std::chrono::steady_clock::now();
         for (auto& r : netplay->remotes)
         {
             if (r->thread.joinable())
                 r->thread.join();
             if (!r->liveOwner) r->console->stop(); // liveOwner stops its console exactly once
         }
+        if (wasLive)
+            Platform::Log(Platform::LogLevel::Info, "Netplay: live leave: remote threads joined in %.1f ms\n",
+                          std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
         for (FILE* f : netplay->rec) if (f) fclose(f);
+        if (wasLive)
+        {
+            // A live session's end: the local console plays on in the next frame. The rest - the input
+            // link (its receiver's socket wait), the other players' copies, the Netplay MP backend - is
+            // released on a worker: ~200 ms of the RG DS return were these destructors. Every thread that
+            // used them is joined above; nothing here touches the local console.
+            // the link's hooks on the console that plays on go first (the link dies on the worker; any
+            // backend - Lockstep, Hosted record or replay - hooks the console)
+            if (instance && instance->getNds()) instance->getNds()->DetachMPLink();
+            auto old = std::move(netplay);
+            auto oldMP = MPInterface::Take();
+            MPInterface::Set(MPInterface_Dummy);
+            std::thread([old = std::move(old), oldMP = std::move(oldMP)]() mutable {
+#ifdef LITEV_HOSTED_NETPLAY
+                old->client = nullptr;
+                old->server = nullptr;
+#endif
+                old->input = nullptr;
+                old.reset();
+                oldMP.reset();
+            }).detach();
+            if (instance)
+            {
+                instance->setRewindSuspendedForNetplay(false);
+                instance->setInputDeferred(false);
+            }
+            return;
+        }
 #ifdef LITEV_HOSTED_NETPLAY
         netplay->client = nullptr;
         netplay->server = nullptr;
@@ -1957,10 +1989,15 @@ namespace MelonDSAndroid
                                          netplay->input->HasInput(netplay->player, f); f++)
                 liveScheduled.push_back(netplay->input->Get(netplay->player, f));
         if (netplay->liveExit) netplay->liveExit->Cancel();
+        const auto ms = [&] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(); };
         netplayStop();
+        const double stopped = ms();
         if (!liveScheduled.empty()) instance->setInputDeferred(true);   // (netplayStop resumed live input)
         if (instance->getInstanceId() != 0) instance->reassignInstanceId(0);
+        const double reassigned = ms();
         if (liveExitHandler) liveExitHandler();
+        Platform::Log(Platform::LogLevel::Info, "Netplay: live leave: netplayStop %.1f ms, seat %.1f ms, back to Ambient %.1f ms\n",
+                      stopped, reassigned - stopped, ms() - reassigned);
         Platform::Log(Platform::LogLevel::Info, "Netplay: live session ended %s after frame %d; playing on alone in "
                       "discovery (%zu scheduled inputs first), swap %.1f ms\n", byGame ? "by the game" : "(other player gone)",
                       last, liveScheduled.size(),

@@ -668,6 +668,7 @@ u32 MelonInstance::runFrame()
 
     Frame* renderFrame = frameQueue.getRenderFrame();
     renderFrame->emuFrame = frame;
+    renderFrame->screenSerials = 0;
 
     EGLDisplay currentDisplay = eglGetCurrentDisplay();
     // Delete old render fence
@@ -790,8 +791,11 @@ u32 MelonInstance::runFrame()
             [renderFrame, currentDisplay] {
                 if (renderFrame->presentFence) eglWaitSyncKHR(currentDisplay, renderFrame->presentFence, 0);
             },
-            [this, renderFrame, currentDisplay, sleeping] {
+            [this, hybrid, renderFrame, currentDisplay, sleeping] {
                 if (sleeping) { frameQueue.discardRenderedFrame(renderFrame); return; }
+#ifdef LITEV_PRESENT_SAME
+                renderFrame->screenSerials = ((int64_t)hybrid->ScreenSerial(0) << 32) | hybrid->ScreenSerial(1);
+#endif
                 renderFrame->renderFence = eglCreateSyncKHR(currentDisplay, EGL_SYNC_FENCE_KHR, nullptr);
                 glFlush();
                 frameQueue.pushRenderedFrame(renderFrame);

@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.model.render.PresentFrameWrapper
 import me.magnum.melonds.ui.emulator.model.RuntimeRendererConfiguration
 import me.magnum.melonds.ui.emulator.render.EmulatorRenderer
@@ -21,6 +22,8 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
     private var surface: Surface? = null
     private var windowSurface: EGLSurface? = null
     private var renderer: EmulatorRenderer? = null
+    private val presentSame by lazy { MelonEmulator.litevProp("presentsame", 1) != 0 }
+    private var lastFrameKey: Any? = null
 
     private enum class SurfaceState {
         UNINITIALIZED,
@@ -77,6 +80,17 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
                 return
             }
 
+            // LITEV_PRESENT_SAME (app side; debug.litev.presentsame=0: off): a surface whose next
+            // picture equals the one it shows (its DS screens unchanged, same layout/background/
+            // overlay) keeps it: no makeCurrent, draw, swap, or SurfaceFlinger/HWC update
+            val key = if (presentSame && surfaceState == SurfaceState.READY) renderer?.frameKey(presentFrameWrapper) else null
+            if (key != null && key == lastFrameKey) {
+                PresentSameStats.skip()
+                return
+            }
+            lastFrameKey = key
+            PresentSameStats.draw()
+
             PresentTimer.mark(6)
             glContext.use(windowSurface!!)
             PresentTimer.mark(7)
@@ -103,6 +117,7 @@ class EmulatorSurfaceView(context: Context, attrs: AttributeSet? = null) : Surfa
     private fun setupWindowSurface(glContext: GlContext): Boolean {
         val currentSurface = surface ?: return false
         windowSurface = glContext.createWindowSurface(currentSurface)
+        lastFrameKey = null
         return true
     }
 

@@ -31,6 +31,9 @@ struct Frame {
     int64_t readyNs{};  // steady clock when it was pushed for presentation (debug.litev.presentlog)
     EGLSyncKHR renderFence{};
     EGLSyncKHR presentFence{};
+    // LITEV_PRESENT_SAME: per screen (top in the high 32 bits, bottom low) the renderer's serial
+    // of the merged picture (equal serial = identical pixels); 0 = unknown (always redraw)
+    int64_t screenSerials{};
 };
 
 class FrameQueue

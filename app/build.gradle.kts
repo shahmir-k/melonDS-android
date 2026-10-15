@@ -257,6 +257,11 @@ android {
                     // GL 3D thread (hyb-gl3d) one nice step above the other render threads (exact:
                     // scheduling only; debug.litev.gl3dnice=-10 = off). PW town 3x uncapped +2.6%.
                     "-DLITEV_GL3D_PRIO=ON",
+                    // Present only the displays whose picture changed: a 2D-only DS screen with the same
+                    // descriptors as the last merge keeps its serial, and the surface showing it skips
+                    // makeCurrent/draw/swap (and the SurfaceFlinger + HWC update). Exact (same pixels).
+                    // debug.litev.presentsame=0: off.
+                    "-DLITEV_PRESENT_SAME=ON",
                     // Dirty-incremental VRAM shadow snapshots instead of full memcpy.
                     "-DLITEV_SNAP_DIRTY=ON",
                     // Staged deep prefetch in BuildFrameGeom (A; runtime prop

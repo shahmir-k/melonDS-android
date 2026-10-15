@@ -19,6 +19,8 @@ class ColorRenderer(private val color: Int) : EmulatorRenderer {
     override fun onSurfaceChanged(width: Int, height: Int) {
     }
 
+    override fun frameKey(presentFrameWrapper: PresentFrameWrapper): Any = color
+
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {
         val r = Color.red(color) / 255f
         val g = Color.green(color) / 255f

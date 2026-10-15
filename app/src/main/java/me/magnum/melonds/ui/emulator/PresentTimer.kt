@@ -25,3 +25,20 @@ object PresentTimer {
         }
     }
 }
+
+// debug.litev.presenttime=1 also counts LITEV_PRESENT_SAME: surface draws vs skipped (picture
+// unchanged), logged every 600 surface presents as LITEV_PRESENTSAME
+object PresentSameStats {
+    private val on by lazy { MelonEmulator.litevProp("presenttime", 0) != 0 }
+    private var draws = 0
+    private var skips = 0
+
+    fun draw() { if (on) { draws++; log() } }
+    fun skip() { if (on) { skips++; log() } }
+
+    private fun log() {
+        if (draws + skips < 600) return
+        Log.i("LITEV_PRESENTSAME", "600 surface presents: drawn $draws, skipped (unchanged) $skips")
+        draws = 0; skips = 0
+    }
+}

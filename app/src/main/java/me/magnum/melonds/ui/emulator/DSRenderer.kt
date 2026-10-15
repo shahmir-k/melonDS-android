@@ -265,6 +265,25 @@ class DSRenderer(private val context: Context) : EmulatorRenderer {
         }
     }
 
+    private data class FrameKey(val valid: Boolean, val top: Long, val bottom: Long, val background: RuntimeBackground?, val loaded: Boolean,
+                                val mustLoad: Boolean, val posDirty: Boolean, val overlay: Overlay?, val width: Float, val height: Float)
+
+    // LITEV_PRESENT_SAME: the screens this surface shows with their picture serials, plus every
+    // other input of drawFrame (configuration changes give no key: always drawn)
+    override fun frameKey(presentFrameWrapper: PresentFrameWrapper): Any? {
+        val serials = presentFrameWrapper.screenSerials
+        if (presentFrameWrapper.isValidFrame && serials == 0L) return null
+        synchronized(configurationLock) {
+            if (mustUpdateConfiguration) return null
+            val top = if (topScreenRect != null) serials ushr 32 else -1L
+            val bottom = if (bottomScreenRect != null) serials and 0xFFFFFFFFL else -1L
+            synchronized(backgroundLock) {
+                return FrameKey(presentFrameWrapper.isValidFrame, top, bottom, background, isBackgroundLoaded, mustLoadBackground,
+                                isBackgroundPositionDirty, overlay, width, height)
+            }
+        }
+    }
+
     override fun drawFrame(presentFrameWrapper: PresentFrameWrapper) {
         synchronized(configurationLock) {
             if (mustUpdateConfiguration) {

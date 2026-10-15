@@ -410,7 +410,7 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
     }
 
     jclass presentFrameWrapperClass = env->GetObjectClass(renderFrameCallback);
-    jmethodID renderFrameMethodId = env->GetMethodID(presentFrameWrapperClass, "renderFrame", "(ZI)V");
+    jmethodID renderFrameMethodId = env->GetMethodID(presentFrameWrapperClass, "renderFrame", "(ZIJ)V");
 
     std::optional<std::chrono::time_point<std::chrono::steady_clock>> deadlineTime;
     if (deadlineNs > 0)
@@ -471,7 +471,7 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
     if (presentationFrame != nullptr)
     {
         eglWaitSyncKHR(currentDisplay, presentationFrame->renderFence, 0);
-        env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, true, (jint) presentationFrame->frameTexture);
+        env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, true, (jint) presentationFrame->frameTexture, (jlong) presentationFrame->screenSerials);
         // record mode footage, on this thread's GL context (the hardware encoder does the rest)
         {
             std::string dir, prefix;
@@ -487,7 +487,7 @@ Java_me_magnum_melonds_MelonEmulator_presentFrame(JNIEnv* env, jobject thiz, jlo
     }
     else
     {
-        env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, false, 0);
+        env->CallVoidMethod(renderFrameCallback, renderFrameMethodId, false, 0, (jlong) 0);
     }
 }
 

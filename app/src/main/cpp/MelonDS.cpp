@@ -110,6 +110,7 @@ namespace MelonDSAndroid
         std::map<int, NetplayFrameInput> script;    // debug.litev.npscript2: replaces the network
         std::thread thread;
         std::map<int, u64> hashes;                  // desync check: our copy, by frame (hashLock)
+        std::atomic<bool> left {false};             // a live session's partial exit: this player left
 #ifdef LITEV_NP_SPEED
         std::atomic<double> cpuMs {0};              // this console's thread CPU so far (the report)
 #endif
@@ -145,6 +146,10 @@ namespace MelonDSAndroid
         // console then plays on alone in discovery (netplayLeaveLive), never reloaded.
         std::unique_ptr<NetplayLiveExit> liveExit;
         std::atomic<bool> liveEnded {false}, liveLeave {false};
+        // a partial exit of this device (its console quit / its game left the others / it was left
+        // alone): the others play on; our inputs up to liveLastFrame must still reach them
+        bool livePartial = false;
+        int liveLastFrame = -1;
         // Hosted Netplay (docs/HYBRID-NETPLAY.md, design F): the host (player 0) runs every console
         // and records what the link returns to each; every guest runs only its own console, whose
         // link replays the host's record of it. The guests' inputs travel to the host only.
@@ -181,23 +186,20 @@ namespace MelonDSAndroid
     struct LiveNetplayCandidate
     {
         std::unique_ptr<MPInterface> Backend;
-        std::unique_ptr<PreparedLiveReplica> PeerReplica;
+        std::unique_ptr<PreparedLiveReplica> PeerReplica;   // (a Hosted guest's peer copy: validated, dropped at commit)
         std::unique_ptr<NetplaySession> Session;
-        NetplayLiveCheckpoint Local, Peer;
+        NetplayLiveCheckpoint Local;
+        std::vector<std::pair<int, u64>> PeerClocks;        // every peer's player and raw clock at the cut
         bool ProofDone = false;
     };
     static std::unique_ptr<LiveNetplayCandidate> liveCandidate;
 
 
 
-    bool netplayStageLive(const NetplayLiveCheckpoint& local,
-                          const NetplayLiveCheckpoint& peer,
-                          std::unique_ptr<PreparedLiveReplica> peerReplica,
-                          bool hosted, const std::string& peerIPv4,
-                          std::string& error)
+    bool netplayStageLive(const NetplayLiveCheckpoint& local, std::vector<LivePeer> peers,
+                          bool hosted, std::string& error)
     {
         error.clear();
-        in_addr parsed{};
         // (each clause named: 'does not match' alone could not be diagnosed from a device log)
         const char* mismatch =
             (liveCandidate) ? "liveCandidate" :
@@ -205,78 +207,92 @@ namespace MelonDSAndroid
             (MPInterface::GetType() != MPInterface_Ambient) ? "MPInterface::GetType() != MPInterface_Ambient" :
             (!instance) ? "!instance" :
             (!instance->getNds()) ? "!instance->getNds()" :
-            (!peerReplica) ? "!peerReplica" :
-            (!peerReplica->Started) ? "!peerReplica->Started" :
-            (!peerReplica->Console) ? "!peerReplica->Console" :
-            (!peerReplica->Console->getNds()) ? "!peerReplica->Console->getNds()" :
-            (local.Player > 1) ? "local.Player > 1" :
-            (peer.Player != 1 - local.Player) ? "peer.Player != 1 - local.Player" :
+            (peers.empty() || peers.size() >= (size_t)NetplayInput::kMaxPlayers) ? "peer count" :
+            (hosted && peers.size() != 1) ? "Hosted Netplay of more than two players" :
+            (local.Player >= NetplayInput::kMaxPlayers) ? "local.Player out of range" :
             (!local.Epoch) ? "!local.Epoch" :
-            (local.Epoch != peer.Epoch) ? "local.Epoch != peer.Epoch" :
             (local.Build != NetplayHandoffCompat()) ? "local.Build != NetplayHandoffCompat()" :
-            (peer.Build != local.Build) ? "peer.Build != local.Build" :
             (local.FenceToken == std::array<u8, 16>{}) ? "local.FenceToken == std::array<u8, 16>{}" :
-            (local.FenceToken != peer.FenceToken) ? "local.FenceToken != peer.FenceToken" :
             (local.State.empty()) ? "local.State.empty()" :
-            (peer.State.empty()) ? "peer.State.empty()" :
             (local.Firmware.empty()) ? "local.Firmware.empty()" :
-            (peer.Firmware.empty()) ? "peer.Firmware.empty()" :
             (currentRomDescription() != local.Rom) ? "currentRomDescription() != local.Rom" :
             (instance->getFrame() != local.Frame) ? "instance->getFrame() != local.Frame" :
             (instance->getNds()->GetSysTimestamp() != local.RawClock) ? "instance->getNds()->GetSysTimestamp() != local.RawClock" :
             (instance->getNds()->Wifi.HandoffBusyMask() != 0) ? "instance->getNds()->Wifi.HandoffBusyMask() != 0" :
-            (peerReplica->Console->getInstanceId() != peer.Player) ? "peerReplica->Console->getInstanceId() != peer.Player" :
-            (peerReplica->Console->loadedRomDescription() != peer.Rom) ? "peerReplica->Console->loadedRomDescription() != peer.Rom" :
-            (peerReplica->Console->getNds()->GetSysTimestamp() != peer.RawClock) ? "peerReplica->Console->getNds()->GetSysTimestamp() != peer.RawClock" :
-            (peerReplica->Console->getNds()->Wifi.HandoffBusyMask() != 0) ? "peerReplica->Console->getNds()->Wifi.HandoffBusyMask() != 0" :
-            (inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1) ? "inet_pton(AF_INET, peerIPv4.c_str(), &parsed) != 1" :
             nullptr;
+        bool seen[NetplayInput::kMaxPlayers] = {};
+        seen[local.Player < NetplayInput::kMaxPlayers ? local.Player : 0] = true;
+        for (const LivePeer& p : peers)
+        {
+            if (mismatch) break;
+            in_addr parsed{};
+            const NetplayLiveCheckpoint* c = p.Checkpoint.get();
+            mismatch =
+                (!c || !p.Replica || !p.Replica->Started || !p.Replica->Console || !p.Replica->Console->getNds()) ? "peer replica missing" :
+                (c->Player >= NetplayInput::kMaxPlayers || seen[c->Player]) ? "peer player invalid or repeated" :
+                (c->Epoch != local.Epoch) ? "peer epoch != local epoch" :
+                (c->Build != local.Build) ? "peer build != local build" :
+                (c->FenceToken != local.FenceToken) ? "peer fence token != local" :
+                (c->State.empty() || c->Firmware.empty()) ? "peer checkpoint empty" :
+                (p.Replica->Console->getInstanceId() != c->Player) ? "peer replica instance id" :
+                (p.Replica->Console->loadedRomDescription() != c->Rom) ? "peer replica ROM" :
+                (p.Replica->Console->getNds()->GetSysTimestamp() != c->RawClock) ? "peer replica clock" :
+                (p.Replica->Console->getNds()->Wifi.HandoffBusyMask() != 0) ? "peer replica busy" :
+                (inet_pton(AF_INET, p.IPv4.c_str(), &parsed) != 1) ? "peer IPv4" : nullptr;
+            if (!mismatch) seen[c->Player] = true;
+        }
         if (mismatch)
         { error = std::string("live Netplay candidate does not match the frozen cut: ") + mismatch; return false; }
 #ifndef LITEV_HOSTED_NETPLAY
         if (hosted) { error = "Hosted Netplay is not available in this build"; return false; }
 #endif
 
-        constexpr int kInputPort = 7100;
-        constexpr int kStartupPort = 7150;
         constexpr int kInputDelay = 3;
         auto candidate = std::make_unique<LiveNetplayCandidate>();
         candidate->Local = local;
-        candidate->Peer = peer;
-        candidate->PeerReplica = std::move(peerReplica);
+        for (const LivePeer& p : peers) candidate->PeerClocks.push_back({p.Checkpoint->Player, p.Checkpoint->RawClock});
         candidate->Session = std::make_unique<NetplaySession>();
         auto& session = *candidate->Session;
         session.player = local.Player;
-        session.players = 2;
+        session.players = (int)peers.size() + 1;
         session.delay = kInputDelay;
-        session.port = kInputPort;
-        session.peer = peerIPv4 + ":" + std::to_string(kInputPort);
+        session.port = kLiveInputPort + local.Player;
+        session.peer = peers[0].IPv4 + ":" + std::to_string(kLiveInputPort + peers[0].Checkpoint->Player);
         session.exchange = false;
         session.autoDelay = false;
         session.hosted = hosted;
         session.live = true;
-        session.liveExit = std::make_unique<NetplayLiveExit>(2);
+        int maxPlayer = local.Player;
+        for (const LivePeer& p : peers) maxPlayer = std::max(maxPlayer, (int)p.Checkpoint->Player);
+        session.liveExit = std::make_unique<NetplayLiveExit>(maxPlayer + 1);
 
         int inputPlayer = local.Player;
-        int peerInputPlayer = peer.Player;
+        std::vector<std::pair<int, std::string>> inputPeers, startPeers;
+        for (const LivePeer& p : peers)
+        {
+            int peerInputPlayer = p.Checkpoint->Player;
+#ifdef LITEV_HOSTED_NETPLAY
+            if (hosted && peerInputPlayer == 0) peerInputPlayer = kHostedServerId;
+#endif
+            inputPeers.push_back({peerInputPlayer, p.IPv4 + ":" + std::to_string(kLiveInputPort + p.Checkpoint->Player)});
+            startPeers.push_back({peerInputPlayer, p.IPv4 + ":" + std::to_string(kLiveStartPort + p.Checkpoint->Player)});
+        }
 #ifdef LITEV_HOSTED_NETPLAY
         if (hosted && local.Player == 0) inputPlayer = kHostedServerId;
-        if (hosted && peer.Player == 0) peerInputPlayer = kHostedServerId;
 #endif
-        const std::vector<std::pair<int, std::string>> inputPeers {{peerInputPlayer, session.peer}};
-        session.input = std::make_unique<NetplayInput>(inputPlayer, kInputDelay, kInputPort, inputPeers);
+        session.input = std::make_unique<NetplayInput>(inputPlayer, kInputDelay, session.port, inputPeers);
         if (!session.input->Ok() ||
-            !session.input->ArmHandoffSession(local.Epoch, local.FenceToken, kStartupPort,
-                                              {{peerInputPlayer, peerIPv4 + ":" + std::to_string(kStartupPort)}}))
+            !session.input->ArmHandoffSession(local.Epoch, local.FenceToken, kLiveStartPort + local.Player, startPeers))
         { error = "cannot stage session-bound Netplay input"; return false; }
 
 #ifdef LITEV_HOSTED_NETPLAY
+        const std::string& peerIPv4 = peers[0].IPv4;
         if (hosted && local.Player == 0)
         {
             auto record = std::make_unique<RecordMP>(std::make_unique<LockstepMP>());
             session.record = record.get();
             candidate->Backend = std::move(record);
-            session.server = std::make_unique<HostedServer>(kInputPort + 2);
+            session.server = std::make_unique<HostedServer>(session.port + 2);
             if (!session.server->Ok())
             { error = "cannot stage Hosted Netplay record server"; return false; }
             session.server->DrainMs = 500;
@@ -291,7 +307,7 @@ namespace MelonDSAndroid
             NetplayInput* input = session.input.get();
             sink->SetServerSilence([input] { return input->MsSincePeer(); });
             session.client = std::make_unique<HostedClient>(local.Player,
-                peerIPv4 + ":" + std::to_string(kInputPort + 2),
+                peerIPv4 + ":" + std::to_string(kLiveInputPort + peers[0].Checkpoint->Player + 2),
                 [sink](const u8* data, size_t size) { sink->Feed(data, size); });
             if (!session.client->Ok())
             { error = "cannot stage Hosted Netplay record client"; return false; }
@@ -300,13 +316,15 @@ namespace MelonDSAndroid
 #endif
             candidate->Backend = std::make_unique<LockstepMP>();
         if (!hosted || local.Player == 0)
-        {
-            auto remote = std::make_unique<NetplayRemote>();
-            remote->player = peer.Player;
-            remote->liveOwner = std::move(candidate->PeerReplica);
-            remote->console = remote->liveOwner->Console;
-            session.remotes.push_back(std::move(remote));
-        }
+            for (LivePeer& p : peers)
+            {
+                auto remote = std::make_unique<NetplayRemote>();
+                remote->player = p.Checkpoint->Player;
+                remote->liveOwner = std::move(p.Replica);
+                remote->console = remote->liveOwner->Console;
+                session.remotes.push_back(std::move(remote));
+            }
+        else candidate->PeerReplica = std::move(peers[0].Replica);
         liveCandidate = std::move(candidate);
         return true;
     }
@@ -372,16 +390,19 @@ namespace MelonDSAndroid
         return captureLiveCheckpoint(*instance, ambient, rom, player, checkpoint, error);
     }
     // replicas made ahead (makeShellAhead below)
-    static std::future<std::unique_ptr<PreparedLiveReplica>> ownProofShell, peerShell;
+    static std::future<std::unique_ptr<PreparedLiveReplica>> ownProofShell;
+    static std::map<int, std::future<std::unique_ptr<PreparedLiveReplica>>> peerShells;   // by player
     bool netplayBeginLiveTransfer(LiveCheckpointTransfer& transfer,
                                   NetplayLiveCheckpoint local,
                                   const NetplayRom& peerRom,
                                   std::shared_future<LiveRom> peerRomData,
                                   NetplayLiveLink& link,
-                                  std::string& error)
+                                  std::string& error, int peerPlayer)
     {
+        std::future<std::unique_ptr<PreparedLiveReplica>> shell;
+        if (auto it = peerShells.find(peerPlayer); it != peerShells.end()) { shell = std::move(it->second); peerShells.erase(it); }
         return transfer.start(std::move(local), peerRom, std::move(peerRomData),
-                              currentConfiguration, internalFilesDir, link, error, std::move(peerShell));
+                              currentConfiguration, internalFilesDir, link, error, std::move(shell));
     }
     bool netplayCaptureBaseline(std::vector<u8>& state)
     {
@@ -395,7 +416,7 @@ namespace MelonDSAndroid
     // the proof's copy of this console, made while the checkpoints cross (the emu thread waits then)
     static std::unique_ptr<PreparedLiveReplica> ownProofCopy;
     // the proof's own copy made ahead (at the offer, on a worker): the cut only loads its state
-    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); ownProofShell = {}; peerShell = {}; }
+    void netplayDiscardStagedLive() { liveCandidate.reset(); ownProofCopy.reset(); ownProofShell = {}; peerShells.clear(); }
 
     // A replica made ahead on a worker (scratch storage, ROM loaded, started); the cut gives it the
     // checkpoint's firmware and state. Own: the proof's copy of this console; peer: its replica, once
@@ -418,12 +439,12 @@ namespace MelonDSAndroid
     }
     void netplayPreparePeerShell(int player, const LiveRom& rom)
     {
-        if (instance && player >= 0 && player <= 1 && rom.Bytes) peerShell = makeShellAhead(player, rom);
+        if (instance && player >= 0 && player < NetplayInput::kMaxPlayers && rom.Bytes) peerShells[player] = makeShellAhead(player, rom);
     }
 
     void netplayPrepareOwnProofShell(int player)
     {
-        if (!instance || player < 0 || player > 1) return;
+        if (!instance || player < 0 || player >= NetplayInput::kMaxPlayers) return;
         ownProofShell = makeShellAhead(player, liveRomOf(*instance, activeRomPath));
     }
     void netplayPrepareOwnProofCopy(const NetplayLiveCheckpoint& local)
@@ -438,21 +459,21 @@ namespace MelonDSAndroid
         if (instance) instance->getNds()->JIT.JitEnableExecute();
     }
 
-    bool netplayProveScratchPair(const NetplayLiveCheckpoint& local,
-                                const NetplayLiveCheckpoint& peer,
-                                std::unique_ptr<PreparedLiveReplica>& peerReplica,
-                                std::array<u64, 4>& hashes, std::string& error)
+    bool netplayProveScratchSet(const NetplayLiveCheckpoint& local, std::vector<LivePeer>& peers,
+                                std::vector<u64>& hashes, std::string& error)
     {
-        hashes = {};
+        hashes.clear();
         error.clear();
+        int n = local.Player + 1;
+        for (const LivePeer& p : peers) if (p.Checkpoint) n = std::max(n, p.Checkpoint->Player + 1);
         if (netplay || MPInterface::GetType() != MPInterface_Ambient ||
-            !instance || !instance->getNds() || !peerReplica ||
-            !peerReplica->Console || local.Player > 1 ||
-            peer.Player != 1 - local.Player ||
+            !instance || !instance->getNds() || n != (int)peers.size() + 1 ||
             instance->getFrame() != local.Frame ||
             instance->getNds()->GetSysTimestamp() != local.RawClock ||
             currentRomDescription() != local.Rom)
         { error = "source changed before reversible live proof"; return false; }
+        for (const LivePeer& p : peers)
+            if (!p.Checkpoint || !p.Replica || !p.Replica->Console) { error = "a peer replica is missing for the proof"; return false; }
         const u64 sourceRam = XXH3_64bits(instance->getNds()->MainRAM,
                                            instance->getNds()->MainRAMMask + 1);
         struct RestoreSourceJitExecute
@@ -467,14 +488,19 @@ namespace MelonDSAndroid
                                       internalFilesDir, error);
         ownProofCopy.reset();
         if (!own) return false;
-        std::array<MelonInstance*, 2> consoles{};
+        std::vector<MelonInstance*> consoles(n, nullptr);
+        std::vector<NDS*> nds(n, nullptr);
+        std::vector<u64> clocks(n, 0);
         consoles[local.Player] = own->Console.get();
-        consoles[peer.Player] = peerReplica->Console.get();
-        // (the lib's proof, the same on every platform: NetplayRunLiveProof)
-        const bool proven = NetplayRunLiveProof(
-            {consoles[0]->getNds(), consoles[1]->getNds()},
-            {local.Player == 0 ? local.RawClock : peer.RawClock, local.Player == 1 ? local.RawClock : peer.RawClock},
-            [&](int player) { consoles[player]->runFrameHeadless(); }, hashes, error);
+        clocks[local.Player] = local.RawClock;
+        for (LivePeer& p : peers) { consoles[p.Checkpoint->Player] = p.Replica->Console.get(); clocks[p.Checkpoint->Player] = p.Checkpoint->RawClock; }
+        for (int i = 0; i < n; i++)
+        {
+            if (!consoles[i]) { error = "live proof: a player has no console"; return false; }
+            nds[i] = consoles[i]->getNds();
+        }
+        // (the lib's proof, the same on every platform: NetplayRunLiveProofN)
+        const bool proven = NetplayRunLiveProofN(nds, clocks, [&](int player) { consoles[player]->runFrameHeadless(); }, hashes, error);
         own.reset();
         if (!proven ||
             instance->getFrame() != local.Frame ||
@@ -483,17 +509,26 @@ namespace MelonDSAndroid
                          instance->getNds()->MainRAMMask + 1) != sourceRam)
         {
             if (error.empty()) error = "reversible live proof did not preserve the source";
-            peerReplica.reset();
+            for (LivePeer& p : peers) p.Replica.reset();
             return false;
         }
-        // The proof advanced its peer copy; the adopted Netplay replica must
-        // instead begin at the exact frozen (cold) checkpoint: load it again.
-        if (!reloadLiveReplica(*peerReplica, peer, error)) { peerReplica.reset(); return false; }
-        Platform::Log(Platform::LogLevel::Info,
-                      "Just Play reversible proof p0=%016llx/%016llx p1=%016llx/%016llx\n",
-                      (unsigned long long)hashes[0], (unsigned long long)hashes[2],
-                      (unsigned long long)hashes[1], (unsigned long long)hashes[3]);
+        // The proof advanced the peer copies; the adopted Netplay replicas must
+        // instead begin at the exact frozen (cold) checkpoints: load them again.
+        for (LivePeer& p : peers)
+            if (!reloadLiveReplica(*p.Replica, *p.Checkpoint, error)) { for (LivePeer& q : peers) q.Replica.reset(); return false; }
+        std::string text;
+        for (u64 h : hashes) { char b[20]; snprintf(b, sizeof(b), " %016llx", (unsigned long long)h); text += b; }
+        Platform::Log(Platform::LogLevel::Info, "Just Play reversible proof of %d consoles:%s\n", n, text.c_str());
         return true;
+    }
+
+    void netplayQuitLive()
+    {
+        if (netplay && netplay->live && netplay->input && !netplay->hosted)
+        {
+            netplay->input->RequestLeave();
+            Platform::Log(Platform::LogLevel::Info, "Netplay: this player quits the live session (frame %d)\n", netplay->frame);
+        }
     }
 #ifndef LITEV_AMBIENT_LAN
     bool ambientFirmwareMac(u8*) { return false; }
@@ -1407,8 +1442,20 @@ namespace MelonDSAndroid
 #endif
             hostedEndFrame(*r->console, r->player, f, in);
             netplayHash(*r->console, r->player, f + 1);
-            if (s.liveExit && s.liveExit->EndFrame(r->player, f, r->console->getNds()->Wifi.MPExchanges))
-                break;   // (the local console leaves after this same frame)
+            if (s.liveExit && s.liveExit->EndFrame(r->player, f, r->console->getNds()->Wifi.MPExchanges, NetplayLeave::Of(in)))
+            {
+                if (s.liveExit->DroppedAfter(r->player) >= 0)
+                {
+                    // that player alone left the session (it quit, or its game left the others): its copy
+                    // stops here on every device after this same frame; the others play on without it
+                    if (auto* link = dynamic_cast<LockstepMP*>(&MPInterface::Get())) link->Leave(r->player);
+                    s.input->DropPlayer(r->player, f);
+                    r->left = true;
+                    Platform::Log(Platform::LogLevel::Info, "Netplay: player %d left the live session after frame %d (%s)\n",
+                                  r->player, f, NetplayLeave::Of(in) ? "it quit" : "its game left the others");
+                }
+                break;   // (else the whole session ends: the local console leaves after this same frame)
+            }
         }
     }
 
@@ -1444,7 +1491,7 @@ namespace MelonDSAndroid
         if (hasRemoteConsole)
         {
             setOrigin(localPlayer, candidate->Local.RawClock);
-            setOrigin(candidate->Peer.Player, candidate->Peer.RawClock);
+            for (const auto& [player, clock] : candidate->PeerClocks) setOrigin(player, clock);
         }
         // A Hosted guest runs only its visible console. Its peer scratch copy
         // was needed to validate PREPARED, but must not outlive the cut.
@@ -1514,7 +1561,11 @@ namespace MelonDSAndroid
         // Abort first, then join every Get() user before destroying the input
         // object. A live promoted remote uses exactly the same wait path, and
         // Hosted ReplayMP's silence callback also retains this pointer.
-        if (netplay->input) netplay->input->Abort();
+        // (A partial exit: the others play on and still need our last inputs: Release only ends the
+        // waits; the input link keeps re-sending until it is destroyed on the worker below.)
+        const bool partial = wasLive && netplay->livePartial;
+        const int partialLast = netplay->liveLastFrame;
+        if (netplay->input) { if (partial) netplay->input->Release(); else netplay->input->Abort(); }
         const auto t0 = std::chrono::steady_clock::now();
         for (auto& r : netplay->remotes)
         {
@@ -1538,11 +1589,17 @@ namespace MelonDSAndroid
             auto old = std::move(netplay);
             auto oldMP = MPInterface::Take();
             MPInterface::Set(MPInterface_Dummy);
-            std::thread([old = std::move(old), oldMP = std::move(oldMP)]() mutable {
+            std::thread([old = std::move(old), oldMP = std::move(oldMP), partial, partialLast]() mutable {
 #ifdef LITEV_HOSTED_NETPLAY
                 old->client = nullptr;
                 old->server = nullptr;
 #endif
+                if (partial && old->input)
+                {
+                    const bool acked = old->input->WaitAcked(partialLast, 10000);
+                    Platform::Log(Platform::LogLevel::Info, "Netplay: live leave: our inputs through frame %d %s\n", partialLast,
+                                  acked ? "acknowledged by every player still in the session" : "NOT acknowledged within 10 s");
+                }
                 old->input = nullptr;
                 old.reset();
                 oldMP.reset();
@@ -1982,6 +2039,7 @@ namespace MelonDSAndroid
     {
         const auto start = std::chrono::steady_clock::now();
         const bool byGame = netplay->liveEnded && !netplay->liveLeave;
+        const bool partial = netplay->livePartial;
         const int last = netplay->frame - 1;
         liveScheduled.clear();
         if (byGame && netplay->input)
@@ -1999,7 +2057,8 @@ namespace MelonDSAndroid
         Platform::Log(Platform::LogLevel::Info, "Netplay: live leave: netplayStop %.1f ms, seat %.1f ms, back to Ambient %.1f ms\n",
                       stopped, reassigned - stopped, ms() - reassigned);
         Platform::Log(Platform::LogLevel::Info, "Netplay: live session ended %s after frame %d; playing on alone in "
-                      "discovery (%zu scheduled inputs first), swap %.1f ms\n", byGame ? "by the game" : "(other player gone)",
+                      "discovery (%zu scheduled inputs first), swap %.1f ms\n",
+                      partial ? "for this device (it left; the others play on)" : byGame ? "by the game" : "(other player gone)",
                       last, liveScheduled.size(),
                       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
     }
@@ -2064,6 +2123,16 @@ namespace MelonDSAndroid
                 netplay->input->StampSpeed(local);
             }
 #endif
+            // debug.litev.npquit=<anything but 0> (tests): this player quits a live session (once); the app's
+            // own way to quit is the same call (netplayQuitLive)
+            if (netplay->live && netplay->frame % 60 == 0)
+            {
+                static bool quitDone = false;
+                char b[PROP_VALUE_MAX] = {0};
+                const bool want = __system_property_get("debug.litev.npquit", b) > 0 && b[0] && strcmp(b, "0") != 0;
+                if (want && !quitDone) { quitDone = true; netplayQuitLive(); }
+                if (!want) quitDone = false;
+            }
             // A live cut sent its exact frame-zero sample during the startup
             // proof. Re-sending frame zero here would append a second input
             // with the same applied frame and could change what the peer sees.
@@ -2148,8 +2217,21 @@ namespace MelonDSAndroid
 #endif
             netplayHash(*instance, netplay->player, netplay->frame);
             if (netplay->frame % 60 == 0) netplayCheck(*netplay);
-            if (netplay->liveExit && netplay->liveExit->EndFrame(netplay->player, frame, instance->getNds()->Wifi.MPExchanges))
-                netplay->liveEnded = true;   // every console stops after this frame: leave before the next
+            if (netplay->liveExit && netplay->liveExit->EndFrame(netplay->player, frame, instance->getNds()->Wifi.MPExchanges,
+                                                                 NetplayLeave::Of(applied)))
+            {
+                netplay->liveEnded = true;   // (whole session: every console stops after this frame) leave before the next
+                netplay->livePartial = netplay->liveExit->DroppedAfter(netplay->player) >= 0;
+                netplay->liveLastFrame = frame;
+            }
+            else if (netplay->liveExit && netplay->remotes.size() > 1 &&
+                     netplay->liveExit->InMask() == (1u << netplay->player))
+            {
+                // every other player left: alone, this device leaves Netplay too
+                netplay->liveEnded = true;
+                netplay->livePartial = true;
+                netplay->liveLastFrame = frame;
+            }
             return lines;
         }
         recordService();

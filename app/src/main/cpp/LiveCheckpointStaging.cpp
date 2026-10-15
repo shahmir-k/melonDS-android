@@ -76,7 +76,7 @@ bool captureLiveCheckpoint(MelonInstance& source, AmbientLAN& ambient,
     checkpoint = {};
     error.clear();
     // (from this console's freeze on: its state is final then, whatever the fence still settles)
-    if (player < 0 || player > 1 || !rom.Size || source.loadedRomDescription() != rom ||
+    if (player < 0 || player >= NetplayInput::kMaxPlayers || !rom.Size || source.loadedRomDescription() != rom ||
         !ambient.GetHandoffFenceStats().Epoch || ambient.HandoffFenceAborted())
         { error = "Ambient handoff fence is not started"; return false; }
     NDS* nds = source.getNds();
@@ -156,7 +156,7 @@ std::unique_ptr<PreparedLiveReplica> prepareLiveReplicaShell(
     const std::string& internalFilesDir, std::string& error)
 {
     error.clear();
-    if (player < 0 || player > 1 || !rom.Bytes || !rom.Rom.Size || firmware.empty() ||
+    if (player < 0 || player >= NetplayInput::kMaxPlayers || !rom.Bytes || !rom.Rom.Size || firmware.empty() ||
         firmware.size() > (1u << 20) || internalFilesDir.empty() || !configuration ||
         configuration->consoleType != 0)
         { error = "unsupported live replica"; return nullptr; }
@@ -206,7 +206,7 @@ bool completeLiveReplica(PreparedLiveReplica& replica, const NetplayLiveCheckpoi
     error.clear();
     if (checkpoint.Build != NetplayHandoffCompat())
         { error = "checkpoint emulation compatibility differs (handoff protocol or emulation LITEV options)"; return false; }
-    if (checkpoint.Player > 1 || !checkpoint.Epoch ||
+    if (checkpoint.Player >= NetplayInput::kMaxPlayers || !checkpoint.Epoch ||
         checkpoint.FenceToken == std::array<u8, 16>{} ||
         checkpoint.State.empty() || checkpoint.State.size() > (64u << 20) ||
         checkpoint.Firmware.empty() || checkpoint.Firmware.size() > (1u << 20) || !checkpoint.Rom.Size ||
@@ -268,7 +268,7 @@ bool LiveCheckpointTransfer::start(NetplayLiveCheckpoint local,
                                    std::future<std::unique_ptr<PreparedLiveReplica>> peerShell)
 {
     error.clear();
-    if (Started || local.Player > 1 || !local.Epoch || !local.Build ||
+    if (Started || local.Player >= NetplayInput::kMaxPlayers || !local.Epoch || !local.Build ||
         !local.Rom.Size || local.State.empty() || local.Firmware.empty() ||
         !expectedPeerRom.Size || !peerRom.valid() || !configuration ||
         internalFilesDir.empty())

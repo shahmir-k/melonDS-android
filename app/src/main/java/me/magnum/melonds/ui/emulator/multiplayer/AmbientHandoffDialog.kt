@@ -49,8 +49,10 @@ data class AmbientSlowdownDiagnostic(
 sealed interface AmbientHandoffScreen {
     /** The game is still using LAN; choosing a mode starts an offer, not an immediate backend switch. */
     data class SlowLan(val diagnostic: AmbientSlowdownDiagnostic, val activePlayers: Int) : AmbientHandoffScreen {
-        /** The first native handoff slice is strictly one linked peer plus this player. */
-        val canOffer: Boolean get() = activePlayers == 2
+        /** Any LAN session of 2+ players can switch to Netplay (a group of 3+ is switched by its host). */
+        val canOffer: Boolean get() = activePlayers >= 2
+        /** Hosted Netplay switches two players only. */
+        val canOfferHosted: Boolean get() = activePlayers == 2
     }
 
     /** A linked peer has offered to switch. This peer must independently consent. */
@@ -118,7 +120,8 @@ fun AmbientHandoffDialog(
                 DialogButton(stringResource(R.string.ambient_handoff_keep_lan), onClick = onKeepLan)
                 if (screen.canOffer) {
                     DialogButton(stringResource(R.string.multiplayer_option_netplay), onClick = { onOffer(AmbientHandoffMode.NETPLAY) })
-                    DialogButton(stringResource(R.string.multiplayer_option_hosted), onClick = { onOffer(AmbientHandoffMode.HOSTED_NETPLAY) })
+                    if (screen.canOfferHosted)
+                        DialogButton(stringResource(R.string.multiplayer_option_hosted), onClick = { onOffer(AmbientHandoffMode.HOSTED_NETPLAY) })
                 }
             },
         )

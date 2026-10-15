@@ -8,11 +8,13 @@ import org.junit.Test
 
 class AmbientHandoffScreenTest {
     @Test
-    fun onlyTwoPlayerSlowdownOffersAutomaticHandoff() {
+    fun groupsOfTwoOrMoreOfferNetplayHostedOnlyForTwo() {
         val diagnostic = AmbientSlowdownDiagnostic.parse("42\t11.5\t23\t3.0\t48\tIRBO")!!
         assertFalse(AmbientHandoffScreen.SlowLan(diagnostic, 1).canOffer)
         assertTrue(AmbientHandoffScreen.SlowLan(diagnostic, 2).canOffer)
-        assertFalse(AmbientHandoffScreen.SlowLan(diagnostic, 3).canOffer)
+        assertTrue(AmbientHandoffScreen.SlowLan(diagnostic, 4).canOffer)
+        assertTrue(AmbientHandoffScreen.SlowLan(diagnostic, 2).canOfferHosted)
+        assertFalse(AmbientHandoffScreen.SlowLan(diagnostic, 3).canOfferHosted)
     }
 
     @Test

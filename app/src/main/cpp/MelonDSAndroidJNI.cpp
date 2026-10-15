@@ -1418,13 +1418,14 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
     if (ambientPtr)
     {
         const auto s = ambientPtr->GetStats();
-        char b[768];
+        char b[1024];
         snprintf(b, sizeof(b), "frames=%llu nearby=%u links=%u opened=%llu presence_tx=%llu presence_rx=%llu link_tx=%llu link_rx=%llu "
                  "beacons=%llu blocked_us=%llu exchanges=%llu frame_blocked_us=%u frame_exchanges=%u rtt_ms=%u "
                  "slow_fps_x100=%u slow_wait_us=%u slow_exchanges_x100=%u slow_offer=%u "
                  "host_wait_us=%llu host_wait_calls=%llu host_wait_misses=%llu host_wait_timeouts=%llu "
                  "client_wait_us=%llu client_wait_calls=%llu client_wait_misses=%llu "
-                 "stale_regular=%llu stale_cmd=%llu stale_reply=%llu stale_ack=%llu",
+                 "stale_regular=%llu stale_cmd=%llu stale_reply=%llu stale_ack=%llu "
+                 "link_rtt_us=%u emu_us=%u predicted_fps_x100=%u verdict=%d",
                  (unsigned long long)s.Frames, s.Nearby, s.Links, (unsigned long long)s.LinksOpened, (unsigned long long)s.PresenceTx,
                  (unsigned long long)s.PresenceRx, (unsigned long long)s.LinkTx, (unsigned long long)s.LinkRx,
                  (unsigned long long)s.BeaconsInjected, (unsigned long long)s.BlockedUs, (unsigned long long)s.Exchanges,
@@ -1434,7 +1435,7 @@ Java_me_magnum_melonds_MelonEmulator_ambientStats(JNIEnv* env, jobject thiz)
                  (unsigned long long)s.HostWaitTimeouts,
                  (unsigned long long)s.ClientWaitUs, (unsigned long long)s.ClientWaitCalls, (unsigned long long)s.ClientWaitMisses,
                  (unsigned long long)s.Stale[0], (unsigned long long)s.Stale[1], (unsigned long long)s.Stale[2],
-                 (unsigned long long)s.Stale[3]);
+                 (unsigned long long)s.Stale[3], s.LinkRttUs, s.EmuUs, s.PredFpsX100, s.Verdict);
         r = b;
     }
 #endif
@@ -1571,6 +1572,10 @@ void* emulate(void*)
         u32 nLines = MelonDSAndroid::loop();
 
         auto frameDuration = std::chrono::steady_clock::now() - frameStart;
+#ifdef LITEV_AMBIENT_LAN
+        // the LAN verdict's emulation time (this thread: the pointer only changes while it is parked)
+        if (ambientPtr) ambientPtr->NoteFrameUs((u32)std::chrono::duration_cast<std::chrono::microseconds>(frameDuration).count());
+#endif
         // The ADPF report is a binder call into system_server (which wakes the power HAL),
         // made from the emu thread and landing on its core. Report the mean of every
         // `adpfEvery` frames instead of every frame. debug.litev.adpfevery: unset = 10,

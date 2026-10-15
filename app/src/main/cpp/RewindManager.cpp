@@ -92,13 +92,12 @@ std::list<RewindSaveState> RewindManager::GetRewindWindow()
 
 void RewindManager::OnRewindFromState(RewindSaveState state)
 {
-    auto iterator = RewindWindow.begin();
-    while ((*iterator).frame > state.frame && iterator != RewindWindow.end())
+    // newest states first: drop every state newer than the one rewound to
+    while (!RewindWindow.empty() && RewindWindow.front().frame > state.frame)
     {
-        RewindSaveState lastState = *iterator;
-        DeleteRewindSaveState(lastState);
-        iterator++;
+        RewindSaveState lastState = RewindWindow.front();
         RewindWindow.pop_front();
+        DeleteRewindSaveState(lastState);
     }
 }
 

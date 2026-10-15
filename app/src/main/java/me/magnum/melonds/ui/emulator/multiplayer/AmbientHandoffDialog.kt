@@ -56,6 +56,9 @@ sealed interface AmbientHandoffScreen {
     /** A linked peer has offered to switch. This peer must independently consent. */
     data class IncomingOffer(val epoch: Long, val mode: AmbientHandoffMode, val peerName: String) : AmbientHandoffScreen
 
+    /** The exact peer cartridge is not readable here, so no checkpoint cut has begun. */
+    data class MissingRom(val epoch: Long, val mode: AmbientHandoffMode) : AmbientHandoffScreen
+
     data class Progress(
         val epoch: Long,
         val mode: AmbientHandoffMode,
@@ -136,6 +139,15 @@ fun AmbientHandoffDialog(
             buttons = {
                 DialogButton(stringResource(R.string.ambient_handoff_decline), onClick = { onRespond(screen.epoch, false) })
                 DialogButton(stringResource(R.string.ambient_handoff_accept), onClick = { onRespond(screen.epoch, true) })
+            },
+        )
+
+        is AmbientHandoffScreen.MissingRom -> BaseDialog(
+            title = stringResource(R.string.ambient_handoff_missing_rom_title),
+            onDismiss = { onCancel(screen.epoch) },
+            content = { padding -> DialogText(padding, stringResource(R.string.ambient_handoff_missing_rom_body)) },
+            buttons = {
+                DialogButton(stringResource(R.string.ambient_handoff_cancel), onClick = { onCancel(screen.epoch) })
             },
         )
 

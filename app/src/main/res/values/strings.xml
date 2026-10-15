@@ -711,11 +711,13 @@
     <string name="multiplayer_option_lan_hint">The game\'s own wireless over the network. Up to 16 players.</string>
     <string name="ambient_handoff_slow_title">LAN play is slowing down</string>
     <string name="ambient_handoff_slow_body">The game is running at about %1$d FPS. Keep playing over LAN, or ask the other player to switch to Netplay or Hosted Netplay. If they agree, the game will continue from this point automatically.</string>
-    <string name="ambient_handoff_link_metrics">Wireless: %1$d ms round trip, %2$.1f ms waiting per frame, %3$.1f exchanges per frame. Estimated LAN ceiling: %4$d FPS.</string>
+    <string name="ambient_handoff_link_metrics">Wireless: %1$d ms round trip, %2$.1f ms waiting per frame, %3$.1f exchanges per frame. Wait-only FPS upper bound: %4$d.</string>
     <string name="ambient_handoff_two_player_limit">The game is running at about %1$d FPS with %2$d players. Automatic switching currently supports two players only, so this game will stay on LAN.</string>
     <string name="ambient_handoff_keep_lan">Keep LAN</string>
     <string name="ambient_handoff_offer_title">Switch multiplayer mode?</string>
     <string name="ambient_handoff_offer_body">%1$s wants to continue this game in %2$s. Your current game position will be transferred automatically. Both players must agree.</string>
+    <string name="ambient_handoff_missing_rom_title">Other player’s game is not available</string>
+    <string name="ambient_handoff_missing_rom_body">This device needs a readable copy of the other player’s exact ROM to continue from the same point in Netplay. No game state has been switched. Add that ROM to your library, or cancel and keep playing over LAN.</string>
     <string name="ambient_handoff_accept">Switch</string>
     <string name="ambient_handoff_decline">Stay on LAN</string>
     <string name="ambient_handoff_progress_title">Switching multiplayer mode</string>
@@ -803,6 +805,7 @@
     <string name="multiplayer_speed">Netplay: %1$s</string>
     <string name="multiplayer_speed_normal">Netplay: normal speed</string>
     <string name="multiplayer_peer_lost">Another player stopped responding: the Netplay session ended</string>
+    <string name="multiplayer_peer_left_live">The other player left. Your game goes on.</string>
     <string name="multiplayer_leave_group_confirm">Leave the group? You stop following the host. A running Netplay session ends here and the game restarts normally.</string>
     <string name="multiplayer_runs_consoles">runs every console</string>
     <string name="multiplayer_pick_server_hint">Tap a player to make them the host that runs every console (pick the strongest device).</string>

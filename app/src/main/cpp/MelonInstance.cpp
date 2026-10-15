@@ -343,6 +343,14 @@ MelonInstance::~MelonInstance()
     delete nds;
 }
 
+bool MelonInstance::reassignInstanceId(int newId)
+{
+    if (newId < 0 || newId >= 16) return false;
+    if (!net->ReassignInstance(instanceId, newId)) return false;
+    instanceId = newId;
+    return true;
+}
+
 // Blit the accelerated renderer's 2-layer array texture (layer 0 = top screen,
 // layer 1 = bottom screen, each screenWidth x 192*scale) into the app's stacked
 // frame texture, matching the software renderer's vertical layout (top at y=0,
@@ -380,15 +388,35 @@ void MelonInstance::blitAcceleratedFrame(u32 srcArrayTex, u32 dstTex, int dstWid
 
 bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
 {
-    unique_ptr<u8[]> sramData;
+    loadedRom = {};
     u32 romFileLength = 0;
-    u32 sramFileLength = 0;
 
-    // ROM file loading: shared with every other console in this process running the same file
-    // (Netplay runs all players' consoles here)
-    auto romData = NDSCart::AcquireSharedROM(romPath, romFileLength);
+    // Ordinary Netplay replicas share ROM storage. A standalone source and
+    // pre-commit scratch replica must instead load independent original bytes:
+    // a shared cart may already have re-encrypted its secure area in place.
+    const bool shareRom = MelonDSAndroid::netplayActive();
+    auto romData = NDSCart::AcquireSharedROM(romPath, romFileLength, shareRom);
     if (!romData)
         return false;
+    // Only a standalone Ambient source or pre-commit scratch replica needs a
+    // checkpoint identity. Ordinary Netplay consoles use the shared ROM cache;
+    // another cart may already have re-encrypted that buffer's secure area, so
+    // hashing it here would be both extra boot work and a misleading identity.
+    // For private buffers, hash the bytes the console will actually run before
+    // SetNDSCart can re-encrypt the secure area.
+    const auto acquiredRom = shareRom ? NetplayRom{} :
+        NetplayDescribeRomBytes(romData.get(), romFileLength);
+    if (!shareRom && !acquiredRom.Size)
+        return false;
+    return loadRomBytes(std::move(romData), romFileLength, acquiredRom, sramPath);
+}
+
+bool MelonInstance::loadRomBytes(std::shared_ptr<const u8[]> romData, u32 romFileLength,
+                                 const NetplayRom& acquiredRom, std::string sramPath)
+{
+    loadedRom = {};
+    unique_ptr<u8[]> sramData;
+    u32 sramFileLength = 0;
 
     // SRAM file loading
     FileHandle* sramFile = Platform::OpenFile(sramPath, FileMode::Read);
@@ -425,8 +453,16 @@ bool MelonInstance::loadRom(std::string romPath, std::string sramPath)
 
     nds->SetNDSCart(std::move(cart));
     ndsSave = std::make_unique<SaveManager>(sramPath);
+    loadedRom = acquiredRom;
 
     return true;
+}
+
+std::shared_ptr<const u8[]> MelonInstance::romBytes(u32& length) const
+{
+    const auto* cart = nds ? nds->NDSCartSlot.GetCart() : nullptr;
+    length = cart ? cart->GetROMLength() : 0;
+    return cart ? cart->GetROMOwner() : nullptr;
 }
 
 bool MelonInstance::loadGbaRom(std::string romPath, std::string sramPath)
@@ -504,6 +540,7 @@ void MelonInstance::loadGbaMemoryExpansion()
 
 bool MelonInstance::bootFirmware()
 {
+    loadedRom = {};
     if (nds->NeedsDirectBoot())
         return false;
 
@@ -934,8 +971,22 @@ void MelonInstance::runFrameHeadless()
     nds->RunFrame();
 }
 
+u32 MelonInstance::getInputMask()
+{
+    std::lock_guard<std::mutex> guard(inputMutex);
+    return inputMask;
+}
+
+bool MelonInstance::getTouch(u16& x, u16& y)
+{
+    std::lock_guard<std::mutex> guard(inputMutex);
+    x = touchX; y = touchY;
+    return touching;
+}
+
 void MelonInstance::touchScreen(u16 x, u16 y)
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     touching = true;
     touchX = x;
     touchY = y;
@@ -945,17 +996,46 @@ void MelonInstance::touchScreen(u16 x, u16 y)
 
 void MelonInstance::releaseScreen()
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     touching = false;
     if (!inputDeferred)
         nds->ReleaseScreen();
 }
 
+void MelonInstance::setInputDeferred(bool deferred)
+{
+    std::lock_guard<std::mutex> guard(inputMutex);
+    if (inputDeferred == deferred) return;
+    if (deferred) deferredLidClosed = nds->IsLidClosed();
+    inputDeferred = deferred;
+    if (!deferred)
+    {
+        // The source did not run while a Just Play cut was in doubt. Apply
+        // physical controls only after Ambient has fully reset, so an input
+        // event cannot mutate the frozen checkpoint behind the coordinator.
+        nds->SetKeyMask(inputMask);
+        if (touching) nds->TouchScreen(touchX, touchY);
+        else nds->ReleaseScreen();
+        nds->SetLidClosed(deferredLidClosed);
+    }
+}
+
+void MelonInstance::setRewindSuspendedForNetplay(bool suspended)
+{
+    if (netplayRewindSuspended.exchange(suspended) == suspended) return;
+    const auto settings = std::atomic_load(&currentConfiguration);
+    rewindManager.UpdateRewindSettings(!suspended && settings->rewindEnabled,
+        settings->rewindLengthSeconds, settings->rewindCaptureSpacingSeconds);
+}
+
 void MelonInstance::pressKey(u32 key)
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     // Special handling for Lid input
     if (key == 16 + 7)
     {
-        nds->SetLidClosed(true);
+        deferredLidClosed = true;
+        if (!inputDeferred) nds->SetLidClosed(true);
     }
     else
     {
@@ -967,10 +1047,12 @@ void MelonInstance::pressKey(u32 key)
 
 void MelonInstance::releaseKey(u32 key)
 {
+    std::lock_guard<std::mutex> guard(inputMutex);
     // Special handling for Lid input
     if (key == 16 + 7)
     {
-        nds->SetLidClosed(false);
+        deferredLidClosed = false;
+        if (!inputDeferred) nds->SetLidClosed(false);
     }
     else
     {
@@ -1034,7 +1116,8 @@ void MelonInstance::updateConfiguration(std::shared_ptr<EmulatorConfiguration> n
         nds->SPU.SetDegrade10Bit(static_cast<AudioBitDepth>(newConfiguration->audioSettings.audioBitrate));
     }
 
-    rewindManager.UpdateRewindSettings(newConfiguration->rewindEnabled, newConfiguration->rewindLengthSeconds, newConfiguration->rewindCaptureSpacingSeconds);
+    rewindManager.UpdateRewindSettings(!netplayRewindSuspended && newConfiguration->rewindEnabled,
+        newConfiguration->rewindLengthSeconds, newConfiguration->rewindCaptureSpacingSeconds);
 
     std::atomic_store(&currentConfiguration, newConfiguration);
     isRenderConfigurationDirty = true;

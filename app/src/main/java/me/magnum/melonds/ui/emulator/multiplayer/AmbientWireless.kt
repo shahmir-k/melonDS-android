@@ -6,7 +6,6 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Base64
 import android.util.Log
-import androidx.core.content.pm.PackageInfoCompat
 import me.magnum.melonds.MelonEmulator
 import me.magnum.melonds.domain.repositories.SettingsRepository
 import java.nio.ByteBuffer
@@ -55,12 +54,7 @@ object AmbientWireless {
 
     /** Before a game starts: the native side installs Just Play with it (and gives the console its MAC). */
     fun configure(context: Context, settings: SettingsRepository) {
-        // build id: shown to the others (version name + code; no BuildConfig in this app)
-        val buildId = try {
-            val info = context.packageManager.getPackageInfo(context.packageName, 0)
-            (info.versionName + PackageInfoCompat.getLongVersionCode(info)).hashCode()
-        } catch (e: Exception) { 0 }
-        MelonEmulator.ambientConfigure(deviceId(context), settings.getFirmwareConfiguration().nickname, settings.getLocalWirelessMode(), buildId)
+        MelonEmulator.ambientConfigure(deviceId(context), settings.getFirmwareConfiguration().nickname, settings.getLocalWirelessMode())
     }
 
     /** After the game started: NSD + multicast lock, if Just Play runs. */

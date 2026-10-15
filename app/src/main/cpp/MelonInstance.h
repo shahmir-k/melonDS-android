@@ -1,6 +1,9 @@
 #ifndef MELONINSTANCE_H
 #define MELONINSTANCE_H
 
+#include <atomic>
+#include <mutex>
+
 #include <string>
 #include "Args.h"
 #include "Configuration.h"
@@ -13,6 +16,7 @@
 #include "renderer/ScreenshotRenderer.h"
 #include "retroachievements/RetroAchievementsManager.h"
 #include "net/Net.h"
+#include "net/NetplayInput.h"
 
 using namespace melonDS;
 
@@ -29,8 +33,18 @@ public:
     ~MelonInstance();
 
     int getInstanceId() { return instanceId; };
+    const melonDS::NetplayRom& loadedRomDescription() const { return loadedRom; }
+    // Live Just Play handoff: the visible source keeps its exact DS state while
+    // the joining device changes its Netplay/MP slot from 0 to 1.
+    bool reassignInstanceId(int newId);
 
     bool loadRom(std::string romPath, std::string sramPath);
+    // ROM bytes already in memory (a live handoff replica: the peer ROM read ahead of the cut, or
+    // the running console's own ROM); `rom` is their identity.
+    bool loadRomBytes(std::shared_ptr<const melonDS::u8[]> romData, melonDS::u32 length,
+                      const melonDS::NetplayRom& rom, std::string sramPath);
+    // The cart's ROM buffer (for a replica of this console: no second read of the file)
+    std::shared_ptr<const melonDS::u8[]> romBytes(melonDS::u32& length) const;
     bool loadGbaRom(std::string romPath, std::string sramPath);
     void loadRumblePak();
     void loadGbaMemoryExpansion();
@@ -48,13 +62,14 @@ public:
 
     // Netplay: input is only recorded here; the session applies every player's input to every
     // console a few frames later, identically on every device.
-    void setInputDeferred(bool deferred) { inputDeferred = deferred; }
+    void setInputDeferred(bool deferred);
+    void setRewindSuspendedForNetplay(bool suspended);
     // the last runFrame's timings (record mode's per-frame log)
     struct FrameStats { double loopMs = 0, runFrameMs = 0, emuCpuMs = 0; bool drawn = true; };
     const FrameStats& lastFrameStats() const { return frameStats; }
     int getFrame() const { return frame; }
-    melonDS::u32 getInputMask() { return inputMask; }
-    bool getTouch(u16& x, u16& y) { x = touchX; y = touchY; return touching; }
+    melonDS::u32 getInputMask();
+    bool getTouch(u16& x, u16& y);
     // Netplay: another player's console. Emulates a frame with no presentation (its screens are
     // not shown), rendering exactly like the local console so both stay identical.
     void runFrameHeadless();
@@ -105,6 +120,7 @@ private:
     int skipRepeatMode = 1;        // debug.litev.skiprepeat value in force (polled in runFrame)
     bool skipRepeatMp = false;     // Netplay or LAN running
     int instanceId;
+    melonDS::NetplayRom loadedRom;
     int consoleType;
     NDS* nds;
     std::shared_ptr<Net> net;
@@ -115,6 +131,9 @@ private:
     std::unique_ptr<SaveManager> firmwareSave;
     u32 inputMask;
     bool inputDeferred = false;
+    bool deferredLidClosed = false;
+    std::mutex inputMutex;
+    std::atomic_bool netplayRewindSuspended{false};
     FrameStats frameStats;
     u32 lastRetiredPresented = 0;   // SoftRenderer::RetiredFrames() at the last present
     bool touching = false;

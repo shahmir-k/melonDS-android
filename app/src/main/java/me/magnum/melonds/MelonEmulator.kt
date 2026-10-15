@@ -111,13 +111,18 @@ object MelonEmulator {
 
     // Just Play local wireless (LITEV_AMBIENT_LAN; AmbientWireless.kt). mode: 0 everyone nearby, 1 only while the
     // game's wireless is on, 2 hidden, 3 lobby only (off). Configure before a game starts.
-    external fun ambientConfigure(deviceId: Long, name: String, mode: Int, buildId: Int)
+    external fun ambientConfigure(deviceId: Long, name: String, mode: Int)
     external fun ambientSetForeground(foreground: Boolean)
     external fun ambientAddPeer(ip: String, port: Int)
+    external fun ambientSetRomLibrary(paths: Array<String>) // readable .nds URIs, including external SD
     external fun ambientPort(): Int
     external fun ambientNearby(): Array<String>     // "id \t name \t game \t ip:port \t ggid \t build \t linked"
     external fun ambientStats(): String             // "key=value ..." counters (cumulative), "" = not running
     external fun ambientDismissSlowdownPrompt()      // keep LAN; the detector will not offer again this link session
+    external fun ambientOfferHandoff(mode: Int): Boolean // 1 plain Netplay, 2 Hosted; true = request queued
+    external fun ambientRespondHandoff(epoch: Long, accept: Boolean): Boolean
+    external fun ambientCancelHandoff(): Boolean
+    external fun ambientHandoffStatus(): String // "phase\tepoch\tmode\tpeer_id[\treason]" (reason: failed/unresolved); phase also includes missing_rom/rom_ready
 
     // Group: the Netplay lobby kept connected while its session runs, so the host's commands
     // (mode switch, Hosted server change, end) reach everyone. Commands: (server << 16) |

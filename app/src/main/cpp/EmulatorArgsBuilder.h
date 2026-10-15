@@ -7,7 +7,9 @@
 namespace MelonDSAndroid
 {
 
-std::optional<std::unique_ptr<melonDS::NDSArgs>> BuildArgsFromConfiguration(const EmulatorConfiguration& configuration, int instanceId);
+std::optional<std::unique_ptr<melonDS::NDSArgs>> BuildArgsFromConfiguration(
+    const EmulatorConfiguration& configuration, int instanceId,
+    std::optional<melonDS::Firmware> firmwareOverride = std::nullopt);
 
 }
 

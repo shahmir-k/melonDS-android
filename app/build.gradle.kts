@@ -178,6 +178,10 @@ android {
                     "-DLITEV_JIT_ARM7_CPUARG=ON",
                     // 2D hybrid composite uses the NEON line compositor (needs SOFT2D_NEON).
                     "-DLITEV_HYB_COMPOSITE_NEON=ON",
+                    // Hybrid 2D: 3D descriptor lines through the plane pipeline; NEON descriptor composite (A).
+                    "-DLITEV_HYB_PLANES=ON", "-DLITEV_HYB_COMPOSITE_VEC=ON",
+                    // Hybrid: NEON capture readback conversion; FASTLINES line test on the 2D thread (A).
+                    "-DLITEV_HYB_CAPCONV_NEON=ON", "-DLITEV_HYB_FASTLINES_2D=ON",
                     "-DLITEV_HYB_CAPTURE_ASYNC=ON",
                     "-DLITEV_HYB_CAPTURE_OFFTHREAD=ON",
                     "-DLITEV_JIT_BLOCKXFER_MAINRAM=ON",

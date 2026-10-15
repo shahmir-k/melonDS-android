@@ -1322,13 +1322,8 @@ static bool ambientHandoffAdvance(std::unique_lock<std::mutex>& guard)
 // players' next talk forms a new LAN session at once.
 static std::unique_ptr<melonDS::MPInterface> ambientParked;
 static std::chrono::steady_clock::time_point ambientDebugUntil;   // (Ambient state in the log after a return)
-static std::thread ambientParkedService;
-static std::atomic<bool> ambientParkedRun{false};
 static void ambientDropParked()
 {
-    if (!ambientParked) return;
-    ambientParkedRun.store(false, std::memory_order_release);
-    if (ambientParkedService.joinable()) ambientParkedService.join();
     ambientParked.reset();
 }
 static void ambientResetOfferState()
@@ -1353,19 +1348,15 @@ static void ambientPark()
     melonDS::AmbientLAN* a = ambientPtr;
     ambientPtr = nullptr;
     ambientResetOfferState();
-    ambientParked = melonDS::MPInterface::Take();   // (Dummy installed meanwhile)
-    ambientParkedRun.store(true, std::memory_order_release);
-    ambientParkedService = std::thread([a] {
-        while (ambientParkedRun.load(std::memory_order_acquire))
-        { a->Process(); std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
-    });
+    ambientParked = melonDS::MPInterface::Take();   // (Dummy installed meanwhile; ambientHandoffService
+                                                    // pumps it once a frame on this thread)
 }
 static bool ambientUnpark()
 {
+    const auto t0 = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> g(ambientMu);
+    const auto locked = std::chrono::steady_clock::now();
     if (!ambientParked || ambientPtr || melonDS::MPInterface::GetType() != melonDS::MPInterface_Dummy) return false;
-    ambientParkedRun.store(false, std::memory_order_release);
-    if (ambientParkedService.joinable()) ambientParkedService.join();
     auto* a = static_cast<melonDS::AmbientLAN*>(ambientParked.get());
     a->EndCommittedHandoff();
     ambientPtr = a;
@@ -1373,7 +1364,9 @@ static bool ambientUnpark()
     melonDS::MPInterface::Set(std::move(ambientParked), melonDS::MPInterface_Ambient);
     lanApplyRecvTimeout();
     ambientDebugUntil = std::chrono::steady_clock::now() + std::chrono::seconds(40);
-    Platform::Log(Platform::LogLevel::Info, "Ambient resumed after the live session: %s\n", a->DebugLine().c_str());
+    const auto ms = [](auto d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    Platform::Log(Platform::LogLevel::Info, "Ambient resumed after the live session (lock %.1f ms, resume %.1f ms): %s\n",
+                  ms(locked - t0), ms(std::chrono::steady_clock::now() - locked), a->DebugLine().c_str());
     return true;
 }
 
@@ -1451,6 +1444,8 @@ static bool ambientHandoffService()
     }
     if (!ambientPtr)
     {
+        // a live session's parked Ambient: its link and presence stay serviced (ENet keepalive) until the return
+        if (ambientParked) static_cast<melonDS::AmbientLAN*>(ambientParked.get())->Process();
         if (!ambientLiveCut) return false;
         ambientCutRollback("Ambient backend disappeared during live cut");
         return ambientHandoffAdvance(g);

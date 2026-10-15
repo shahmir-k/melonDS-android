@@ -199,6 +199,9 @@
     <string name="max_rom_cache_size">Max. ROM cache size</string>
     <string name="clear_extracted_rom_cache">Clear extracted ROM cache</string>
     <string name="local_wireless_mode">Local wireless (Just Play)</string>
+    <string name="local_wireless_ask_switch">Ask before switching</string>
+    <string name="local_wireless_ask_switch_summary">When the network is too slow for local wireless, ask before moving the game to Netplay instead of switching automatically</string>
+    <string name="local_wireless_auto_switched">Network too slow for local wireless — switched to Netplay</string>
     <string name="local_wireless_everyone">Everyone nearby</string>
     <string name="local_wireless_menu">Only while in a wireless menu</string>
     <string name="local_wireless_hidden">Hidden</string>

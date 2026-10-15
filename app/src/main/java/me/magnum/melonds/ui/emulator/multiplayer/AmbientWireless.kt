@@ -55,6 +55,7 @@ object AmbientWireless {
     /** Before a game starts: the native side installs Just Play with it (and gives the console its MAC). */
     fun configure(context: Context, settings: SettingsRepository) {
         MelonEmulator.ambientConfigure(deviceId(context), settings.getFirmwareConfiguration().nickname, settings.getLocalWirelessMode())
+        MelonEmulator.ambientSetAutoSwitch(!settings.getLocalWirelessAskBeforeSwitch())
     }
 
     /** After the game started: NSD + multicast lock, if Just Play runs. */

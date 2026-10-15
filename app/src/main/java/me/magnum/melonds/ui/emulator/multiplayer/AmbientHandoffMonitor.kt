@@ -22,6 +22,8 @@ internal class AmbientHandoffMonitor {
     private var slowDismissedForLink = false
     private var lastClosedStatus = ""
     private var lastLinksOpened = -1L
+    /** Automatic switching (the native side offers / accepts by itself): no slowdown prompt for two players. */
+    var autoSwitch = true
 
     fun beginOffer() {
         dismissedTerminal = ""
@@ -91,6 +93,8 @@ internal class AmbientHandoffMonitor {
                 ceilingFps = waitOnlyCeiling,
                 gameCode = "",
             )
+            // (the native side switches by itself on this LAN_BAD; a milder one, 40-50 fps on a fast network, still asks)
+            if (autoSwitch && links == 1 && counters["auto_ok"] == "1") return null
             return AmbientHandoffScreen.SlowLan(diagnostic, links + 1)
         }
 

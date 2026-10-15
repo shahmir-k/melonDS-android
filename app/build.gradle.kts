@@ -254,6 +254,9 @@ android {
                     // fixed cores {0,1,2}; tile worker count from the fastest non-emu cluster.
                     // RG DS placement unchanged; big.LITTLE keeps render off the little cores.
                     "-DLITEV_TOPO_PIN=ON",
+                    // GL 3D thread (hyb-gl3d) one nice step above the other render threads (exact:
+                    // scheduling only; debug.litev.gl3dnice=-10 = off). PW town 3x uncapped +2.6%.
+                    "-DLITEV_GL3D_PRIO=ON",
                     // Dirty-incremental VRAM shadow snapshots instead of full memcpy.
                     "-DLITEV_SNAP_DIRTY=ON",
                     // Staged deep prefetch in BuildFrameGeom (A; runtime prop

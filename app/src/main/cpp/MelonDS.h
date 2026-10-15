@@ -66,7 +66,7 @@ namespace MelonDSAndroid {
                                          const melonDS::NetplayRom& peerRom,
                                          std::shared_future<LiveRom> peerRomData,
                                          melonDS::NetplayLiveLink& link,
-                                         std::string& error);
+                                         std::string& error, int peerPlayer);
     // this console's state now (warm, no cache reset): the baseline of the cut's checkpoint delta
     extern bool netplayCaptureBaseline(std::vector<melonDS::u8>& state);
     // Runs two reversible Lockstep frames on disposable copies of both saved
@@ -76,19 +76,28 @@ namespace MelonDSAndroid {
     extern void netplayPrepareOwnProofCopy(const melonDS::NetplayLiveCheckpoint& local);
     extern void netplayPrepareOwnProofShell(int player);
     extern void netplayPreparePeerShell(int player, const LiveRom& rom);
-    extern bool netplayProveScratchPair(const melonDS::NetplayLiveCheckpoint& local,
-                                       const melonDS::NetplayLiveCheckpoint& peer,
-                                       std::unique_ptr<PreparedLiveReplica>& peerReplica,
-                                       std::array<u64, 4>& hashes,
+    // Every other member of the live handoff: its checkpoint, its exact prepared replica, its IPv4.
+    struct LivePeer
+    {
+        std::shared_ptr<melonDS::NetplayLiveCheckpoint> Checkpoint;
+        std::unique_ptr<PreparedLiveReplica> Replica;
+        std::string IPv4;
+    };
+    // The proof on N consoles (this one's copy and every peer replica): hashes[frame * N + player].
+    extern bool netplayProveScratchSet(const melonDS::NetplayLiveCheckpoint& local,
+                                       std::vector<LivePeer>& peers,
+                                       std::vector<u64>& hashes,
                                        std::string& error);
-    // Stage the exact peer replica, input socket and wireless backend while the
+    // Stage the exact peer replicas, input socket and wireless backend while the
     // original Ambient console remains frozen. This does not install the new
     // backend or run a Netplay frame. Only the emulator/GL thread may call it.
+    // Ports: Netplay input UDP kLiveInputPort + player, frame-zero proof kLiveStartPort + player.
+    constexpr int kLiveInputPort = 7100, kLiveStartPort = 7150, kLiveLinkPort = 7200;
     extern bool netplayStageLive(const melonDS::NetplayLiveCheckpoint& local,
-                                 const melonDS::NetplayLiveCheckpoint& peer,
-                                 std::unique_ptr<PreparedLiveReplica> peerReplica,
-                                 bool hosted, const std::string& peerIPv4,
-                                 std::string& error);
+                                 std::vector<LivePeer> peers,
+                                 bool hosted, std::string& error);
+    // Netplay quits a live session (this player's inputs carry the leave from the next one on)
+    extern void netplayQuitLive();
     // Both calls require the frozen source and run on the emulator thread.
     // prove exchanges frame-zero input but advances neither console. Commit
     // installs the staged backend and starts the already-prepared peer console.

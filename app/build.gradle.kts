@@ -254,6 +254,20 @@ android {
                     // fixed cores {0,1,2}; tile worker count from the fastest non-emu cluster.
                     // RG DS placement unchanged; big.LITTLE keeps render off the little cores.
                     "-DLITEV_TOPO_PIN=ON",
+                    // GL 3D thread (hyb-gl3d) one nice step above the other render threads (exact:
+                    // scheduling only; debug.litev.gl3dnice=-10 = off). PW town 3x uncapped +2.6%.
+                    "-DLITEV_GL3D_PRIO=ON",
+                    // Present only the displays whose picture changed: a 2D-only DS screen with the same
+                    // descriptors as the last merge keeps its serial, and the surface showing it skips
+                    // makeCurrent/draw/swap (and the SurfaceFlinger + HWC update). Exact (same pixels).
+                    // debug.litev.presentsame=0: off.
+                    "-DLITEV_PRESENT_SAME=ON",
+                    // GL 3D: upload only the vertex/index bytes a frame uses (one call per buffer) and no
+                    // unused edge indices. Exact. debug.litev.gllean=0: off.
+                    "-DLITEV_GL_LEAN_UPLOAD=ON",
+                    // GL 3D: the opaque-polygon sort on keys packed once per polygon (same order). Exact.
+                    // debug.litev.glsortkeys=0: off.
+                    "-DLITEV_GL_SORT_KEYS=ON",
                     // Dirty-incremental VRAM shadow snapshots instead of full memcpy.
                     "-DLITEV_SNAP_DIRTY=ON",
                     // Staged deep prefetch in BuildFrameGeom (A; runtime prop

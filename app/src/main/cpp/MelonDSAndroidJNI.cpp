@@ -1407,6 +1407,7 @@ static void ambientInstall()
                       ambientMode, MelonDSAndroid::netplayActive(), (int)melonDS::MPInterface::GetType());
         return;
     }
+    ambientDropParked();   // (a fresh backend binds the ports a parked one still holds)
     std::string code = MelonDSAndroid::romGameCode();
     if (code.size() != 4) { Platform::Log(Platform::LogLevel::Info, "Ambient: not installed (no game code)\n"); return; }
     melonDS::AmbientLAN::Config c = ambientCfg;
@@ -1671,6 +1672,7 @@ static void ambientHandoffCleanup()
     ambientLiveCut.reset();
     MelonDSAndroid::netplayDiscardStagedLive();
     ambientLiveCutActive.store(false, std::memory_order_release);
+    ambientDropParked();   // (a game stopped in a live session: its parked Ambient holds the ports)
 }
 static bool ambientHandoffInProgress()
 {

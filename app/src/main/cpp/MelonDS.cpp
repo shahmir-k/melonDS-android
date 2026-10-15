@@ -1532,12 +1532,9 @@ namespace MelonDSAndroid
             // link (its receiver's socket wait), the other players' copies, the Netplay MP backend - is
             // released on a worker: ~200 ms of the RG DS return were these destructors. Every thread that
             // used them is joined above; nothing here touches the local console.
-            // the link's hooks on the console that plays on go first (the link dies on the worker)
-#ifdef LITEV_HOSTED_NETPLAY
-            if (netplay->record) netplay->record->Link().Detach();
-            else if (!netplay->replay)
-#endif
-                ((LockstepMP&) MPInterface::Get()).Detach();
+            // the link's hooks on the console that plays on go first (the link dies on the worker; any
+            // backend - Lockstep, Hosted record or replay - hooks the console)
+            if (instance && instance->getNds()) instance->getNds()->DetachMPLink();
             auto old = std::move(netplay);
             auto oldMP = MPInterface::Take();
             MPInterface::Set(MPInterface_Dummy);

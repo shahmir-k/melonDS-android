@@ -253,7 +253,7 @@ class EmulatorActivity : AppCompatActivity() {
             val now = SystemClock.uptimeMillis()
             if (now - lastFastForwardToggle < 150) return
             lastFastForwardToggle = now
-            // Netplay: one session speed; any player's press toggles it for everyone
+            // Netplay / a LAN session: one session speed; any player's press toggles it for everyone
             val shown = MelonEmulator.netplayToggleFastForward()
             if (shown >= 0) {
                 showFastForward(shown == 1)
@@ -265,7 +265,7 @@ class EmulatorActivity : AppCompatActivity() {
 
         private var netplayDriven = false
 
-        /** Netplay: the key follows the session's speed (another player may have changed it). */
+        /** Netplay / a LAN session: the key follows the session's speed (another player may have changed it). */
         fun followNetplayFastForward(shown: Int) {
             if (shown >= 0) {
                 netplayDriven = true
@@ -537,13 +537,11 @@ class EmulatorActivity : AppCompatActivity() {
                     runGroupCommand(3 shl 8)
                     Toast.makeText(this@EmulatorActivity, getString(R.string.multiplayer_peer_lost), Toast.LENGTH_LONG).show()
                 }
-                // session speed (any player's fast-forward key): "FF 2x by P2" / "uncapped by P1", "" = normal.
-                // The session's own state (not parsed from the status: a wait or a player who left hid it).
-                // No session: nothing to announce; the next one starts from normal speed.
-                val speed = if (status != null) withContext(Dispatchers.IO) { MelonEmulator.netplaySpeedLabel() } else ""
-                if (status == null) {
-                    netplaySpeedShown = ""
-                } else if (speed != netplaySpeedShown) {
+                // session speed (Netplay or a LAN session; any player's fast-forward key): "FF 2x by P2" /
+                // "uncapped by P1", "" = normal. The session's own state (not parsed from the status: a wait or a
+                // player who left hid it). Leaving a fast session is normal speed again: announced too.
+                val speed = withContext(Dispatchers.IO) { MelonEmulator.netplaySpeedLabel() }
+                if (speed != netplaySpeedShown) {
                     netplaySpeedShown = speed
                     Toast.makeText(this@EmulatorActivity, if (speed.isEmpty()) getString(R.string.multiplayer_speed_normal)
                         else getString(R.string.multiplayer_speed, speed), Toast.LENGTH_SHORT).show()
